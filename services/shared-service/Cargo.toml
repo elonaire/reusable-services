@@ -1,0 +1,27 @@
+[package]
+name = "shared-service"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+axum = "0.6.18"
+async-graphql = "6.0.7"
+async-graphql-axum = "6.0.7"
+tokio = { version = "1", features = ["full"] }
+hyper = "0.14.26"
+tower-http = { version = "0.4.0", features = ["cors"] }
+surrealdb = "1.0.0"
+chrono = "0.4.31"
+serde = "1.0.189"
+dotenvy = "0.15.7"
+async-trait = "0.1.74"
+lib = { path = "../../lib" }
+reqwest = { version = "0.11.6", features = ["json", "multipart"] }
+aws-config = { version = "1.1.1", features = ["behavior-version-latest"] }
+aws-sdk-s3 = "1.11.0"
+gql_client = "1.0.7"
+
+[lints.rust]
+unsafe_code = "forbid"

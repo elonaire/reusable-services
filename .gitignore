@@ -1,1 +1,4 @@
 /target
+.env
+/services/**/db-file
+history.txt

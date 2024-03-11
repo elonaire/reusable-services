@@ -1,15 +1,13 @@
-[package]
-name = "elonaire-backend"
-version = "0.1.0"
-edition = "2021"
+[workspace]
+resolver = "2"
+members = [
+    # Libs
+    "lib",
+    # Services
+    "services/acl-service",
+    # Add other services here
+    "services/shared-service",
+]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[dependencies]
-axum = "0.6.18"
-async-graphql = "6.0.7"
-async-graphql-axum = "6.0.7"
-tokio = { version = "1", features = ["full"] }
-hyper = "0.14.26"
-tower-http = { version = "0.4.0", features = ["cors"] }
-
+[profile.release]
+strip = true  # Automatically strip symbols from the binary.
