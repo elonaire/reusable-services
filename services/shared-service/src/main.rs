@@ -3,7 +3,7 @@ mod graphql;
 
 use std::sync::Arc;
 
-use async_graphql::{Schema, http::GraphiQLSource, EmptySubscription};
+use async_graphql::{http::{Credentials, GraphiQLSource}, EmptySubscription, Schema};
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use axum::{Extension, response::{IntoResponse, Html}, Router, routing::get, http::HeaderValue};
 use graphql::resolvers::{mutation::Mutation, query::Query};
@@ -27,7 +27,7 @@ async fn graphql_handler(
 }
 
 async fn graphiql() -> impl IntoResponse {
-    Html(GraphiQLSource::build().endpoint("/").finish())
+    Html(GraphiQLSource::build().endpoint("/").title("Shared Service").credentials(Credentials::Include).finish())
 }
 
 #[tokio::main]
@@ -46,6 +46,7 @@ async fn main() -> Result<()> {
             CorsLayer::new()
                 .allow_origin("http://localhost:8080".parse::<HeaderValue>().unwrap())
                 .allow_headers([AUTHORIZATION, ACCEPT, CONTENT_TYPE])
+                .allow_credentials(true)
                 .allow_methods(vec![Method::GET, Method::POST]),
         );
 

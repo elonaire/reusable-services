@@ -6,19 +6,19 @@ networks:
 
 services:
   tt-shared-servicedb:
-    image: surrealdb/surrealdb:1.0.0
+    image: surrealdb/surrealdb:v1.4.2
     ports:
-      - 8001:8000
+      - 8001:8001
     container_name: tt-shared-servicedb
     networks:
       - app-tier
     user: root
-    command: start --log debug --user root --pass root file:/db-data/mydatabase.db
+    command: start --log debug --auth --bind 0.0.0.0:8001 file:/db-data/mydatabase.db
     volumes:
       - tt-shared-servicedb:/db-data
 
   tt-shared-service:
-    image: elonaire/shared-service:latest
+    image: elonaire/tt-shared-service:latest
     ports:
       - 3002:3002
     container_name: tt-shared-service
@@ -28,7 +28,9 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        SERVICE_NAME: tt-shared-service
+        SERVICE_NAME: shared-service
+    volumes:
+      - ./services/shared-service/src/database/schemas/schemas.surql:/usr/src/db/schemas.surql
     environment:
       - DATABASE_NAMESPACE=${DATABASE_NAMESPACE}
       - DATABASE_NAME_SHARED=${DATABASE_NAME_SHARED}
@@ -36,6 +38,8 @@ services:
       - DATABASE_PASSWORD=${DATABASE_PASSWORD}
       - DATABASE_HOST_SHARED=${DATABASE_HOST_SHARED}
       - DATABASE_PORT_SHARED=${DATABASE_PORT_SHARED}
+      - OAUTH_SERVICE=${OAUTH_SERVICE}
+      - DATABASE_SCHEMA_FILE_PATH=${DATABASE_SCHEMA_FILE_PATH}
     depends_on:
       - tt-shared-servicedb
 

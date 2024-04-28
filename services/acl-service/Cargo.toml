@@ -12,8 +12,8 @@ async-graphql-axum = "6.0.7"
 tokio = { version = "1", features = ["full"] }
 hyper = "0.14.26"
 tower-http = { version = "0.4.0", features = ["cors"] }
-surrealdb = "1.0.0"
-chrono = "0.4.31"
+surrealdb = "1.4.2"
+chrono = "0.4.37"
 serde = "1.0.189"
 bcrypt = "0.15.0"
 oauth2 = "4.4.2"

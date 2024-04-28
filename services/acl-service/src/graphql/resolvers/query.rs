@@ -6,20 +6,24 @@ use axum::{
     Extension,
 };
 use dotenvy::dotenv;
-use hyper::{Method, header::SET_COOKIE};
+use hyper::{header::SET_COOKIE, Method};
 use jwt_simple::prelude::*;
-use lib::utils::{auth::AuthStatus, cookie_parser::parse_cookies, custom_error::ExtendedError};
+use lib::utils::{auth::{AuthStatus, SymKey, AuthClaim}, cookie_parser::parse_cookies, custom_error::ExtendedError};
 use reqwest::{header::HeaderMap as ReqWestHeaderMap, Client as ReqWestClient};
 use surrealdb::{engine::remote::ws::Client, Surreal};
 
 use crate::{
     auth::oauth::{self, OAuthClientName},
-    graphql::schemas::user::{
-        DecodedGithubOAuthToken, DecodedGoogleOAuthToken, SymKey, User,
+    graphql::schemas::{
+        role::SystemRole,
+        user::{
+            DecodedGithubOAuthToken, DecodedGoogleOAuthToken, SurrealRelationQueryResponse,
+            User,
+        },
     },
 };
 
-use super::mutation::AuthClaim;
+// use super::mutation::AuthClaim;
 
 pub struct Query;
 
@@ -36,6 +40,22 @@ impl Query {
         Ok(response)
     }
 
+    async fn get_user(&self, ctx: &Context<'_>, id: String) -> Result<User> {
+        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
+
+        let user: Option<User> = db
+            .select(("user", id.as_str()))
+            .await
+            .map_err(|e| Error::new(e.to_string()))?;
+
+        // let user: Option<User> = response.take(0)?;
+
+        match user {
+            Some(user) => Ok(user),
+            None => Err(Error::new("User not found")),
+        }
+    }
+
     async fn check_auth(&self, ctx: &Context<'_>) -> Result<AuthStatus> {
         dotenv().ok();
         // let jwt_secret =
@@ -48,6 +68,7 @@ impl Query {
                 // Check if Authorization header is present
                 match headers.get("Authorization") {
                     Some(token) => {
+                        println!("headers: {:?}", headers);
                         // Check if Cookie header is present
                         match headers.get(COOKIE) {
                             Some(cookie_header) => {
@@ -59,6 +80,7 @@ impl Query {
                                 // Check if oauth_client cookie is present
                                 match cookies.get("oauth_client") {
                                     Some(oauth_client) => {
+                                        println!("oauth_client: {:?}", oauth_client);
                                         if oauth_client.is_empty() {
                                             let key: Vec<u8>;
                                             let db = ctx
@@ -136,12 +158,37 @@ impl Query {
 
                                                                             match user {
                                                                                 Some(user) => {
+                                                                                    let get_user_roles_query = format!(
+                                                                                        "SELECT ->has_role.out.* FROM user:{}",
+                                                                                        user.id.as_ref().map(|t| &t.id).expect("id")
+                                                                                    );
+                                                                                    let mut user_roles_res = db.query(get_user_roles_query).await?;
+                                                                                    let user_roles: Option<SurrealRelationQueryResponse<SystemRole>> =
+                                                                                        user_roles_res.take(0)?;
+                                                                                    // println!("user_roles: {:?}", user_roles);
+
                                                                                     let auth_claim = AuthClaim {
-                                                                                        roles: user
-                                                                                            .roles
-                                                                                            .as_ref()
-                                                                                            .map(|t| t.iter().map(|t| t.id.to_raw()).collect())
-                                                                                            .unwrap_or(vec![]),
+                                                                                        roles: match user_roles {
+                                                                                            Some(existing_roles) => {
+                                                                                                // use id instead of Thing
+                                                                                                existing_roles
+                                                                                                    .get("->has_role")
+                                                                                                    .unwrap()
+                                                                                                    .get("out")
+                                                                                                    .unwrap()
+                                                                                                    // existing_roles["->has_role"]["out"]
+                                                                                                    .into_iter()
+                                                                                                    .map(|role| {
+                                                                                                        role.id
+                                                                                                            .as_ref()
+                                                                                                            .map(|t| &t.id)
+                                                                                                            .expect("id")
+                                                                                                            .to_raw()
+                                                                                                    })
+                                                                                                    .collect()
+                                                                                            }
+                                                                                            None => vec![],
+                                                                                        },
                                                                                     };
 
                                                                                     let mut token_claims = Claims::with_custom_claims(auth_claim.clone(), Duration::from_secs(15 * 60));
@@ -220,7 +267,10 @@ impl Query {
                                                             .await?;
                                                     println!("response: {:?}", response);
 
-                                                    return Ok(AuthStatus { is_auth: true, sub: response.sub });
+                                                    return Ok(AuthStatus {
+                                                        is_auth: true,
+                                                        sub: response.sub,
+                                                    });
                                                 }
                                                 OAuthClientName::Github => {
                                                     // make a request to github oauth server to verify the token
@@ -258,21 +308,30 @@ impl Query {
 
                                                     println!("response: {:?}", response);
 
-                                                    return Ok(AuthStatus { is_auth: true, sub: response.id.to_string() });
+                                                    return Ok(AuthStatus {
+                                                        is_auth: true,
+                                                        sub: response.id.to_string(),
+                                                    });
                                                 }
                                             }
                                         }
                                     }
-                                    None => {
-                                        Err(ExtendedError::new("Not Authorized!", Some(403.to_string()))
-                                            .build())
-                                    }
+                                    None => Err(ExtendedError::new(
+                                        "Not Authorized!",
+                                        Some(403.to_string()),
+                                    )
+                                    .build()),
                                 }
                             }
-                            None => Err(ExtendedError::new("Not Authorized!", Some(403.to_string())).build()),
+                            None => {
+                                Err(ExtendedError::new("Not Authorized!", Some(403.to_string()))
+                                    .build())
+                            }
                         }
                     }
-                    None => Err(ExtendedError::new("Not Authorized!", Some(403.to_string())).build()),
+                    None => {
+                        Err(ExtendedError::new("Not Authorized!", Some(403.to_string())).build())
+                    }
                 }
             }
             None => Err(ExtendedError::new("Invalid request!", Some(400.to_string())).build()),

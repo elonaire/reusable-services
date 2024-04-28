@@ -2,3 +2,4 @@
 .env
 /services/**/db-file
 history.txt
+prod.env

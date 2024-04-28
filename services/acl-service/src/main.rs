@@ -3,9 +3,9 @@ mod database;
 mod graphql;
 
 use core::panic;
-use std::sync::Arc;
+use std::{sync::Arc, vec};
 
-use async_graphql::{http::GraphiQLSource, EmptySubscription, Schema};
+use async_graphql::{http::{Credentials, GraphiQLSource}, EmptySubscription, Schema};
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use axum::{
     extract::{Extension, Query as AxumQuery},
@@ -18,7 +18,7 @@ use axum::{
 
 use graphql::resolvers::query::Query;
 use hyper::{
-    header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE},
+    header::{ACCEPT, ACCESS_CONTROL_ALLOW_CREDENTIALS, ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS, AUTHORIZATION, CONTENT_TYPE, COOKIE, SET_COOKIE},
     Method, Server,
 };
 use oauth2::{
@@ -48,7 +48,7 @@ async fn graphql_handler(
 }
 
 async fn graphiql() -> impl IntoResponse {
-    Html(GraphiQLSource::build().endpoint("/").finish())
+    Html(GraphiQLSource::build().endpoint("/").title("ACL Service").credentials(Credentials::Include).finish())
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -111,6 +111,7 @@ async fn main() -> Result<()> {
     let origins = [
         "http://localhost:8080".parse::<HeaderValue>().unwrap(),
         "http://localhost:3002".parse::<HeaderValue>().unwrap(),
+        "http://127.0.0.1:8080".parse::<HeaderValue>().unwrap(),
     ];
 
     let app = Router::new()
@@ -121,7 +122,8 @@ async fn main() -> Result<()> {
         .layer(
             CorsLayer::new()
                 .allow_origin(origins)
-                .allow_headers([AUTHORIZATION, ACCEPT, CONTENT_TYPE])
+                .allow_headers([AUTHORIZATION, ACCEPT, CONTENT_TYPE, SET_COOKIE, COOKIE, ACCESS_CONTROL_ALLOW_CREDENTIALS, ACCESS_CONTROL_ALLOW_CREDENTIALS, ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_EXPOSE_HEADERS])
+                .allow_credentials(true)
                 .allow_methods(vec![Method::GET, Method::POST]),
         );
 

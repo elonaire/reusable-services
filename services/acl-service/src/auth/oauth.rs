@@ -1,7 +1,14 @@
-use std::env;
+use axum::{http::HeaderValue, Extension};
+use jwt_simple::prelude::*;
+use lib::utils::{
+    auth::{AuthClaim, SymKey},
+    custom_error::ExtendedError,
+};
 use std::time::Duration;
+use std::{env, sync::Arc};
+use surrealdb::{engine::remote::ws::Client as SurrealClient, Surreal};
 
-use async_graphql::{Context, Enum};
+use async_graphql::{Context, Enum, Result};
 use dotenvy::dotenv;
 use hyper::header::SET_COOKIE;
 use oauth2::basic::{BasicClient, BasicErrorResponseType, BasicTokenType};
@@ -84,9 +91,11 @@ pub async fn initiate_auth_code_grant_flow(oauth_client: OAuthClientName) -> OAu
             ),
         )
         .set_revocation_uri(
-            RevocationUrl::new(env::var("GOOGLE_OAUTH_REVOKE_TOKEN_URL")
-            .expect("Missing the GOOGLE_OAUTH_REVOKE_TOKEN_URL environment variable."))
-                .expect("Invalid revocation endpoint URL"),
+            RevocationUrl::new(
+                env::var("GOOGLE_OAUTH_REVOKE_TOKEN_URL")
+                    .expect("Missing the GOOGLE_OAUTH_REVOKE_TOKEN_URL environment variable."),
+            )
+            .expect("Invalid revocation endpoint URL"),
         ),
         OAuthClientName::Github => BasicClient::new(
             ClientId::new(
@@ -165,8 +174,86 @@ pub async fn navigate_to_redirect_url(
     );
 
     let sensitive_cookies_expiry_duration = Duration::from_secs(120); // limit the duration of the sensitive cookies
-    ctx.append_http_header(SET_COOKIE, format!("j={}; Max-Age={}", csrf_token.secret(), sensitive_cookies_expiry_duration.as_secs()));
-    ctx.append_http_header(SET_COOKIE, format!("k={}; Max-Age={}", pkce_verifier.secret(), sensitive_cookies_expiry_duration.as_secs()));
+    ctx.append_http_header(
+        SET_COOKIE,
+        format!(
+            "j={}; Max-Age={}",
+            csrf_token.secret(),
+            sensitive_cookies_expiry_duration.as_secs()
+        ),
+    );
+    ctx.append_http_header(
+        SET_COOKIE,
+        format!(
+            "k={}; Max-Age={}",
+            pkce_verifier.secret(),
+            sensitive_cookies_expiry_duration.as_secs()
+        ),
+    );
 
     auth_url.to_string()
+}
+
+pub async fn decode_token(
+    ctx: &Context<'_>,
+    token_header: &HeaderValue,
+) -> Result<JWTClaims<AuthClaim>> {
+    let token = token_header.to_str().unwrap().strip_prefix("Bearer ");
+
+    match token {
+        Some(token) => {
+            println!("token: {:?}", token);
+            let key: Vec<u8>;
+
+            let db = ctx
+                .data::<Extension<Arc<Surreal<SurrealClient>>>>()
+                .unwrap();
+            let mut result = db
+                .query("SELECT * FROM type::table($table) WHERE name = 'jwt_key' LIMIT 1")
+                .bind(("table", "crypto_key"))
+                .await?;
+            let response: Option<SymKey> = result.take(0)?;
+
+            match &response {
+                Some(key_container) => {
+                    println!("key_container: {:?}", key_container.key.clone());
+                    key = key_container.key.clone();
+                }
+                None => {
+                    // key = HS256Key::generate().to_bytes();
+                    return Err(
+                        ExtendedError::new("Not Authorized!", Some(403.to_string())).build()
+                    );
+                }
+            }
+
+            let converted_key = HS256Key::from_bytes(&key);
+
+            let _claims = converted_key.verify_token::<AuthClaim>(&token, None);
+
+            println!("claims: {:?}", _claims);
+
+            match &_claims {
+                Ok(_) => {
+                    // let sub = _claims
+                    //     .as_ref()
+                    //     .unwrap()
+                    //     .subject
+                    //     .as_ref()
+                    //     .map(|t| t.to_string())
+                    //     .unwrap_or("".to_string());
+                    // let is_auth = true;
+                    // Ok(AuthStatus {
+                    //     is_auth,
+                    //     sub: sub.to_string(),
+                    // })
+                    Ok(_claims.unwrap())
+                }
+                Err(e) => Err(ExtendedError::new(e.to_string(), Some(403.to_string())).build()),
+            }
+        }
+        None => Err(
+            ExtendedError::new("Invalid token format".to_string(), Some(403.to_string())).build(),
+        ),
+    }
 }

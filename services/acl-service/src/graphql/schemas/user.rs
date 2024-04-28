@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use async_graphql::{ComplexObject, Enum, InputObject, SimpleObject};
 use chrono::{DateTime, Datelike, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
@@ -124,7 +126,6 @@ pub struct DecodedGoogleOAuthToken {
     pub expires_in: String,
 }
 
-
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
 pub struct DecodedGithubOAuthToken {
     pub login: String,
@@ -176,12 +177,6 @@ pub struct Plan {
     pub private_repos: u64,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SymKey {
-    pub name: String,
-    pub key: Vec<u8>,
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
 #[graphql(input_name = "ProfessionInput")]
 pub struct Profession {
@@ -219,3 +214,5 @@ pub struct UserUpdate {
     #[graphql(skip)]
     pub portfolio: Option<Vec<Thing>>,
 }
+
+pub type SurrealRelationQueryResponse<T> = HashMap<String, HashMap<String, Vec<T>>>;

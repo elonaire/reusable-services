@@ -2,7 +2,11 @@ use std::fs::File;
 use std::io::Read;
 
 use dotenvy::dotenv;
-use surrealdb::{Surreal, engine::remote::ws::{Ws, Client}, opt::auth::Root, Result};
+use surrealdb::{
+    engine::remote::ws::{Client, Ws},
+    opt::auth::Root,
+    Result, Surreal,
+};
 
 pub async fn create_db_connection() -> Result<Surreal<Client>> {
     dotenv().ok();
@@ -14,7 +18,10 @@ pub async fn create_db_connection() -> Result<Surreal<Client>> {
     let db_name: String = std::env::var("DATABASE_NAME_ACL").expect("DB_NAME not set");
     let db_namespace: String = std::env::var("DATABASE_NAMESPACE").expect("DB_NAMESPACE not set");
 
-    let db = Surreal::new::<Ws>(format!("{}:{}", db_host, db_port).as_str()).await?;
+    let db_url = format!("{}:{}", db_host, db_port);
+    // format!("{}:{}", db_host, db_port).as_str()
+    println!("DB URL: {}", db_url);
+    let db = Surreal::new::<Ws>(db_url).await?;
 
     db.signin(Root {
         username: db_user.as_str(),
@@ -23,13 +30,16 @@ pub async fn create_db_connection() -> Result<Surreal<Client>> {
     .await?;
 
     // Select a specific namespace and database
-    db.use_ns(db_namespace.as_str()).use_db(db_name.as_str()).await?;
+    db.use_ns(db_namespace.as_str())
+        .use_db(db_name.as_str())
+        .await?;
 
     // Perform migrations
     // println!("{:?}", env::current_dir());
-    let file_name = "src/database/schemas/schemas.surql";
-    // let file_name = "/usr/src/db/schemas.surql"; 
-    let schema = read_file_to_string(file_name);
+    let file_name =
+        std::env::var("DATABASE_SCHEMA_FILE_PATH").expect("DATABASE_SCHEMA_FILE_PATH not set");
+
+    let schema = read_file_to_string(file_name.as_str());
     db.query(schema.as_str()).await?;
 
     Ok(db)

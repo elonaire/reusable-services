@@ -2,24 +2,20 @@ use std::sync::Arc;
 
 use async_graphql::{Context, Error, Object, Result};
 use axum::Extension;
-use hyper::header::SET_COOKIE;
+use hyper::{header::SET_COOKIE, HeaderMap};
 use jwt_simple::prelude::*;
+use lib::utils::auth::{AuthClaim, SymKey};
 use surrealdb::{engine::remote::ws::Client, Surreal};
 
 use crate::{
-    auth::oauth::{initiate_auth_code_grant_flow, navigate_to_redirect_url},
+    auth::oauth::{decode_token, initiate_auth_code_grant_flow, navigate_to_redirect_url},
     graphql::schemas::{
         role::SystemRole,
-        user::{AuthDetails, User, UserLogins, SymKey},
+        user::{AuthDetails, SurrealRelationQueryResponse, User, UserLogins},
     },
 };
 
 pub struct Mutation;
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct AuthClaim {
-    // pub sub: String,
-    pub roles: Vec<String>,
-}
 
 #[Object]
 impl Mutation {
@@ -97,7 +93,8 @@ impl Mutation {
                         .unwrap();
 
                         if password_match {
-                            let refresh_token_expiry_duration = Duration::from_secs(30 * 24 * 60 * 60); // minutes by 60 seconds
+                            let refresh_token_expiry_duration =
+                                Duration::from_secs(30 * 24 * 60 * 60); // minutes by 60 seconds
                             let key: Vec<u8>;
                             let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
                             let mut result = db.query("SELECT * FROM type::table($table) WHERE name = 'jwt_key' LIMIT 1")
@@ -111,7 +108,8 @@ impl Mutation {
                                 }
                                 None => {
                                     key = HS256Key::generate().to_bytes();
-                                    let _reslt: Vec<SymKey> = db.create("crypto_key")
+                                    let _reslt: Vec<SymKey> = db
+                                        .create("crypto_key")
                                         .content(SymKey {
                                             key: key.clone(),
                                             name: "jwt_key".to_string(),
@@ -120,34 +118,109 @@ impl Mutation {
                                 }
                             }
 
+                            let get_user_roles_query = format!(
+                                "SELECT ->has_role.out.* FROM user:{}",
+                                user.id.as_ref().map(|t| &t.id).expect("id")
+                            );
+                            let mut user_roles_res = db.query(get_user_roles_query).await?;
+                            let user_roles: Option<SurrealRelationQueryResponse<SystemRole>> =
+                                user_roles_res.take(0)?;
+                            println!("user_roles: {:?}", user_roles);
+
                             let auth_claim = AuthClaim {
-                                roles: user
-                                    .roles
-                                    .as_ref()
-                                    .map(|t| t.iter().map(|t| t.id.to_raw()).collect())
-                                    .unwrap_or(vec![]),
+                                roles: match user_roles {
+                                    Some(existing_roles) => {
+                                        // use id instead of Thing
+                                        existing_roles
+                                            .get("->has_role")
+                                            .unwrap()
+                                            .get("out")
+                                            .unwrap()
+                                            // existing_roles["->has_role"]["out"]
+                                            .into_iter()
+                                            .map(|role| {
+                                                role.id
+                                                    .as_ref()
+                                                    .map(|t| &t.id)
+                                                    .expect("id")
+                                                    .to_raw()
+                                            })
+                                            .collect()
+                                    }
+                                    None => vec![],
+                                },
                             };
 
                             let converted_key = HS256Key::from_bytes(&key);
 
-                            let mut token_claims = Claims::with_custom_claims(auth_claim.clone(), Duration::from_secs(15 * 60));
-                            token_claims.subject = Some(user.id.as_ref().map(|t| &t.id).expect("id").to_raw());
+                            let mut token_claims = Claims::with_custom_claims(
+                                auth_claim.clone(),
+                                Duration::from_secs(15 * 60),
+                            );
+                            token_claims.subject =
+                                Some(user.id.as_ref().map(|t| &t.id).expect("id").to_raw());
                             let token_str = converted_key.authenticate(token_claims).unwrap();
 
-                            let mut refresh_token_claims = Claims::with_custom_claims(auth_claim.clone(), refresh_token_expiry_duration);
-                            refresh_token_claims.subject = Some(user.id.as_ref().map(|t| &t.id).expect("id").to_raw());
-                            let refresh_token_str = converted_key.authenticate(refresh_token_claims).unwrap();
-
-                            ctx.insert_http_header(SET_COOKIE, format!("oauth_client="));
-
-                            ctx.append_http_header(
-                                SET_COOKIE,
-                                format!(
-                                    "t={}; Max-Age={}",
-                                    refresh_token_str,
-                                    refresh_token_expiry_duration.as_secs()
-                                ),
+                            let mut refresh_token_claims = Claims::with_custom_claims(
+                                auth_claim.clone(),
+                                refresh_token_expiry_duration,
                             );
+                            refresh_token_claims.subject =
+                                Some(user.id.as_ref().map(|t| &t.id).expect("id").to_raw());
+                            let refresh_token_str =
+                                converted_key.authenticate(refresh_token_claims).unwrap();
+
+                            match ctx.data_opt::<HeaderMap>() {
+                                Some(headers) => {
+                                    // Check if Host header is present
+                                    let mut g_host: String = "127.0.0.1".to_string();
+                                    match headers.get("Origin") {
+                                        Some(host) => {
+                                            // g_host = host.to_str().unwrap().to_string();
+                                            // remove http:// or https:// and port(:port_number)
+                                            g_host = host
+                                                .to_str()
+                                                .unwrap()
+                                                .split("//")
+                                                .collect::<Vec<&str>>()[1]
+                                                .split(":")
+                                                .collect::<Vec<&str>>()[0]
+                                                .to_string();
+                                        }
+                                        None => {}
+                                    }
+
+                                    ctx.insert_http_header(
+                                        SET_COOKIE,
+                                        format!(
+                                            "oauth_client=; SameSite=None; Secure; Domain={}; HttpOnly; Path=/",
+                                            g_host.as_str()
+                                        ),
+                                    );
+
+                                    ctx.append_http_header(
+                                        SET_COOKIE,
+                                        format!(
+                                            "t={}; Max-Age={}; SameSite=None; Secure; Domain={}; HttpOnly; Path=/",
+                                            refresh_token_str,
+                                            refresh_token_expiry_duration.as_secs(),
+                                            g_host.as_str()
+                                        ),
+                                    );
+                                }
+                                None => {}
+                            }
+
+                            // ctx.insert_http_header(
+                            //     SET_COOKIE,
+                            //     format!(
+                            //         "oauth_client=; SameSite=None; Secure=False; Path=/; Domain={}",
+                            //         ctx.http_header("Host").unwrap_or("127.0.0.1")
+                            //     ),
+                            // );
+
+                            println!("header exists: {}", ctx.http_header_contains(SET_COOKIE));
+
                             Ok(AuthDetails {
                                 token: Some(token_str),
                                 url: None,
@@ -166,5 +239,19 @@ impl Mutation {
         // Clear the refresh token cookie
         ctx.insert_http_header(SET_COOKIE, format!("t=; Max-Age=0"));
         Ok(true)
+    }
+
+    async fn decode_token(&self, ctx: &Context<'_>) -> Result<String> {
+        match ctx.data_opt::<HeaderMap>() {
+            Some(headers) => {
+                let token = decode_token(ctx, headers.get("Authorization").unwrap()).await;
+
+                match token {
+                    Ok(token) => Ok(token.subject.unwrap()),
+                    Err(e) => Err(e),
+                }
+            }
+            None => Err(Error::new("No headers found")),
+        }
     }
 }

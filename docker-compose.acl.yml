@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 networks:
   app-tier:
@@ -6,14 +6,14 @@ networks:
 
 services:
   tt-acl-db:
-    image: surrealdb/surrealdb:1.0.0
+    image: surrealdb/surrealdb:v1.4.2
     ports:
       - 8000:8000
-    container_name: acl-db
+    container_name: tt-acl-db
     networks:
       - app-tier
     user: root
-    command: start --log debug --user root --pass root file:/db-data/mydatabase.db
+    command: start --log debug --auth file:/db-data/mydatabase.db
     volumes:
       - tt-acl-servicedb:/db-data
   tt-acl-service:
@@ -27,7 +27,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        SERVICE_NAME: tt-acl-service
+        SERVICE_NAME: acl-service
     volumes:
       - ./services/acl-service/src/database/schemas/schemas.surql:/usr/src/db/schemas.surql
     environment:
@@ -47,9 +47,9 @@ services:
       - DATABASE_PASSWORD=${DATABASE_PASSWORD}
       - DATABASE_HOST_ACL=${DATABASE_HOST_ACL}
       - DATABASE_PORT_ACL=${DATABASE_PORT_ACL}
+      - DATABASE_SCHEMA_FILE_PATH=${DATABASE_SCHEMA_FILE_PATH}
     depends_on:
       - tt-acl-db
-
 
 # Add any network or volume configurations if needed
 volumes:

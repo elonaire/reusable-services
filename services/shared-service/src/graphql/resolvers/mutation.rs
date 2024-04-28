@@ -1,11 +1,13 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::collections::HashMap;
+use std::{env, sync::Arc, time::Duration};
 
 use async_graphql::{Context, Error, Object, Upload};
 use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_s3::{presigning::PresigningConfig, Client as AWSClient};
 use axum::{http::HeaderMap, Extension};
 use gql_client::Client as GQLClient;
-use lib::utils::{auth::AuthStatus, custom_error::ExtendedError};
+
+use lib::utils::{custom_error::ExtendedError, auth::DecodeTokenResponse};
 use surrealdb::{engine::remote::ws::Client as SurrealClient, Surreal};
 
 use crate::graphql::schemas::{file::TestResponse, user::UserProfessionalInfo};
@@ -121,25 +123,25 @@ impl Mutation {
             Some(headers) => {
                 // check auth status from ACL service(graphql query)
                 let gql_query = r#"
-                    query Query {
-                        checkAuth {
-                            isAuth
-                            sub
-                        }       
+                    mutation Mutation {
+                        decodeToken
                     }
                 "#;
 
                 match headers.get("Authorization") {
                     Some(auth_header) => {
                         println!("auth_header: {:?}", auth_header.to_str().unwrap());
+                        // let mut auth_status = String::new();
+                        // println!("auth_status: {:?}", auth_status);
                         let mut auth_headers = HashMap::new();
                         auth_headers.insert("Authorization", auth_header.to_str().unwrap());
 
-                        let endpoint = "http://localhost:3001";
+                        let endpoint = env::var("OAUTH_SERVICE")
+                        .expect("Missing the OAUTH_SERVICE environment variable.");
 
                         let client = GQLClient::new_with_headers(endpoint, auth_headers);
 
-                        let auth_response = client.query::<AuthStatus>(gql_query).await;
+                        let auth_response = client.query::<DecodeTokenResponse>(gql_query).await;
 
                         println!("auth_response: {:?}", auth_response);
                         match auth_response {
@@ -151,6 +153,7 @@ impl Mutation {
                                 // }
                                 match auth_status {
                                     Some(auth_status) => {
+                                        // TODO: Might use this later or just leave it to middleware to handle
                                         let response: Vec<UserProfessionalInfo> = db
                                             .create("professional_details")
                                             .content(UserProfessionalInfo {
@@ -161,7 +164,7 @@ impl Mutation {
 
                                         let _relate_to_user = db
                                         .query("RELATE type::record($user)->has_professional_details->type::record($professional_details)")
-                                        .bind(("user", format!("user:{}", auth_status.sub)))
+                                        .bind(("user", format!("user:{}", auth_status.decode_token)))
                                         .bind(("professional_details", format!("professional_details:{}", response[0].id.as_ref().unwrap().to_raw())))
                                         .await;
 
