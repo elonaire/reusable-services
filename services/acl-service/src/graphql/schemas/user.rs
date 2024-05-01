@@ -5,7 +5,7 @@ use chrono::{DateTime, Datelike, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use surrealdb::sql::Thing;
 
-use crate::auth::oauth::OAuthClientName;
+use crate::middleware::oauth::OAuthClientName;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
 pub enum Gender {

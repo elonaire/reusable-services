@@ -19,3 +19,10 @@ impl UserProfessionalInfo {
         self.id.as_ref().map(|t| &t.id).expect("id").to_raw()
     }
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
+pub struct User {
+    #[graphql(skip)]
+    pub id: Option<Thing>,
+    pub user_id: String,
+}

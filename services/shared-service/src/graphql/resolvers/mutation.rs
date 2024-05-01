@@ -10,6 +10,7 @@ use gql_client::Client as GQLClient;
 use lib::utils::{custom_error::ExtendedError, auth::DecodeTokenResponse};
 use surrealdb::{engine::remote::ws::Client as SurrealClient, Surreal};
 
+use crate::graphql::schemas::user;
 use crate::graphql::schemas::{file::TestResponse, user::UserProfessionalInfo};
 
 // const CHUNK_SIZE: u64 = 1024 * 1024 * 5; // 5MB
@@ -154,6 +155,19 @@ impl Mutation {
                                 match auth_status {
                                     Some(auth_status) => {
                                         // TODO: Might use this later or just leave it to middleware to handle
+                                        let id_added = crate::middleware::user_id::add_user_id_if_not_exists(
+                                            ctx,
+                                            auth_status.decode_token.clone(),
+                                        ).await;
+
+                                        if !id_added {
+                                            return Err(ExtendedError::new(
+                                                "Failed to add user_id",
+                                                Some(500.to_string()),
+                                            )
+                                            .build());
+                                        }
+
                                         let response: Vec<UserProfessionalInfo> = db
                                             .create("professional_details")
                                             .content(UserProfessionalInfo {
@@ -162,9 +176,17 @@ impl Mutation {
                                             .await
                                             .map_err(|e| Error::new(e.to_string()))?;
 
+                                        let mut user_from_db_res = db
+                                            .query("SELECT * FROM type::table($table) WHERE user_id = $user_id LIMIT 1")
+                                            .bind(("table", "user_id"))
+                                            .bind(("user_id", auth_status.decode_token.clone()))
+                                            .await?;
+
+                                        let user_from_db: Option<user::User> = user_from_db_res.take(0).unwrap();
+
                                         let _relate_to_user = db
                                         .query("RELATE type::record($user)->has_professional_details->type::record($professional_details)")
-                                        .bind(("user", format!("user:{}", auth_status.decode_token)))
+                                        .bind(("user", format!("user_id:{}", user_from_db.unwrap().id.as_ref().unwrap().to_raw())))
                                         .bind(("professional_details", format!("professional_details:{}", response[0].id.as_ref().unwrap().to_raw())))
                                         .await;
 

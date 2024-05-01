@@ -8,7 +8,7 @@ use lib::utils::auth::{AuthClaim, SymKey};
 use surrealdb::{engine::remote::ws::Client, Surreal};
 
 use crate::{
-    auth::oauth::{decode_token, initiate_auth_code_grant_flow, navigate_to_redirect_url},
+    middleware::oauth::{decode_token, initiate_auth_code_grant_flow, navigate_to_redirect_url},
     graphql::schemas::{
         role::SystemRole,
         user::{AuthDetails, SurrealRelationQueryResponse, User, UserLogins},
@@ -244,10 +244,10 @@ impl Mutation {
     async fn decode_token(&self, ctx: &Context<'_>) -> Result<String> {
         match ctx.data_opt::<HeaderMap>() {
             Some(headers) => {
-                let token = decode_token(ctx, headers.get("Authorization").unwrap()).await;
+                let token_claims = decode_token(ctx, headers.get("Authorization").unwrap()).await;
 
-                match token {
-                    Ok(token) => Ok(token.subject.unwrap()),
+                match token_claims {
+                    Ok(token_claims) => Ok(token_claims.subject.unwrap()),
                     Err(e) => Err(e),
                 }
             }
