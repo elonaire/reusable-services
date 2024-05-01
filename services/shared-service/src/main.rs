@@ -1,5 +1,6 @@
 mod database;
 mod graphql;
+mod middleware;
 
 use std::sync::Arc;
 

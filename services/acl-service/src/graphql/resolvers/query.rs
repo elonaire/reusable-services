@@ -8,19 +8,22 @@ use axum::{
 use dotenvy::dotenv;
 use hyper::{header::SET_COOKIE, Method};
 use jwt_simple::prelude::*;
-use lib::utils::{auth::{AuthStatus, SymKey, AuthClaim}, cookie_parser::parse_cookies, custom_error::ExtendedError};
+use lib::utils::{
+    auth::{AuthClaim, AuthStatus, SymKey},
+    cookie_parser::parse_cookies,
+    custom_error::ExtendedError,
+};
 use reqwest::{header::HeaderMap as ReqWestHeaderMap, Client as ReqWestClient};
 use surrealdb::{engine::remote::ws::Client, Surreal};
 
 use crate::{
-    auth::oauth::{self, OAuthClientName},
     graphql::schemas::{
         role::SystemRole,
         user::{
-            DecodedGithubOAuthToken, DecodedGoogleOAuthToken, SurrealRelationQueryResponse,
-            User,
+            DecodedGithubOAuthToken, DecodedGoogleOAuthToken, SurrealRelationQueryResponse, User,
         },
     },
+    middleware::oauth::{self, decode_token, OAuthClientName},
 };
 
 // use super::mutation::AuthClaim;
@@ -107,152 +110,169 @@ impl Query {
 
                                             let converted_key = HS256Key::from_bytes(&key);
 
-                                            let token_str =
-                                                token.to_str().unwrap().strip_prefix("Bearer ");
+                                            let token_claims = decode_token(
+                                                ctx,
+                                                token,
+                                            )
+                                            .await;
 
-                                            // Check if token is present and valid
-                                            match token_str {
-                                                Some(token_str) => {
-                                                    let _claims = converted_key
-                                                        .verify_token::<AuthClaim>(
-                                                            &token_str, None,
-                                                        );
+                                            match &token_claims {
+                                                Ok(_) => {
+                                                    // Token verification successful
+                                                    return Ok(AuthStatus {
+                                                        is_auth: true,
+                                                        sub: token_claims
+                                                            .as_ref()
+                                                            .unwrap()
+                                                            .subject
+                                                            .as_ref()
+                                                            .map(|t| t.to_string())
+                                                            .unwrap_or("".to_string()),
+                                                    });
+                                                }
+                                                Err(_err) => {
+                                                    println!("err: {:?}", _err.message);
+                                                    // Token verification failed, check if refresh token is present
+                                                    match cookies.get("t") {
+                                                        Some(refresh_token) => {
+                                                            let refresh_claims = converted_key
+                                                                .verify_token::<AuthClaim>(
+                                                                &refresh_token,
+                                                                None,
+                                                            );
 
-                                                    println!("claims: {:?}", _claims);
+                                                            match refresh_claims {
+                                                                Ok(refresh_claims) => {
+                                                                    println!(
+                                                                        "refresh_claims: {:?}",
+                                                                        refresh_claims
+                                                                    );
+                                                                    // TODO: Refresh token verification successful, issue new access token
+                                                                    // call sign_in mutation
+                                                                    let user: Option<User> = db
+                                                                        .select((
+                                                                            "user",
+                                                                            refresh_claims
+                                                                                .subject
+                                                                                .unwrap()
+                                                                                .as_str(),
+                                                                        ))
+                                                                        .await?;
 
-                                                    match &_claims {
-                                                        Ok(_) => {
-                                                            // Token verification successful
-                                                            return Ok(AuthStatus {
-                                                                is_auth: true,
-                                                                sub: _claims
-                                                                    .as_ref()
-                                                                    .unwrap()
-                                                                    .subject
-                                                                    .as_ref()
-                                                                    .map(|t| t.to_string())
-                                                                    .unwrap_or("".to_string()),
-                                                            });
-                                                        }
-                                                        Err(_err) => {
-                                                            println!("err: {:?}", _err.to_string());
-                                                            // Token verification failed, check if refresh token is present
-                                                            match cookies.get("t") {
-                                                                Some(refresh_token) => {
-                                                                    let refresh_claims = converted_key.verify_token::<AuthClaim>(&refresh_token, None);
+                                                                    match user {
+                                                                        Some(user) => {
+                                                                            let get_user_roles_query = format!(
+                                                                                "SELECT ->has_role.out.* FROM user:{}",
+                                                                                user.id.as_ref().map(|t| &t.id).expect("id")
+                                                                            );
+                                                                            let mut user_roles_res = db.query(get_user_roles_query).await?;
+                                                                            let user_roles: Option<SurrealRelationQueryResponse<SystemRole>> =
+                                                                                user_roles_res.take(0)?;
+                                                                            // println!("user_roles: {:?}", user_roles);
 
-                                                                    match refresh_claims {
-                                                                        Ok(refresh_claims) => {
-                                                                            println!("refresh_claims: {:?}", refresh_claims);
-                                                                            // TODO: Refresh token verification successful, issue new access token
-                                                                            // call sign_in mutation
-                                                                            let user: Option<User> =
-                                                                                db.select((
-                                                                                    "user",
-                                                                                    refresh_claims
-                                                                                        .subject
-                                                                                        .unwrap()
-                                                                                        .as_str(),
-                                                                                ))
-                                                                                .await?;
+                                                                            let auth_claim = AuthClaim {
+                                                                                roles: match user_roles {
+                                                                                    Some(existing_roles) => {
+                                                                                        // use id instead of Thing
+                                                                                        existing_roles
+                                                                                            .get("->has_role")
+                                                                                            .unwrap()
+                                                                                            .get("out")
+                                                                                            .unwrap()
+                                                                                            // existing_roles["->has_role"]["out"]
+                                                                                            .into_iter()
+                                                                                            .map(|role| {
+                                                                                                role.id
+                                                                                                    .as_ref()
+                                                                                                    .map(|t| &t.id)
+                                                                                                    .expect("id")
+                                                                                                    .to_raw()
+                                                                                            })
+                                                                                            .collect()
+                                                                                    }
+                                                                                    None => vec![],
+                                                                                },
+                                                                            };
 
-                                                                            match user {
-                                                                                Some(user) => {
-                                                                                    let get_user_roles_query = format!(
-                                                                                        "SELECT ->has_role.out.* FROM user:{}",
-                                                                                        user.id.as_ref().map(|t| &t.id).expect("id")
-                                                                                    );
-                                                                                    let mut user_roles_res = db.query(get_user_roles_query).await?;
-                                                                                    let user_roles: Option<SurrealRelationQueryResponse<SystemRole>> =
-                                                                                        user_roles_res.take(0)?;
-                                                                                    // println!("user_roles: {:?}", user_roles);
+                                                                            let mut token_claims = Claims::with_custom_claims(auth_claim.clone(), Duration::from_secs(15 * 60));
+                                                                            token_claims.subject =
+                                                                                Some(
+                                                                                    user.id
+                                                                                        .as_ref()
+                                                                                        .map(|t| {
+                                                                                            &t.id
+                                                                                        })
+                                                                                        .expect(
+                                                                                            "id",
+                                                                                        )
+                                                                                        .to_raw(),
+                                                                                );
 
-                                                                                    let auth_claim = AuthClaim {
-                                                                                        roles: match user_roles {
-                                                                                            Some(existing_roles) => {
-                                                                                                // use id instead of Thing
-                                                                                                existing_roles
-                                                                                                    .get("->has_role")
-                                                                                                    .unwrap()
-                                                                                                    .get("out")
-                                                                                                    .unwrap()
-                                                                                                    // existing_roles["->has_role"]["out"]
-                                                                                                    .into_iter()
-                                                                                                    .map(|role| {
-                                                                                                        role.id
-                                                                                                            .as_ref()
-                                                                                                            .map(|t| &t.id)
-                                                                                                            .expect("id")
-                                                                                                            .to_raw()
-                                                                                                    })
-                                                                                                    .collect()
-                                                                                            }
-                                                                                            None => vec![],
-                                                                                        },
-                                                                                    };
+                                                                            let token = converted_key
+                                                                                .authenticate(token_claims)
+                                                                                .unwrap();
 
-                                                                                    let mut token_claims = Claims::with_custom_claims(auth_claim.clone(), Duration::from_secs(15 * 60));
-                                                                                    token_claims.subject = Some(user.id.as_ref().map(|t| &t.id).expect("id").to_raw());
+                                                                            ctx.insert_http_header(
+                                                                                SET_COOKIE,
+                                                                                format!(
+                                                                                    "oauth_client="
+                                                                                ),
+                                                                            );
 
-                                                                                    let token = converted_key
-                                                                                        .authenticate(token_claims)
-                                                                                        .unwrap();
+                                                                            ctx.append_http_header(
+                                                                                "New-Access-Token",
+                                                                                format!(
+                                                                                    "Bearer {}",
+                                                                                    token
+                                                                                ),
+                                                                            );
 
-                                                                                    ctx.insert_http_header(
-                                                                                        SET_COOKIE,
-                                                                                        format!("oauth_client="),
-                                                                                    );
-
-                                                                                    ctx.append_http_header(
-                                                                                        "New-Access-Token",
-                                                                                        format!("Bearer {}", token),
-                                                                                    );
-
-                                                                                    return Ok(AuthStatus {
-                                                                                        is_auth: true,
-                                                                                        sub: user.id.as_ref().map(|t| &t.id).expect("id").to_raw(),
-                                                                                    });
-                                                                                }
-                                                                                None => {
-                                                                                    return Err(ExtendedError::new(
-                                                                                        "Not Authorized!",
-                                                                                        Some(403.to_string()),
-                                                                                    )
-                                                                                    .build());
-                                                                                }
-                                                                            }
-
-                                                                            // return Ok(
-                                                                            //     AuthStatus {
-                                                                            //         is_auth: false,
-                                                                            //     },
-                                                                            // );
+                                                                            return Ok(
+                                                                                AuthStatus {
+                                                                                    is_auth: true,
+                                                                                    sub: user
+                                                                                        .id
+                                                                                        .as_ref()
+                                                                                        .map(|t| {
+                                                                                            &t.id
+                                                                                        })
+                                                                                        .expect(
+                                                                                            "id",
+                                                                                        )
+                                                                                        .to_raw(),
+                                                                                },
+                                                                            );
                                                                         }
-                                                                        Err(_err) => {
-                                                                            // Refresh token verification failed
+                                                                        None => {
                                                                             return Err(ExtendedError::new(
-                                                                                        "Not Authorized!",
-                                                                                        Some(403.to_string())
-                                                                                    ).build());
+                                                                                "Not Authorized!",
+                                                                                Some(403.to_string()),
+                                                                            )
+                                                                            .build());
                                                                         }
                                                                     }
                                                                 }
-                                                                None => Err(ExtendedError::new(
-                                                                    "Not Authorized!",
-                                                                    Some(403.to_string()),
-                                                                )
-                                                                .build()),
+                                                                Err(_err) => {
+                                                                    // Refresh token verification failed
+                                                                    return Err(
+                                                                        ExtendedError::new(
+                                                                            "Not Authorized!",
+                                                                            Some(403.to_string()),
+                                                                        )
+                                                                        .build(),
+                                                                    );
+                                                                }
                                                             }
-                                                            // return Err(Error::new("Not Authorized!"));
                                                         }
+                                                        None => Err(ExtendedError::new(
+                                                            "Not Authorized!",
+                                                            Some(403.to_string()),
+                                                        )
+                                                        .build()),
                                                     }
                                                 }
-                                                None => Err(ExtendedError::new(
-                                                    "Invalid request!",
-                                                    Some(400.to_string()),
-                                                )
-                                                .build()),
                                             }
+
                                         } else {
                                             let oauth_client_name =
                                                 oauth::OAuthClientName::from_str(oauth_client);
