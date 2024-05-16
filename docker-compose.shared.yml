@@ -26,10 +26,9 @@ services:
       - app-tier
     build:
       context: .
-      dockerfile: Dockerfile-Wasm
+      dockerfile: Dockerfile
       args:
         SERVICE_NAME: shared-service
-        # BUILDPLATFORM: wasi/wasm
     volumes:
       - ./services/shared-service/src/database/schemas/schemas.surql:/usr/src/db/schemas.surql
     environment:
