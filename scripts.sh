@@ -23,3 +23,6 @@ function start_service() {
         echo "Invalid service name"
     fi
 }
+
+# docker-compose --env-file prod.env -f docker-compose.yml -f docker-compose.acl.yml -f docker-compose.shared.yml up --build
+# docker-compose --env-file prod.env -f docker-compose.yml -f docker-compose.acl.yml --build

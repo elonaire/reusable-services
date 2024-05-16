@@ -1,17 +1,17 @@
-use std::collections::HashMap;
-use std::{env, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use async_graphql::{Context, Error, Object, Upload};
 use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_s3::{presigning::PresigningConfig, Client as AWSClient};
-use axum::{http::HeaderMap, Extension};
-use gql_client::Client as GQLClient;
+use axum::Extension;
+// use gql_client::Client as GQLClient;
 
-use lib::utils::{custom_error::ExtendedError, auth::DecodeTokenResponse};
+use lib::utils::custom_error::ExtendedError;
 use surrealdb::{engine::remote::ws::Client as SurrealClient, Surreal};
 
 use crate::graphql::schemas::user;
 use crate::graphql::schemas::{file::TestResponse, user::UserProfessionalInfo};
+use crate::middleware::auth::check_auth_from_acl;
 
 // const CHUNK_SIZE: u64 = 1024 * 1024 * 5; // 5MB
 
@@ -120,94 +120,168 @@ impl Mutation {
             .data::<Extension<Arc<Surreal<SurrealClient>>>>()
             .unwrap();
 
-        match ctx.data_opt::<HeaderMap>() {
-            Some(headers) => {
-                // check auth status from ACL service(graphql query)
-                let gql_query = r#"
-                    mutation Mutation {
-                        decodeToken
-                    }
-                "#;
+        let auth_res_from_acl = check_auth_from_acl(ctx).await?;
 
-                match headers.get("Authorization") {
-                    Some(auth_header) => {
-                        println!("auth_header: {:?}", auth_header.to_str().unwrap());
-                        // let mut auth_status = String::new();
-                        // println!("auth_status: {:?}", auth_status);
-                        let mut auth_headers = HashMap::new();
-                        auth_headers.insert("Authorization", auth_header.to_str().unwrap());
+        match auth_res_from_acl {
+            Some(auth_status) => {
+                let id_added = crate::middleware::user_id::add_user_id_if_not_exists(
+                    ctx,
+                    auth_status.decode_token.clone(),
+                ).await;
 
-                        let endpoint = env::var("OAUTH_SERVICE")
-                        .expect("Missing the OAUTH_SERVICE environment variable.");
-
-                        let client = GQLClient::new_with_headers(endpoint, auth_headers);
-
-                        let auth_response = client.query::<DecodeTokenResponse>(gql_query).await;
-
-                        println!("auth_response: {:?}", auth_response);
-                        match auth_response {
-                            Ok(auth_status) => {
-                                // if auth_status.unwrap().is_auth {
-
-                                // } else {
-
-                                // }
-                                match auth_status {
-                                    Some(auth_status) => {
-                                        // TODO: Might use this later or just leave it to middleware to handle
-                                        let id_added = crate::middleware::user_id::add_user_id_if_not_exists(
-                                            ctx,
-                                            auth_status.decode_token.clone(),
-                                        ).await;
-
-                                        if !id_added {
-                                            return Err(ExtendedError::new(
-                                                "Failed to add user_id",
-                                                Some(500.to_string()),
-                                            )
-                                            .build());
-                                        }
-
-                                        let response: Vec<UserProfessionalInfo> = db
-                                            .create("professional_details")
-                                            .content(UserProfessionalInfo {
-                                                ..professional_details
-                                            })
-                                            .await
-                                            .map_err(|e| Error::new(e.to_string()))?;
-
-                                        let mut user_from_db_res = db
-                                            .query("SELECT * FROM type::table($table) WHERE user_id = $user_id LIMIT 1")
-                                            .bind(("table", "user_id"))
-                                            .bind(("user_id", auth_status.decode_token.clone()))
-                                            .await?;
-
-                                        let user_from_db: Option<user::User> = user_from_db_res.take(0).unwrap();
-
-                                        let _relate_to_user = db
-                                        .query("RELATE type::record($user)->has_professional_details->type::record($professional_details)")
-                                        .bind(("user", format!("user_id:{}", user_from_db.unwrap().id.as_ref().unwrap().to_raw())))
-                                        .bind(("professional_details", format!("professional_details:{}", response[0].id.as_ref().unwrap().to_raw())))
-                                        .await;
-
-                                        Ok(response)
-                                    }
-                                    None => Err(ExtendedError::new(
-                                        "Not Authorized!",
-                                        Some(403.to_string()),
-                                    )
-                                    .build()),
-                                }
-                            }
-                            Err(e) => {
-                                Err(ExtendedError::new(e.message(), Some(403.to_string())).build())
-                            }
-                        }
-                    }
-                    None => {
-                        Err(ExtendedError::new("Not Authorized!", Some(403.to_string())).build())
-                    }
+                if !id_added {
+                    return Err(ExtendedError::new(
+                        "Failed to add user_id",
+                        Some(500.to_string()),
+                    )
+                    .build());
                 }
+
+                let response: Vec<UserProfessionalInfo> = db
+                    .create("professional_details")
+                    .content(UserProfessionalInfo {
+                        ..professional_details
+                    })
+                    .await
+                    .map_err(|e| Error::new(e.to_string()))?;
+
+                let mut user_from_db_res = db
+                    .query("SELECT * FROM type::table($table) WHERE user_id = $user_id LIMIT 1")
+                    .bind(("table", "user_id"))
+                    .bind(("user_id", auth_status.decode_token.clone()))
+                    .await?;
+
+                let user_from_db: Option<user::User> = user_from_db_res.take(0).unwrap();
+
+                let relate_to_user_query = format!("
+                    RELATE {}->has_professional_details->{} CONTENT {{
+                        in: {},
+                        out: {}
+                    }}
+                ", user_from_db.clone().unwrap().id.as_ref().unwrap().to_raw(), response[0].clone().id.as_ref().unwrap().to_raw(), user_from_db.clone().unwrap().id.as_ref().unwrap().to_raw(), response[0].clone().id.as_ref().unwrap().to_raw());
+
+                let _relate_to_user = db
+                .query(relate_to_user_query)
+                .await
+                .map_err(|e| Error::new(e.to_string()))?;
+
+                Ok(response)
+            }
+            None => Err(ExtendedError::new("Not Authorized!", Some(403.to_string())).build()),
+        }
+    }
+
+    pub async fn add_user_service(
+        &self,
+        ctx: &Context<'_>,
+        user_service: user::UserService,
+    ) -> async_graphql::Result<Vec<user::UserService>> {
+        let db = ctx
+            .data::<Extension<Arc<Surreal<SurrealClient>>>>()
+            .unwrap();
+
+        let auth_res_from_acl = check_auth_from_acl(ctx).await?;
+
+        match auth_res_from_acl {
+            Some(auth_status) => {
+                let id_added = crate::middleware::user_id::add_user_id_if_not_exists(
+                    ctx,
+                    auth_status.decode_token.clone(),
+                ).await;
+
+                if !id_added {
+                    return Err(ExtendedError::new(
+                        "Failed to add user_id",
+                        Some(500.to_string()),
+                    )
+                    .build());
+                }
+
+                let response: Vec<user::UserService> = db
+                    .create("service")
+                    .content(user_service)
+                    .await
+                    .map_err(|e| Error::new(e.to_string()))?;
+
+                let mut user_from_db_res = db
+                    .query("SELECT * FROM type::table($table) WHERE user_id = $user_id LIMIT 1")
+                    .bind(("table", "user_id"))
+                    .bind(("user_id", auth_status.decode_token.clone()))
+                    .await?;
+
+                let user_from_db: Option<user::User> = user_from_db_res.take(0).unwrap();
+
+                let relate_to_user_query = format!("
+                    RELATE {}->offers_service->{} CONTENT {{
+                        in: {},
+                        out: {}
+                    }}
+                ", user_from_db.clone().unwrap().id.as_ref().unwrap().to_raw(), response[0].clone().id.as_ref().unwrap().to_raw(), user_from_db.clone().unwrap().id.as_ref().unwrap().to_raw(), response[0].clone().id.as_ref().unwrap().to_raw());
+
+                let _relate_to_user = db
+                .query(relate_to_user_query)
+                .await
+                .map_err(|e| Error::new(e.to_string()))?;
+
+                Ok(response)
+            }
+            None => Err(ExtendedError::new("Not Authorized!", Some(403.to_string())).build()),
+        }
+    }
+
+    pub async fn add_portfolio_item(
+        &self,
+        ctx: &Context<'_>,
+        portfolio_item: user::UserPortfolio,
+    ) -> async_graphql::Result<Vec<user::UserPortfolio>> {
+        let db = ctx
+            .data::<Extension<Arc<Surreal<SurrealClient>>>>()
+            .unwrap();
+
+        let auth_res_from_acl = check_auth_from_acl(ctx).await?;
+
+        match auth_res_from_acl {
+            Some(auth_status) => {
+                let id_added = crate::middleware::user_id::add_user_id_if_not_exists(
+                    ctx,
+                    auth_status.decode_token.clone(),
+                ).await;
+
+                if !id_added {
+                    return Err(ExtendedError::new(
+                        "Failed to add user_id",
+                        Some(500.to_string()),
+                    )
+                    .build());
+                }
+
+                let response: Vec<user::UserPortfolio> = db
+                    .create("portfolio")
+                    .content(portfolio_item)
+                    .await
+                    .map_err(|e| Error::new(e.to_string()))?;
+
+                let mut user_from_db_res = db
+                    .query("SELECT * FROM type::table($table) WHERE user_id = $user_id LIMIT 1")
+                    .bind(("table", "user_id"))
+                    .bind(("user_id", auth_status.decode_token.clone()))
+                    .await?;
+
+                let user_from_db: Option<user::User> = user_from_db_res.take(0).unwrap();
+
+                let relate_to_user_query = format!("
+                    RELATE {}->has_portfolio->{} CONTENT {{
+                        in: {},
+                        out: {}
+                    }}
+                ", user_from_db.clone().unwrap().id.as_ref().unwrap().to_raw(), response[0].clone().id.as_ref().unwrap().to_raw(), user_from_db.clone().unwrap().id.as_ref().unwrap().to_raw(), response[0].clone().id.as_ref().unwrap().to_raw());
+
+                let _relate_to_user = db
+                .query(relate_to_user_query)
+                .await
+                .map_err(|e| Error::new(e.to_string()))?;
+
+                Ok(response)
             }
             None => Err(ExtendedError::new("Not Authorized!", Some(403.to_string())).build()),
         }
