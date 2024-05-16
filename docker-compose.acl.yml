@@ -25,9 +25,10 @@ services:
       - app-tier
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile-Wasm
       args:
         SERVICE_NAME: acl-service
+        # BUILDPLATFORM: wasi/wasm
     volumes:
       - ./services/acl-service/src/database/schemas/schemas.surql:/usr/src/db/schemas.surql
     environment:

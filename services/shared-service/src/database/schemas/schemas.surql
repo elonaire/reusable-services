@@ -26,12 +26,12 @@ DEFINE TABLE portfolio SCHEMAFULL;
 DEFINE FIELD title ON TABLE portfolio TYPE string;
 DEFINE FIELD description ON TABLE portfolio TYPE string;
 DEFINE FIELD start_date ON TABLE portfolio TYPE string;
-DEFINE FIELD end_date ON TABLE portfolio TYPE string;
+DEFINE FIELD end_date ON TABLE portfolio TYPE option<string>;
 DEFINE FIELD link ON TABLE portfolio TYPE string;
 DEFINE FIELD image ON TABLE portfolio TYPE string;
 DEFINE FIELD category ON TABLE portfolio TYPE string
 -- Allow only these values in the array
-  ASSERT $value INSIDE ["JavaScript", "Rust", "Databases", "Cloud", "DevOps"];
+  ASSERT $value INSIDE ["JavaScript", "Rust", "Database", "Cloud", "DevOps"];
 
 -- Relationship between user and portfolio
 DEFINE TABLE has_portfolio SCHEMAFULL;
@@ -93,7 +93,7 @@ DEFINE FIELD author ON TABLE blog_post TYPE string;
 DEFINE FIELD image ON TABLE blog_post TYPE string;
 DEFINE FIELD category ON TABLE blog_post TYPE string
 -- Allow only these values in the array
-  ASSERT $value INSIDE ["WebDevelopment", "MobileDevelopment", "AI", "Technology", "Lifestyle"];
+  ASSERT $value INSIDE ["WebDevelopment", "MobileDevelopment", "ArtificialIntelligence", "Technology", "Lifestyle"];
 DEFINE FIELD link ON TABLE blog_post TYPE string;
 DEFINE FIELD status ON TABLE blog_post TYPE string
 -- Allow only these values in the array
@@ -191,6 +191,9 @@ DEFINE TABLE skill SCHEMAFULL;
 -- define some fields.
 DEFINE FIELD name ON TABLE skill TYPE string;
 DEFINE FIELD image ON TABLE skill TYPE string;
+DEFINE FIELD level ON TABLE skill TYPE string
+-- Allow only these values in the array
+  ASSERT $value INSIDE ["Beginner", "Intermediate", "Expert"];
 
 -- Relationship between user and skill
 DEFINE TABLE user_has_skill SCHEMAFULL;
