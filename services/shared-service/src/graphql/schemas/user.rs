@@ -59,7 +59,6 @@ pub enum UserResumeSection {
     Education,
     Experience,
     Achievements,
-    Skills,
     Projects,
     Certifications,
     Volunteer,
@@ -89,6 +88,15 @@ pub struct UserSkill {
     pub image: String,
     pub name: String,
     pub level: UserSkillLevel,
+    pub r#type: UserSkillType,
+    pub start_date: String,
+}
+
+// UserSkillType enum
+#[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
+pub enum UserSkillType {
+    Technical,
+    Soft,
 }
 
 // UserSkillLevel enum

@@ -56,7 +56,7 @@ DEFINE TABLE resume SCHEMAFULL;
 -- define some fields.
 DEFINE FIELD section ON TABLE resume TYPE string
 -- Allow only these values in the array
-  ASSERT $value INSIDE ["Education", "Experience", "Achievements", "Skills", "Projects", "Certifications", "Volunteer", "Publications", "Languages", "Interests", "References"];
+  ASSERT $value INSIDE ["Education", "Experience", "Achievements", "Projects", "Certifications", "Volunteer", "Publications", "Languages", "Interests", "References"];
 DEFINE FIELD title ON TABLE resume TYPE string;
 DEFINE FIELD more_info ON TABLE resume TYPE string;
 DEFINE FIELD start_date ON TABLE resume VALUE <datetime>$value;
@@ -154,26 +154,19 @@ DEFINE FIELD created_at ON TABLE comment TYPE datetime
 DEFINE FIELD updated_at ON TABLE comment TYPE datetime
   VALUE time::now();
 
--- Relationship between user and comment
-DEFINE TABLE user_has_comment SCHEMAFULL;
-DEFINE INDEX userCommentIndex ON TABLE user_has_comment
+-- Relationship between user, blog_post and comment
+DEFINE TABLE has_comment SCHEMAFULL;
+DEFINE INDEX commentIndex ON TABLE has_comment
 COLUMNS in, out UNIQUE;
-DEFINE FIELD in ON TABLE user_has_comment TYPE record<user_id>;
-DEFINE FIELD out ON TABLE user_has_comment TYPE record<comment>;
-
--- Relationship between blog_post and comment
-DEFINE TABLE blog_post_has_comment SCHEMAFULL;
-DEFINE INDEX blogPostCommentIndex ON TABLE blog_post_has_comment
-COLUMNS in, out UNIQUE;
-DEFINE FIELD in ON TABLE blog_post_has_comment TYPE record<blog_post>;
-DEFINE FIELD out ON TABLE blog_post_has_comment TYPE record<comment>;
+DEFINE FIELD in ON TABLE has_comment TYPE record;
+DEFINE FIELD out ON TABLE has_comment TYPE record<comment>;
 
 -- Relationship between comment and comment
-DEFINE TABLE comment_has_reply SCHEMAFULL;
-DEFINE INDEX commentCommentIndex ON TABLE comment_has_reply
+DEFINE TABLE has_reply SCHEMAFULL;
+DEFINE INDEX commentCommentIndex ON TABLE has_reply
 COLUMNS in, out UNIQUE;
-DEFINE FIELD in ON TABLE comment_has_reply TYPE record<comment>;
-DEFINE FIELD out ON TABLE comment_has_reply TYPE record<comment>;
+DEFINE FIELD in ON TABLE has_reply TYPE record<comment>;
+DEFINE FIELD out ON TABLE has_reply TYPE record<comment>;
 
 -- A schema-full reaction table.
 DEFINE TABLE reaction SCHEMAFULL;
@@ -184,26 +177,12 @@ DEFINE FIELD type ON TABLE reaction TYPE string
 DEFINE FIELD created_at ON TABLE reaction TYPE datetime
   DEFAULT time::now();
 
--- Relationship between user and reaction
-DEFINE TABLE user_has_reaction SCHEMAFULL;
-DEFINE INDEX userReactionIndex ON TABLE user_has_reaction
+-- Relationship between user, blog_post, comment and reaction
+DEFINE TABLE has_reaction SCHEMAFULL;
+DEFINE INDEX reactionIndex ON TABLE has_reaction
 COLUMNS in, out UNIQUE;
-DEFINE FIELD in ON TABLE user_has_reaction TYPE record<user_id>;
-DEFINE FIELD out ON TABLE user_has_reaction TYPE record<reaction>;
-
--- Relationship between blog post and reaction
-DEFINE TABLE blog_post_has_reaction SCHEMAFULL;
-DEFINE INDEX blogPostReactionIndex ON TABLE blog_post_has_reaction
-COLUMNS in, out UNIQUE;
-DEFINE FIELD in ON TABLE blog_post_has_reaction TYPE record<blog_post>;
-DEFINE FIELD out ON TABLE blog_post_has_reaction TYPE record<reaction>;
-
--- Relationship between comment and reaction
-DEFINE TABLE comment_has_reaction SCHEMAFULL;
-DEFINE INDEX commentReactionIndex ON TABLE comment_has_reaction
-COLUMNS in, out UNIQUE;
-DEFINE FIELD in ON TABLE comment_has_reaction TYPE record<comment>;
-DEFINE FIELD out ON TABLE comment_has_reaction TYPE record<reaction>;
+DEFINE FIELD in ON TABLE has_reaction TYPE record;
+DEFINE FIELD out ON TABLE has_reaction TYPE record<reaction>;
 
 -- A schema-full message table.
 DEFINE TABLE message SCHEMAFULL;
@@ -225,11 +204,11 @@ DEFINE FIELD created_at ON TABLE file TYPE datetime
   DEFAULT time::now();
 
 -- Relationship between user and file
-DEFINE TABLE user_has_file SCHEMAFULL;
-DEFINE INDEX userFileIndex ON TABLE user_has_file
+DEFINE TABLE has_file SCHEMAFULL;
+DEFINE INDEX fileIndex ON TABLE has_file
 COLUMNS in, out UNIQUE;
-DEFINE FIELD in ON TABLE user_has_file TYPE record<user_id>;
-DEFINE FIELD out ON TABLE user_has_file TYPE record<file>;
+DEFINE FIELD in ON TABLE has_file TYPE record<user_id>;
+DEFINE FIELD out ON TABLE has_file TYPE record<file>;
 
 -- A schema-full notification table.
 DEFINE TABLE notification SCHEMAFULL;
@@ -242,10 +221,14 @@ DEFINE FIELD created_at ON TABLE notification TYPE datetime
 DEFINE TABLE skill SCHEMAFULL;
 -- define some fields.
 DEFINE FIELD name ON TABLE skill TYPE string;
-DEFINE FIELD image ON TABLE skill TYPE string;
-DEFINE FIELD level ON TABLE skill TYPE string
+DEFINE FIELD type ON TABLE skill TYPE string
 -- Allow only these values in the array
-  ASSERT $value INSIDE ["Beginner", "Intermediate", "Advanced", "Expert"];
+  ASSERT $value INSIDE ["Technical", "Soft"];
+DEFINE FIELD image ON TABLE skill TYPE string;
+DEFINE FIELD level ON TABLE skill TYPE option<string>
+-- Allow only these values in the array
+  ASSERT $value INSIDE ["Beginner", "Intermediate", "Advanced", "Expert", None]
+  DEFAULT None;
 DEFINE FIELD start_date ON TABLE skill VALUE <datetime>$value;
 DEFINE FIELD created_at ON TABLE skill TYPE datetime
   DEFAULT time::now();
@@ -253,8 +236,8 @@ DEFINE FIELD updated_at ON TABLE skill TYPE datetime
   VALUE time::now();
 
 -- Relationship between user and skill
-DEFINE TABLE user_has_skill SCHEMAFULL;
-DEFINE INDEX userSkillIndex ON TABLE user_has_skill
+DEFINE TABLE has_skill SCHEMAFULL;
+DEFINE INDEX skillIndex ON TABLE has_skill
 COLUMNS in, out UNIQUE;
-DEFINE FIELD in ON TABLE user_has_skill TYPE record<user_id>;
-DEFINE FIELD out ON TABLE user_has_skill TYPE record<skill>;
+DEFINE FIELD in ON TABLE has_skill TYPE record<user_id>;
+DEFINE FIELD out ON TABLE has_skill TYPE record<skill>;

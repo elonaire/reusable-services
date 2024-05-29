@@ -515,9 +515,9 @@ impl Mutation {
                     LET $blog_comment_id = (SELECT VALUE id FROM $blog_comment);
                     
                     -- Relate the comment to the blog post
-                    RELATE $blog_post->blog_post_has_comment->$blog_comment_id;
+                    RELATE $blog_post->has_comment->$blog_comment_id;
                     -- Relate the comment to the user
-                    RELATE $user->user_has_comment->$blog_comment_id;
+                    RELATE $user->has_comment->$blog_comment_id;
                     RETURN $blog_comment;
                     COMMIT TRANSACTION;
                     "
@@ -579,11 +579,8 @@ impl Mutation {
                     LET $comment_reply_id = (SELECT VALUE id FROM $comment_reply);
                     
                     -- Relate the comment reply to the parent comment and the user
-                    RELATE $parent_comment->comment_has_reply->$comment_reply_id;
-                    RELATE $user->user_has_comment->$comment_reply_id;
-
-                    -- Relate the comment reply to the blog post
-                    RELATE $blog_post->blog_post_has_comment->$comment_reply_id;
+                    RELATE $parent_comment->has_reply->$comment_reply_id;
+                    RELATE $user->has_comment->$comment_reply_id;
 
                     RETURN $comment_reply;
                     COMMIT TRANSACTION;
@@ -646,10 +643,10 @@ impl Mutation {
                     LET $reaction_id = (SELECT VALUE id FROM $reaction);
                     
                     -- Relate the reaction to the user
-                    RELATE $user->user_has_reaction->$reaction_id;
+                    RELATE $user->has_reaction->$reaction_id;
 
                     -- Relate the reaction to the blog post
-                    RELATE $blog_post->blog_post_has_reaction->$reaction_id;
+                    RELATE $blog_post->has_reaction->$reaction_id;
 
                     RETURN $reaction;
                     COMMIT TRANSACTION;
@@ -710,10 +707,10 @@ impl Mutation {
                     LET $reaction_id = (SELECT VALUE id FROM $reaction);
                     
                     -- Relate the reaction to the user
-                    RELATE $user->user_has_reaction->$reaction_id;
+                    RELATE $user->has_reaction->$reaction_id;
 
                     -- Relate the reaction to the comment
-                    RELATE $comment->comment_has_reaction->$reaction_id;
+                    RELATE $comment->has_reaction->$reaction_id;
 
                     RETURN $reaction;
                     COMMIT TRANSACTION;
