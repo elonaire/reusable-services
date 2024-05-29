@@ -30,8 +30,6 @@ impl Mutation {
         let response: Vec<User> = db
             .create("user")
             .content(User {
-                created_at: Some(chrono::Utc::now().to_rfc3339()),
-                updated_at: Some(chrono::Utc::now().to_rfc3339()),
                 oauth_client: None,
                 ..user
             })

@@ -9,7 +9,7 @@ use axum::Extension;
 use lib::utils::custom_error::ExtendedError;
 use surrealdb::{engine::remote::ws::Client as SurrealClient, Surreal};
 
-use crate::graphql::schemas::user;
+use crate::graphql::schemas::{blog, shared, user};
 use crate::graphql::schemas::{file::TestResponse, user::UserProfessionalInfo};
 use crate::middleware::auth::check_auth_from_acl;
 
@@ -127,43 +127,35 @@ impl Mutation {
                 let id_added = crate::middleware::user_id::add_user_id_if_not_exists(
                     ctx,
                     auth_status.decode_token.clone(),
-                ).await;
+                )
+                .await;
 
                 if !id_added {
-                    return Err(ExtendedError::new(
-                        "Failed to add user_id",
-                        Some(500.to_string()),
-                    )
-                    .build());
+                    return Err(
+                        ExtendedError::new("Failed to add user_id", Some(500.to_string())).build(),
+                    );
                 }
 
-                let response: Vec<UserProfessionalInfo> = db
-                    .create("professional_details")
-                    .content(UserProfessionalInfo {
-                        ..professional_details
-                    })
-                    .await
-                    .map_err(|e| Error::new(e.to_string()))?;
-
-                let mut user_from_db_res = db
-                    .query("SELECT * FROM type::table($table) WHERE user_id = $user_id LIMIT 1")
-                    .bind(("table", "user_id"))
-                    .bind(("user_id", auth_status.decode_token.clone()))
-                    .await?;
-
-                let user_from_db: Option<user::User> = user_from_db_res.take(0).unwrap();
-
-                let relate_to_user_query = format!("
-                    RELATE {}->has_professional_details->{} CONTENT {{
-                        in: {},
-                        out: {}
-                    }}
-                ", user_from_db.clone().unwrap().id.as_ref().unwrap().to_raw(), response[0].clone().id.as_ref().unwrap().to_raw(), user_from_db.clone().unwrap().id.as_ref().unwrap().to_raw(), response[0].clone().id.as_ref().unwrap().to_raw());
-
-                let _relate_to_user = db
-                .query(relate_to_user_query)
+                let mut database_transaction = db
+                .query(
+                    "
+                    BEGIN TRANSACTION;
+                    LET $professional_details = CREATE professional_details CONTENT $professional_details_input;
+                    LET $user = (SELECT id FROM type::table($table) WHERE user_id = $user_id LIMIT 1);
+                    
+                    LET $professional_details_id = (SELECT VALUE id FROM $professional_details);
+                    RELATE $user->has_professional_details->$professional_details_id;
+                    RETURN $professional_details;
+                    COMMIT TRANSACTION;    
+                    "
+                )
+                .bind(("professional_details_input", professional_details))
+                .bind(("table", "user_id"))
+                .bind(("user_id", auth_status.decode_token.clone()))
                 .await
                 .map_err(|e| Error::new(e.to_string()))?;
+
+                let response: Vec<UserProfessionalInfo> = database_transaction.take(0).unwrap();
 
                 Ok(response)
             }
@@ -187,41 +179,35 @@ impl Mutation {
                 let id_added = crate::middleware::user_id::add_user_id_if_not_exists(
                     ctx,
                     auth_status.decode_token.clone(),
-                ).await;
+                )
+                .await;
 
                 if !id_added {
-                    return Err(ExtendedError::new(
-                        "Failed to add user_id",
-                        Some(500.to_string()),
-                    )
-                    .build());
+                    return Err(
+                        ExtendedError::new("Failed to add user_id", Some(500.to_string())).build(),
+                    );
                 }
 
-                let response: Vec<user::UserService> = db
-                    .create("service")
-                    .content(user_service)
-                    .await
-                    .map_err(|e| Error::new(e.to_string()))?;
-
-                let mut user_from_db_res = db
-                    .query("SELECT * FROM type::table($table) WHERE user_id = $user_id LIMIT 1")
-                    .bind(("table", "user_id"))
-                    .bind(("user_id", auth_status.decode_token.clone()))
-                    .await?;
-
-                let user_from_db: Option<user::User> = user_from_db_res.take(0).unwrap();
-
-                let relate_to_user_query = format!("
-                    RELATE {}->offers_service->{} CONTENT {{
-                        in: {},
-                        out: {}
-                    }}
-                ", user_from_db.clone().unwrap().id.as_ref().unwrap().to_raw(), response[0].clone().id.as_ref().unwrap().to_raw(), user_from_db.clone().unwrap().id.as_ref().unwrap().to_raw(), response[0].clone().id.as_ref().unwrap().to_raw());
-
-                let _relate_to_user = db
-                .query(relate_to_user_query)
+                let mut database_transaction = db
+                .query(
+                    "
+                    BEGIN TRANSACTION;
+                    LET $user_service = CREATE service CONTENT $user_service_input;
+                    LET $user = (SELECT id FROM type::table($table) WHERE user_id = $user_id LIMIT 1);
+                    
+                    LET $user_service_id = (SELECT VALUE id FROM $user_service);
+                    RELATE $user->offers_service->$user_service_id;
+                    RETURN $user_service;
+                    COMMIT TRANSACTION;    
+                    "
+                )
+                .bind(("user_service_input", user_service))
+                .bind(("table", "user_id"))
+                .bind(("user_id", auth_status.decode_token.clone()))
                 .await
                 .map_err(|e| Error::new(e.to_string()))?;
+
+                let response: Vec<user::UserService> = database_transaction.take(0).unwrap();
 
                 Ok(response)
             }
@@ -245,41 +231,503 @@ impl Mutation {
                 let id_added = crate::middleware::user_id::add_user_id_if_not_exists(
                     ctx,
                     auth_status.decode_token.clone(),
-                ).await;
+                )
+                .await;
 
                 if !id_added {
-                    return Err(ExtendedError::new(
-                        "Failed to add user_id",
-                        Some(500.to_string()),
-                    )
-                    .build());
+                    return Err(
+                        ExtendedError::new("Failed to add user_id", Some(500.to_string())).build(),
+                    );
                 }
 
-                let response: Vec<user::UserPortfolio> = db
-                    .create("portfolio")
-                    .content(portfolio_item)
-                    .await
-                    .map_err(|e| Error::new(e.to_string()))?;
-
-                let mut user_from_db_res = db
-                    .query("SELECT * FROM type::table($table) WHERE user_id = $user_id LIMIT 1")
-                    .bind(("table", "user_id"))
-                    .bind(("user_id", auth_status.decode_token.clone()))
-                    .await?;
-
-                let user_from_db: Option<user::User> = user_from_db_res.take(0).unwrap();
-
-                let relate_to_user_query = format!("
-                    RELATE {}->has_portfolio->{} CONTENT {{
-                        in: {},
-                        out: {}
-                    }}
-                ", user_from_db.clone().unwrap().id.as_ref().unwrap().to_raw(), response[0].clone().id.as_ref().unwrap().to_raw(), user_from_db.clone().unwrap().id.as_ref().unwrap().to_raw(), response[0].clone().id.as_ref().unwrap().to_raw());
-
-                let _relate_to_user = db
-                .query(relate_to_user_query)
+                let mut database_transaction = db
+                .query(
+                    "
+                    BEGIN TRANSACTION;
+                    LET $portfolio_item = CREATE portfolio CONTENT $portfolio_item_input;
+                    LET $user = (SELECT id FROM type::table($table) WHERE user_id = $user_id LIMIT 1);
+                    
+                    LET $portfolio_item_id = (SELECT VALUE id FROM $portfolio_item);
+                    RELATE $user->has_portfolio->$portfolio_item_id;
+                    RETURN $portfolio_item;
+                    COMMIT TRANSACTION;    
+                    "
+                )
+                .bind(("portfolio_item_input", portfolio_item))
+                .bind(("table", "user_id"))
+                .bind(("user_id", auth_status.decode_token.clone()))
                 .await
                 .map_err(|e| Error::new(e.to_string()))?;
+
+                let response: Vec<user::UserPortfolio> = database_transaction.take(0).unwrap();
+
+                Ok(response)
+            }
+            None => Err(ExtendedError::new("Not Authorized!", Some(403.to_string())).build()),
+        }
+    }
+
+    pub async fn add_resume_item(
+        &self,
+        ctx: &Context<'_>,
+        resume_item: user::UserResume,
+    ) -> async_graphql::Result<Vec<user::UserResume>> {
+        let db = ctx
+            .data::<Extension<Arc<Surreal<SurrealClient>>>>()
+            .unwrap();
+
+        let auth_res_from_acl = check_auth_from_acl(ctx).await?;
+
+        match auth_res_from_acl {
+            Some(auth_status) => {
+                let id_added = crate::middleware::user_id::add_user_id_if_not_exists(
+                    ctx,
+                    auth_status.decode_token.clone(),
+                )
+                .await;
+
+                if !id_added {
+                    return Err(
+                        ExtendedError::new("Failed to add user_id", Some(500.to_string())).build(),
+                    );
+                }
+
+                let mut database_transaction = db
+                .query(
+                    "
+                    BEGIN TRANSACTION;
+                    LET $resume_item = CREATE resume CONTENT $resume_item_input;
+                    LET $user = (SELECT id FROM type::table($table) WHERE user_id = $user_id LIMIT 1);
+                    
+                    LET $resume_item_id = (SELECT VALUE id FROM $resume_item);
+                    RELATE $user->has_resume->$resume_item_id;
+                    RETURN $resume_item;
+                    COMMIT TRANSACTION;    
+                    "
+                )
+                .bind(("resume_item_input", resume_item))
+                .bind(("table", "user_id"))
+                .bind(("user_id", auth_status.decode_token.clone()))
+                .await
+                .map_err(|e| Error::new(e.to_string()))?;
+
+                let response: Vec<user::UserResume> = database_transaction.take(0).unwrap();
+
+                Ok(response)
+            }
+            None => Err(ExtendedError::new("Not Authorized!", Some(403.to_string())).build()),
+        }
+    }
+
+    pub async fn add_resume_item_achievement(
+        &self,
+        ctx: &Context<'_>,
+        resume_item_achievement: user::ResumeAchievement,
+        resume_id: String,
+    ) -> async_graphql::Result<Vec<user::ResumeAchievement>> {
+        let db = ctx
+            .data::<Extension<Arc<Surreal<SurrealClient>>>>()
+            .unwrap();
+
+        let auth_res_from_acl = check_auth_from_acl(ctx).await?;
+
+        match auth_res_from_acl {
+            Some(auth_status) => {
+                let id_added = crate::middleware::user_id::add_user_id_if_not_exists(
+                    ctx,
+                    auth_status.decode_token.clone(),
+                )
+                .await;
+
+                if !id_added {
+                    return Err(
+                        ExtendedError::new("Failed to add user_id", Some(500.to_string())).build(),
+                    );
+                }
+
+                let mut database_transaction = db
+                .query(
+                    "
+                    BEGIN TRANSACTION;
+                    LET $resume_item_achievement = CREATE achievement CONTENT $resume_item_achievement_input;
+                    LET $resume = (SELECT id FROM type::table($table) WHERE id = type::thing($resume_id) LIMIT 1);
+                    
+                    LET $resume_item_achievement_id = (SELECT VALUE id FROM $resume_item_achievement);
+                    RELATE $resume->has_achievement->$resume_item_achievement_id;
+                    RETURN $resume_item_achievement;
+                    COMMIT TRANSACTION;    
+                    "
+                )
+                .bind(("resume_item_achievement_input", resume_item_achievement))
+                .bind(("table", "resume"))
+                .bind(("resume_id", format!("resume:{}", resume_id)))
+                .await
+                .map_err(|e| Error::new(e.to_string()))?;
+
+                let response: Vec<user::ResumeAchievement> = database_transaction.take(0).unwrap();
+
+                Ok(response)
+            }
+            None => Err(ExtendedError::new("Not Authorized!", Some(403.to_string())).build()),
+        }
+    }
+
+    pub async fn add_skill(
+        &self,
+        ctx: &Context<'_>,
+        skill: user::UserSkill,
+    ) -> async_graphql::Result<Vec<user::UserSkill>> {
+        let db = ctx
+            .data::<Extension<Arc<Surreal<SurrealClient>>>>()
+            .unwrap();
+
+        let auth_res_from_acl = check_auth_from_acl(ctx).await?;
+
+        match auth_res_from_acl {
+            Some(auth_status) => {
+                let id_added = crate::middleware::user_id::add_user_id_if_not_exists(
+                    ctx,
+                    auth_status.decode_token.clone(),
+                )
+                .await;
+
+                if !id_added {
+                    return Err(
+                        ExtendedError::new("Failed to add user_id", Some(500.to_string())).build(),
+                    );
+                }
+
+                let mut database_transaction = db
+                .query(
+                    "
+                    BEGIN TRANSACTION;
+                    LET $skill = CREATE skill CONTENT $skill_input;
+                    LET $user = (SELECT id FROM type::table($table) WHERE user_id = $user_id LIMIT 1);
+                    
+                    LET $skill_id = (SELECT VALUE id FROM $skill);
+                    RELATE $user->has_skill->$skill_id;
+                    RETURN $skill;
+                    COMMIT TRANSACTION;    
+                    "
+                )
+                .bind(("skill_input", skill))
+                .bind(("table", "user_id"))
+                .bind(("user_id", auth_status.decode_token.clone()))
+                .await
+                .map_err(|e| Error::new(e.to_string()))?;
+
+                let response: Vec<user::UserSkill> = database_transaction.take(0).unwrap();
+
+                Ok(response)
+            }
+            None => Err(ExtendedError::new("Not Authorized!", Some(403.to_string())).build()),
+        }
+    }
+
+    pub async fn add_blog_post(
+        &self,
+        ctx: &Context<'_>,
+        blog_post: blog::BlogPost,
+    ) -> async_graphql::Result<Vec<blog::BlogPost>> {
+        let db = ctx
+            .data::<Extension<Arc<Surreal<SurrealClient>>>>()
+            .unwrap();
+
+        let auth_res_from_acl = check_auth_from_acl(ctx).await?;
+
+        match auth_res_from_acl {
+            Some(auth_status) => {
+                let id_added = crate::middleware::user_id::add_user_id_if_not_exists(
+                    ctx,
+                    auth_status.decode_token.clone(),
+                )
+                .await;
+
+                if !id_added {
+                    return Err(
+                        ExtendedError::new("Failed to add user_id", Some(500.to_string())).build(),
+                    );
+                }
+
+                let mut database_transaction = db
+                .query(
+                    "
+                    BEGIN TRANSACTION;
+                    LET $blog_post = CREATE blog_post CONTENT $blog_post_input;
+                    LET $user = (SELECT id FROM type::table($table) WHERE user_id = $user_id LIMIT 1);
+                    
+                    LET $blog_post_id = (SELECT VALUE id FROM $blog_post);
+                    RELATE $user->has_blog_post->$blog_post_id;
+                    RETURN $blog_post;
+                    COMMIT TRANSACTION;    
+                    "
+                )
+                .bind(("blog_post_input", blog_post))
+                .bind(("table", "user_id"))
+                .bind(("user_id", auth_status.decode_token.clone()))
+                .await
+                .map_err(|e| Error::new(e.to_string()))?;
+
+                let response: Vec<blog::BlogPost> = database_transaction.take(0).unwrap();
+
+                Ok(response)
+            }
+            None => Err(ExtendedError::new("Not Authorized!", Some(403.to_string())).build()),
+        }
+    }
+
+    pub async fn add_comment_to_blog_post(
+        &self,
+        ctx: &Context<'_>,
+        blog_comment: blog::BlogComment,
+        blog_post_id: String,
+    ) -> async_graphql::Result<Vec<blog::BlogComment>> {
+        let db = ctx
+            .data::<Extension<Arc<Surreal<SurrealClient>>>>()
+            .unwrap();
+
+        let auth_res_from_acl = check_auth_from_acl(ctx).await?;
+
+        match auth_res_from_acl {
+            Some(auth_status) => {
+                let id_added = crate::middleware::user_id::add_user_id_if_not_exists(
+                    ctx,
+                    auth_status.decode_token.clone(),
+                )
+                .await;
+
+                if !id_added {
+                    return Err(
+                        ExtendedError::new("Failed to add user_id", Some(500.to_string())).build(),
+                    );
+                }
+
+                let mut database_transaction = db
+                .query(
+                    "
+                    BEGIN TRANSACTION;
+                    -- Get the user
+                    LET $user = (SELECT id FROM type::table($user_table) WHERE user_id = $user_id LIMIT 1);
+                    -- Get the blog post
+                    LET $blog_post = (SELECT id FROM type::table($blog_table) WHERE id = type::thing($blog_post_id) LIMIT 1);
+                    -- Create comment
+                    LET $blog_comment = CREATE comment CONTENT $blog_comment_input;
+                    LET $blog_comment_id = (SELECT VALUE id FROM $blog_comment);
+                    
+                    -- Relate the comment to the blog post
+                    RELATE $blog_post->blog_post_has_comment->$blog_comment_id;
+                    -- Relate the comment to the user
+                    RELATE $user->user_has_comment->$blog_comment_id;
+                    RETURN $blog_comment;
+                    COMMIT TRANSACTION;
+                    "
+                )
+                .bind(("blog_comment_input", blog_comment))
+                .bind(("blog_table", "blog_post"))
+                .bind(("blog_post_id", format!("blog_post:{}", blog_post_id)))
+                .bind(("user_id", auth_status.decode_token.clone()))
+                .bind(("user_table", "user_id"))
+                .await
+                .map_err(|e| Error::new(e.to_string()))?;
+
+                let response: Vec<blog::BlogComment> = database_transaction.take(0).unwrap();
+
+                Ok(response)
+            }
+            None => Err(ExtendedError::new("Not Authorized!", Some(403.to_string())).build()),
+        }
+    }
+
+    pub async fn reply_to_a_comment(
+        &self,
+        ctx: &Context<'_>,
+        blog_comment: blog::BlogComment,
+        comment_id: String,
+        blog_post_id: String,
+    ) -> async_graphql::Result<Vec<blog::BlogComment>> {
+        let db = ctx
+            .data::<Extension<Arc<Surreal<SurrealClient>>>>()
+            .unwrap();
+
+        let auth_res_from_acl = check_auth_from_acl(ctx).await?;
+
+        match auth_res_from_acl {
+            Some(auth_status) => {
+                let id_added = crate::middleware::user_id::add_user_id_if_not_exists(
+                    ctx,
+                    auth_status.decode_token.clone(),
+                )
+                .await;
+
+                if !id_added {
+                    return Err(
+                        ExtendedError::new("Failed to add user_id", Some(500.to_string())).build(),
+                    );
+                }
+
+                let mut database_transaction = db
+                .query(
+                    "
+                    BEGIN TRANSACTION;
+                    -- Get the user, parent comment and blog post
+                    LET $parent_comment = (SELECT id FROM type::table($comment_table) WHERE id = type::thing($comment_id) LIMIT 1);
+                    LET $user = (SELECT id FROM type::table($user_table) WHERE user_id = $user_id LIMIT 1);
+                    LET $blog_post = (SELECT id FROM type::table($blog_table) WHERE id = type::thing($blog_post_id) LIMIT 1);
+
+                    -- Create comment reply
+                    LET $comment_reply = CREATE comment CONTENT $blog_comment_input;
+                    LET $comment_reply_id = (SELECT VALUE id FROM $comment_reply);
+                    
+                    -- Relate the comment reply to the parent comment and the user
+                    RELATE $parent_comment->comment_has_reply->$comment_reply_id;
+                    RELATE $user->user_has_comment->$comment_reply_id;
+
+                    -- Relate the comment reply to the blog post
+                    RELATE $blog_post->blog_post_has_comment->$comment_reply_id;
+
+                    RETURN $comment_reply;
+                    COMMIT TRANSACTION;
+                    "
+                )
+                .bind(("blog_comment_input", blog_comment))
+                .bind(("comment_table", "comment"))
+                .bind(("comment_id", format!("comment:{}", comment_id)))
+                .bind(("user_id", auth_status.decode_token.clone()))
+                .bind(("user_table", "user_id"))
+                .bind(("blog_table", "blog_post"))
+                .bind(("blog_post_id", format!("blog_post:{}", blog_post_id)))
+                .await
+                .map_err(|e| Error::new(e.to_string()))?;
+
+                let response: Vec<blog::BlogComment> = database_transaction.take(0).unwrap();
+
+                Ok(response)
+            }
+            None => Err(ExtendedError::new("Not Authorized!", Some(403.to_string())).build()),
+        }
+    }
+
+    pub async fn react_to_blog_post(
+        &self,
+        ctx: &Context<'_>,
+        reaction: shared::Reaction,
+        blog_post_id: String,
+    ) -> async_graphql::Result<Vec<shared::Reaction>> {
+        let db = ctx
+            .data::<Extension<Arc<Surreal<SurrealClient>>>>()
+            .unwrap();
+
+        let auth_res_from_acl = check_auth_from_acl(ctx).await?;
+
+        match auth_res_from_acl {
+            Some(auth_status) => {
+                let id_added = crate::middleware::user_id::add_user_id_if_not_exists(
+                    ctx,
+                    auth_status.decode_token.clone(),
+                )
+                .await;
+
+                if !id_added {
+                    return Err(
+                        ExtendedError::new("Failed to add user_id", Some(500.to_string())).build(),
+                    );
+                }
+
+                let mut database_transaction = db
+                .query(
+                    "
+                    BEGIN TRANSACTION;
+                    -- Get the user and blog post
+                    LET $user = (SELECT id FROM type::table($user_table) WHERE user_id = $user_id LIMIT 1);
+                    LET $blog_post = (SELECT id FROM type::table($blog_table) WHERE id = type::thing($blog_post_id) LIMIT 1);
+
+                    -- Create reaction
+                    LET $reaction = CREATE reaction CONTENT $reaction_input;
+                    LET $reaction_id = (SELECT VALUE id FROM $reaction);
+                    
+                    -- Relate the reaction to the user
+                    RELATE $user->user_has_reaction->$reaction_id;
+
+                    -- Relate the reaction to the blog post
+                    RELATE $blog_post->blog_post_has_reaction->$reaction_id;
+
+                    RETURN $reaction;
+                    COMMIT TRANSACTION;
+                    "
+                )
+                .bind(("reaction_input", reaction))
+                .bind(("user_id", auth_status.decode_token.clone()))
+                .bind(("user_table", "user_id"))
+                .bind(("blog_table", "blog_post"))
+                .bind(("blog_post_id", format!("blog_post:{}", blog_post_id)))
+                .await
+                .map_err(|e| Error::new(e.to_string()))?;
+
+                let response: Vec<shared::Reaction> = database_transaction.take(0).unwrap();
+
+                Ok(response)
+            }
+            None => Err(ExtendedError::new("Not Authorized!", Some(403.to_string())).build()),
+        }
+    }
+
+    pub async fn react_to_blog_comment(
+        &self,
+        ctx: &Context<'_>,
+        reaction: shared::Reaction,
+        comment_id: String,
+    ) -> async_graphql::Result<Vec<shared::Reaction>> {
+        let db = ctx
+            .data::<Extension<Arc<Surreal<SurrealClient>>>>()
+            .unwrap();
+
+        let auth_res_from_acl = check_auth_from_acl(ctx).await?;
+
+        match auth_res_from_acl {
+            Some(auth_status) => {
+                let id_added = crate::middleware::user_id::add_user_id_if_not_exists(
+                    ctx,
+                    auth_status.decode_token.clone(),
+                )
+                .await;
+
+                if !id_added {
+                    return Err(
+                        ExtendedError::new("Failed to add user_id", Some(500.to_string())).build(),
+                    );
+                }
+
+                let mut database_transaction = db
+                .query(
+                    "
+                    BEGIN TRANSACTION;
+                    -- Get the user, comment and blog post
+                    LET $user = (SELECT id FROM type::table($user_table) WHERE user_id = $user_id LIMIT 1);
+                    LET $comment = (SELECT id FROM type::table($comment_table) WHERE id = type::thing($comment_id) LIMIT 1);
+
+                    -- Create reaction
+                    LET $reaction = CREATE reaction CONTENT $reaction_input;
+                    LET $reaction_id = (SELECT VALUE id FROM $reaction);
+                    
+                    -- Relate the reaction to the user
+                    RELATE $user->user_has_reaction->$reaction_id;
+
+                    -- Relate the reaction to the comment
+                    RELATE $comment->comment_has_reaction->$reaction_id;
+
+                    RETURN $reaction;
+                    COMMIT TRANSACTION;
+                    "
+                )
+                .bind(("reaction_input", reaction))
+                .bind(("user_id", auth_status.decode_token.clone()))
+                .bind(("user_table", "user_id"))
+                .bind(("comment_table", "comment"))
+                .bind(("comment_id", format!("comment:{}", comment_id)))
+                .await
+                .map_err(|e| Error::new(e.to_string()))?;
+
+                let response: Vec<shared::Reaction> = database_transaction.take(0).unwrap();
 
                 Ok(response)
             }

@@ -22,6 +22,7 @@ reqwest = { version = "0.11.6", features = ["json", "multipart"] }
 aws-config = { version = "1.1.1", features = ["behavior-version-latest"] }
 aws-sdk-s3 = "1.24.0"
 gql_client = "1.0.7"
+markdown = "1.0.0-alpha.17"
 
 [lints.rust]
 unsafe_code = "forbid"

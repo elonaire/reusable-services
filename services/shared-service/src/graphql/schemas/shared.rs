@@ -10,7 +10,6 @@ pub struct Reaction {
     #[graphql(skip)]
     pub id: Option<Thing>,
     pub r#type: ReactionType,
-    pub published_date: Option<String>,
 }
 
 // enum for ReactionType
