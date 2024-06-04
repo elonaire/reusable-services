@@ -46,12 +46,28 @@ pub struct UserResume {
     #[graphql(skip)]
     pub id: Option<Thing>,
     pub title: String,
-    pub description: String,
+    pub more_info: Option<String>,
     pub start_date: String,
     pub end_date: Option<String>,
-    pub link: String,
-    pub section: String,
+    pub link: Option<String>,
+    pub section: UserResumeSection,
 }
+
+// enum for UserResume section("Education", "Experience", "Achievements", "Skills", "Projects", "Certifications", "Volunteer", "Publications", "Languages", "Interests", "References")
+#[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
+pub enum UserResumeSection {
+    Education,
+    Experience,
+    Achievements,
+    Projects,
+    Certifications,
+    Volunteer,
+    Publications,
+    Languages,
+    Interests,
+    References,
+}
+
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
 #[graphql(input_name = "ResumeAchievementInput")]
@@ -71,7 +87,25 @@ pub struct UserSkill {
     pub id: Option<Thing>,
     pub image: String,
     pub name: String,
-    pub level: String,
+    pub level: UserSkillLevel,
+    pub r#type: UserSkillType,
+    pub start_date: String,
+}
+
+// UserSkillType enum
+#[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
+pub enum UserSkillType {
+    Technical,
+    Soft,
+}
+
+// UserSkillLevel enum
+#[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
+pub enum UserSkillLevel {
+    Beginner,
+    Intermediate,
+    Advanced,
+    Expert,
 }
 
 // UserService
@@ -95,7 +129,7 @@ impl UserProfessionalInfo {
     async fn years_of_experience(&self) -> u32 {
         // calculate years of experience from &self.start_date
         let parsed_start_date = DateTime::parse_from_rfc3339(&self.start_date).expect("Invalid date format");
-        let start_date_ymd = NaiveDate::from_ymd_opt(parsed_start_date.year(), parsed_start_date.month0(), parsed_start_date.day0()).unwrap();
+        let start_date_ymd = NaiveDate::from_ymd_opt(parsed_start_date.year(), parsed_start_date.month0(), parsed_start_date.day()).unwrap();
 
         let today = Utc::now().date_naive();
         today.years_since(start_date_ymd).unwrap()
@@ -118,13 +152,13 @@ impl UserPortfolio {
     async fn years_of_experience(&self) -> u32 {
         // calculate years of experience from &self.start_date
         let parsed_start_date = DateTime::parse_from_rfc3339(&self.start_date).expect("Invalid date format");
-        let start_date_ymd = NaiveDate::from_ymd_opt(parsed_start_date.year(), parsed_start_date.month0(), parsed_start_date.day0()).unwrap();
+        let start_date_ymd = NaiveDate::from_ymd_opt(parsed_start_date.year(), parsed_start_date.month0(), parsed_start_date.day()).unwrap();
 
         match &self.end_date {
             Some(end_date) => {
                 let parsed_end_date = DateTime::parse_from_rfc3339(end_date).expect("Invalid date format");
-                println!("parsed_end_date: {:?}", parsed_end_date.year());
-                let end_date_ymd = NaiveDate::from_ymd_opt(parsed_end_date.year(), parsed_end_date.month0(), parsed_end_date.day0()).unwrap();
+                
+                let end_date_ymd = NaiveDate::from_ymd_opt(parsed_end_date.year(), parsed_end_date.month0(), parsed_end_date.day()).unwrap();
 
                 end_date_ymd.years_since(start_date_ymd).unwrap()
             }
@@ -145,12 +179,12 @@ impl UserResume {
     async fn years_of_experience(&self) -> u32 {
         // calculate years of experience from &self.start_date
         let parsed_start_date = DateTime::parse_from_rfc3339(&self.start_date).expect("Invalid date format");
-        let start_date_ymd = NaiveDate::from_ymd_opt(parsed_start_date.year(), parsed_start_date.month0(), parsed_start_date.day0()).unwrap();
+        let start_date_ymd = NaiveDate::from_ymd_opt(parsed_start_date.year(), parsed_start_date.month0(), parsed_start_date.day()).unwrap();
 
         match &self.end_date {
             Some(end_date) => {
                 let parsed_end_date = DateTime::parse_from_rfc3339(end_date).expect("Invalid date format");
-                let end_date_ymd = NaiveDate::from_ymd_opt(parsed_end_date.year(), parsed_end_date.month0(), parsed_end_date.day0()).unwrap();
+                let end_date_ymd = NaiveDate::from_ymd_opt(parsed_end_date.year(), parsed_end_date.month0(), parsed_end_date.day()).unwrap();
 
                 end_date_ymd.years_since(start_date_ymd).unwrap()
             }

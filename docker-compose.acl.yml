@@ -6,7 +6,7 @@ networks:
 
 services:
   tt-acl-db:
-    image: surrealdb/surrealdb:v1.4.2
+    image: surrealdb/surrealdb:v1.5.1
     ports:
       - 8000:8000
     container_name: tt-acl-db

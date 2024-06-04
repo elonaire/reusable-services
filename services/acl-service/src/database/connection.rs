@@ -2,11 +2,18 @@ use std::fs::File;
 use std::io::Read;
 
 use dotenvy::dotenv;
+// use serde::Serialize;
 use surrealdb::{
     engine::remote::ws::{Client, Ws},
     opt::auth::Root,
     Result, Surreal,
 };
+
+// #[derive(Serialize)]
+// struct Credentials<'a> {
+//     username: &'a str,
+//     password: &'a str,
+// }
 
 pub async fn create_db_connection() -> Result<Surreal<Client>> {
     dotenv().ok();
@@ -17,15 +24,17 @@ pub async fn create_db_connection() -> Result<Surreal<Client>> {
     let db_password: String = std::env::var("DATABASE_PASSWORD").expect("DB_PASSWORD not set");
     let db_name: String = std::env::var("DATABASE_NAME_ACL").expect("DB_NAME not set");
     let db_namespace: String = std::env::var("DATABASE_NAMESPACE").expect("DB_NAMESPACE not set");
+    // let db_scope: String = std::env::var("DATABASE_SCOPE").expect("DB_SCOPE not set");
 
     let db_url = format!("{}:{}", db_host, db_port);
     // format!("{}:{}", db_host, db_port).as_str()
     println!("DB URL: {}", db_url);
     let db = Surreal::new::<Ws>(db_url).await?;
 
+    // Authenticate as root
     db.signin(Root {
-        username: db_user.as_str(),
-        password: db_password.as_str(),
+        username: db_user.clone().as_str(),
+        password: db_password.clone().as_str(),
     })
     .await?;
 

@@ -39,13 +39,19 @@ async fn main() -> Result<()> {
 
     println!("GraphiQL IDE: http://localhost:3002");
 
+    let origins = [
+        "http://localhost:8080".parse::<HeaderValue>().unwrap(),
+        "http://localhost:3002".parse::<HeaderValue>().unwrap(),
+        "http://localhost:3003".parse::<HeaderValue>().unwrap(),
+    ];
+
     let app = Router::new()
         .route("/", get(graphiql).post(graphql_handler))
         .layer(Extension(schema))
         .layer(Extension(db))
         .layer(
             CorsLayer::new()
-                .allow_origin("http://localhost:8080".parse::<HeaderValue>().unwrap())
+                .allow_origin(origins)
                 .allow_headers([AUTHORIZATION, ACCEPT, CONTENT_TYPE])
                 .allow_credentials(true)
                 .allow_methods(vec![Method::GET, Method::POST]),

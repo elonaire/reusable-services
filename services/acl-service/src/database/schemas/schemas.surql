@@ -10,7 +10,7 @@ DEFINE FIELD last_name ON TABLE user TYPE string;
 DEFINE FIELD gender ON TABLE user TYPE string
 -- Allow only these values in the array
   ASSERT $value INSIDE ["Male", "Female", "Other"];
-DEFINE FIELD dob ON TABLE user TYPE string;
+DEFINE FIELD dob ON TABLE user VALUE <datetime>$value;
 DEFINE FIELD email ON TABLE user TYPE string
   ASSERT string::is::email($value);
 DEFINE INDEX userEmailIndex ON TABLE user COLUMNS email UNIQUE;
@@ -19,11 +19,6 @@ DEFINE FIELD phone ON TABLE user TYPE string
   ASSERT string::len($value) == 10;
 DEFINE INDEX userPhoneIndex ON TABLE user COLUMNS phone UNIQUE;
 DEFINE FIELD password ON TABLE user TYPE string;
-DEFINE FIELD created_at ON TABLE user TYPE string;
-DEFINE FIELD updated_at ON TABLE user TYPE string;
--- DEFINE FIELD roles ON TABLE user TYPE array
---   DEFAULT RETURN fn::get_default_role();
--- DEFINE FIELD roles.* ON TABLE user TYPE record<role>;
 DEFINE EVENT user_created ON TABLE user WHEN $event = "CREATE" THEN (
     -- add default role to user
     fn::assign_default_role($after.id)
@@ -43,10 +38,10 @@ DEFINE FIELD bio ON TABLE user TYPE option<string>
   DEFAULT None;
 DEFINE FIELD website ON TABLE user TYPE option<string>
   DEFAULT None;
--- DEFINE FIELD professional_details ON TABLE user TYPE option<record<professional_details>>
---   DEFAULT None;
--- DEFINE FIELD cv_link ON TABLE user TYPE option<string>
---   DEFAULT None;
+DEFINE FIELD created_at ON TABLE user TYPE datetime
+  DEFAULT time::now();
+DEFINE FIELD updated_at ON TABLE user TYPE datetime
+  VALUE time::now();
 
 -- A schema-full role table.
 DEFINE TABLE role SCHEMAFULL;
@@ -55,6 +50,11 @@ DEFINE FIELD role_name ON TABLE role TYPE string
 -- Allow only these values in the array
   ASSERT $value INSIDE ["Admin", "User", "Guest"];
 DEFINE INDEX roleNameIndex ON TABLE role COLUMNS role_name UNIQUE;
+DEFINE FIELD created_at ON TABLE role TYPE datetime
+  DEFAULT time::now();
+DEFINE FIELD updated_at ON TABLE role TYPE datetime
+  VALUE time::now();
+
 
 -- Relationship between user and roles
 DEFINE TABLE has_role SCHEMAFULL;

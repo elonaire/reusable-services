@@ -4,9 +4,14 @@ use surrealdb::sql::Thing;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
 pub enum RoleName {
+    #[graphql(name = "User")]
     User,
+    #[graphql(name = "Admin")]
     Admin,
-    Guest
+    #[graphql(name = "Guest")]
+    Guest,
+    #[graphql(name = "SuperAdmin")]
+    SuperAdmin,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]

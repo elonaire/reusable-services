@@ -4,17 +4,17 @@ ARG SERVICE_NAME
 
 ENV SERVICE_NAME=${SERVICE_NAME}
 
-# RUN rustup target add wasm32-wasi
-RUN rustup target add x86_64-unknown-linux-musl
-RUN apt update && apt install -y musl-tools musl-dev libssl-dev
-RUN update-ca-certificates
+RUN rustup target add wasm32-wasi
+
+RUN apt update && apt install -y clang
 RUN mkdir -p /build
 WORKDIR /build
 COPY . .
-RUN cargo build --target x86_64-unknown-linux-musl --release --package ${SERVICE_NAME}
-# RUN chmod a+x /build/target/x86_64-unknown-linux-musl/release/${SERVICE_NAME}.wasm
+
+RUN cargo build --target wasm32-wasi --release --package ${SERVICE_NAME}
+RUN chmod a+x /build/target/wasm32-wasi/release/${SERVICE_NAME}.wasm
 
 FROM scratch
-COPY --from=0 /build/target/x86_64-unknown-linux-musl/release/${SERVICE_NAME} .
+COPY --from=0 /build/target/wasm32-wasi/release/${SERVICE_NAME} /${SERVICE_NAME}.wasm
 # Command to run
 CMD ./${SERVICE_NAME}

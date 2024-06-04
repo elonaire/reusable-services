@@ -9,7 +9,9 @@ use crate::middleware::oauth::OAuthClientName;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
 pub enum Gender {
+    #[graphql(name = "Male")]
     Male,
+    #[graphql(name = "Female")]
     Female,
 }
 
@@ -39,10 +41,6 @@ pub struct User {
     pub bio: Option<String>,
     pub website: Option<String>,
     pub address: Option<String>,
-    #[graphql(skip)]
-    pub professional_details: Option<Thing>,
-    #[graphql(skip)]
-    pub portfolio: Option<Vec<Thing>>,
 }
 
 #[ComplexObject]
@@ -189,30 +187,31 @@ pub struct Profession {
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
 #[graphql(input_name = "UserUpdateInput")]
 pub struct UserUpdate {
-    pub user_name: String,
-    pub first_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub middle_name: Option<String>,
-    pub last_name: String,
-    pub gender: Gender,
-    pub dob: String,
-    pub email: String,
-    pub country: String,
-    pub phone: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gender: Option<Gender>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub country: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phone: Option<String>,
     #[graphql(secret)]
-    pub password: String,
-    pub created_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
-    #[graphql(skip)]
-    pub roles: Option<Vec<Thing>>,
-    pub oauth_client: Option<OAuthClientName>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub profile_picture: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub bio: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub website: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub address: Option<String>,
-    #[graphql(skip)]
-    pub professional_details: Option<Thing>,
-    #[graphql(skip)]
-    pub portfolio: Option<Vec<Thing>>,
 }
 
 pub type SurrealRelationQueryResponse<T> = HashMap<String, HashMap<String, Vec<T>>>;
