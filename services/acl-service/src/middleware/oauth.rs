@@ -1,8 +1,7 @@
 use axum::{http::HeaderValue, Extension};
 use jwt_simple::prelude::*;
 use lib::utils::{
-    auth::{AuthClaim, SymKey},
-    custom_error::ExtendedError,
+    auth::{AuthClaim, AuthStatus, SymKey}, cookie_parser::parse_cookies, custom_error::ExtendedError
 };
 use std::time::Duration;
 use std::{env, sync::Arc};
@@ -10,8 +9,9 @@ use surrealdb::{engine::remote::ws::Client as SurrealClient, Surreal};
 
 use async_graphql::{Context, Enum, Result};
 use dotenvy::dotenv;
-use hyper::header::SET_COOKIE;
+use hyper::{header::{COOKIE, SET_COOKIE}, HeaderMap, Method};
 use oauth2::basic::{BasicClient, BasicErrorResponseType, BasicTokenType};
+use reqwest::{header::HeaderMap as ReqWestHeaderMap, Client as ReqWestClient};
 
 use oauth2::{
     AuthUrl, Client, ClientId, ClientSecret, CsrfToken, EmptyExtraTokenFields, PkceCodeChallenge,
@@ -19,6 +19,8 @@ use oauth2::{
     StandardRevocableToken, StandardTokenIntrospectionResponse, StandardTokenResponse, TokenUrl,
 };
 use serde::{Deserialize, Serialize};
+
+use crate::graphql::schemas::{role::SystemRole, user::{DecodedGithubOAuthToken, DecodedGoogleOAuthToken, SurrealRelationQueryResponse, User}};
 
 // use crate::SharedState;
 
@@ -42,7 +44,9 @@ pub enum OAuthFlow {
 
 #[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
 pub enum OAuthClientName {
+    #[graphql(name = "Google")]
     Google,
+    #[graphql(name = "Github")]
     Github,
 }
 
@@ -255,5 +259,305 @@ pub async fn decode_token(
         None => Err(
             ExtendedError::new("Invalid token format".to_string(), Some(403.to_string())).build(),
         ),
+    }
+}
+
+pub async fn get_user_id_from_token(ctx: &Context<'_>) -> Result<String> {
+    match ctx.data_opt::<HeaderMap>() {
+        Some(headers) => {
+            let token_claims = decode_token(ctx, headers.get("Authorization").unwrap()).await;
+
+            match token_claims {
+                Ok(token_claims) => Ok(token_claims.subject.unwrap()),
+                Err(e) => Err(e),
+            }
+        }
+        None => {
+            Err(ExtendedError::new("No headers found".to_string(), Some(403.to_string())).build())
+        }
+    }
+}
+
+pub async fn confirm_auth(ctx: &Context<'_>) -> Result<AuthStatus> {
+    // Process request headers as needed
+    match ctx.data_opt::<HeaderMap>() {
+        Some(headers) => {
+            // Check if Authorization header is present
+            match headers.get("Authorization") {
+                Some(token) => {
+                    println!("headers: {:?}", headers);
+                    // Check if Cookie header is present
+                    match headers.get(COOKIE) {
+                        Some(cookie_header) => {
+                            let cookies_str = cookie_header
+                                .to_str()
+                                .map_err(|_| "Invalid cookie format")?;
+                            let cookies = parse_cookies(cookies_str);
+
+                            // Check if oauth_client cookie is present
+                            match cookies.get("oauth_client") {
+                                Some(oauth_client) => {
+                                    println!("oauth_client: {:?}", oauth_client);
+                                    if oauth_client.is_empty() {
+                                        let key: Vec<u8>;
+                                        let db =
+                                            ctx.data::<Extension<Arc<Surreal<SurrealClient>>>>().unwrap();
+                                        let mut result = db.query("SELECT * FROM type::table($table) WHERE name = 'jwt_key' LIMIT 1")
+                                                .bind(("table", "crypto_key"))
+                                                .await?;
+                                        let response: Option<SymKey> = result.take(0)?;
+
+                                        match &response {
+                                            Some(key_container) => {
+                                                key = key_container.key.clone();
+                                            }
+                                            None => {
+                                                // key = HS256Key::generate().to_bytes();
+                                                return Err(ExtendedError::new(
+                                                    "Not Authorized!",
+                                                    Some(403.to_string()),
+                                                )
+                                                .build());
+                                            }
+                                        }
+
+                                        let converted_key = HS256Key::from_bytes(&key);
+
+                                        let token_claims = decode_token(ctx, token).await;
+
+                                        match &token_claims {
+                                            Ok(_) => {
+                                                // Token verification successful
+                                                return Ok(AuthStatus {
+                                                    is_auth: true,
+                                                    sub: token_claims
+                                                        .as_ref()
+                                                        .unwrap()
+                                                        .subject
+                                                        .as_ref()
+                                                        .map(|t| t.to_string())
+                                                        .unwrap_or("".to_string()),
+                                                });
+                                            }
+                                            Err(_err) => {
+                                                println!("err: {:?}", _err.message);
+                                                // Token verification failed, check if refresh token is present
+                                                match cookies.get("t") {
+                                                    Some(refresh_token) => {
+                                                        let refresh_claims = converted_key
+                                                            .verify_token::<AuthClaim>(
+                                                                &refresh_token,
+                                                                None,
+                                                            );
+
+                                                        match refresh_claims {
+                                                            Ok(refresh_claims) => {
+                                                                println!(
+                                                                    "refresh_claims: {:?}",
+                                                                    refresh_claims
+                                                                );
+                                                                // TODO: Refresh token verification successful, issue new access token
+                                                                // call sign_in mutation
+                                                                let user: Option<User> = db
+                                                                    .select((
+                                                                        "user",
+                                                                        refresh_claims
+                                                                            .subject
+                                                                            .unwrap()
+                                                                            .as_str(),
+                                                                    ))
+                                                                    .await?;
+
+                                                                match user {
+                                                                    Some(user) => {
+                                                                        let get_user_roles_query = format!(
+                                                                            "SELECT ->has_role.out.* FROM user:{}",
+                                                                            user.id.as_ref().map(|t| &t.id).expect("id")
+                                                                        );
+                                                                        let mut user_roles_res = db.query(get_user_roles_query).await?;
+                                                                        let user_roles: Option<SurrealRelationQueryResponse<SystemRole>> =
+                                                                            user_roles_res.take(0)?;
+                                                                        // println!("user_roles: {:?}", user_roles);
+
+                                                                        let auth_claim =
+                                                                            AuthClaim {
+                                                                                roles:
+                                                                                    match user_roles
+                                                                                    {
+                                                                                        Some(
+                                                                                            existing_roles,
+                                                                                        ) => {
+                                                                                            // use id instead of Thing
+                                                                                            existing_roles
+                                                                                        .get("->has_role")
+                                                                                        .unwrap()
+                                                                                        .get("out")
+                                                                                        .unwrap()
+                                                                                        // existing_roles["->has_role"]["out"]
+                                                                                        .into_iter()
+                                                                                        .map(|role| {
+                                                                                            role.id
+                                                                                                .as_ref()
+                                                                                                .map(|t| &t.id)
+                                                                                                .expect("id")
+                                                                                                .to_raw()
+                                                                                        })
+                                                                                        .collect()
+                                                                                        }
+                                                                                        None => {
+                                                                                            vec![]
+                                                                                        }
+                                                                                    },
+                                                                            };
+
+                                                                        let mut token_claims = Claims::with_custom_claims(auth_claim.clone(), Duration::from_secs(15 * 60).into());
+                                                                        token_claims.subject = Some(
+                                                                            user.id
+                                                                                .as_ref()
+                                                                                .map(|t| &t.id)
+                                                                                .expect("id")
+                                                                                .to_raw(),
+                                                                        );
+
+                                                                        let token = converted_key
+                                                                            .authenticate(
+                                                                                token_claims,
+                                                                            )
+                                                                            .unwrap();
+
+                                                                        ctx.insert_http_header(
+                                                                            SET_COOKIE,
+                                                                            format!(
+                                                                                "oauth_client="
+                                                                            ),
+                                                                        );
+
+                                                                        ctx.append_http_header(
+                                                                            "New-Access-Token",
+                                                                            format!(
+                                                                                "Bearer {}",
+                                                                                token
+                                                                            ),
+                                                                        );
+
+                                                                        return Ok(AuthStatus {
+                                                                            is_auth: true,
+                                                                            sub: user
+                                                                                .id
+                                                                                .as_ref()
+                                                                                .map(|t| &t.id)
+                                                                                .expect("id")
+                                                                                .to_raw(),
+                                                                        });
+                                                                    }
+                                                                    None => {
+                                                                        return Err(
+                                                                            ExtendedError::new(
+                                                                                "Not Authorized!",
+                                                                                Some(
+                                                                                    403.to_string(),
+                                                                                ),
+                                                                            )
+                                                                            .build(),
+                                                                        );
+                                                                    }
+                                                                }
+                                                            }
+                                                            Err(_err) => {
+                                                                // Refresh token verification failed
+                                                                return Err(ExtendedError::new(
+                                                                    "Not Authorized!",
+                                                                    Some(403.to_string()),
+                                                                )
+                                                                .build());
+                                                            }
+                                                        }
+                                                    }
+                                                    None => Err(ExtendedError::new(
+                                                        "Not Authorized!",
+                                                        Some(403.to_string()),
+                                                    )
+                                                    .build()),
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        let oauth_client_name =
+                                            OAuthClientName::from_str(oauth_client);
+
+                                        match oauth_client_name {
+                                            OAuthClientName::Google => {
+                                                // make a request to google oauth server to verify the token
+                                                let response =
+                                                    reqwest::get(format!("https://oauth2.googleapis.com/tokeninfo?access_token={}", token.to_str().unwrap().strip_prefix("Bearer ").unwrap()).as_str())
+                                                        .await?
+                                                        .json::<DecodedGoogleOAuthToken>()
+                                                        .await?;
+                                                println!("response: {:?}", response);
+
+                                                return Ok(AuthStatus {
+                                                    is_auth: true,
+                                                    sub: response.sub,
+                                                });
+                                            }
+                                            OAuthClientName::Github => {
+                                                // make a request to github oauth server to verify the token
+                                                let client = ReqWestClient::new();
+
+                                                let mut req_headers = ReqWestHeaderMap::new();
+                                                req_headers
+                                                    .insert("Authorization", token.to_owned());
+
+                                                req_headers.append(
+                                                    "Accept",
+                                                    "application/vnd.github+json".parse().unwrap(),
+                                                );
+
+                                                req_headers.append(
+                                                    "X-GitHub-Api-Version",
+                                                    "2022-11-28".parse().unwrap(),
+                                                );
+
+                                                println!("req_headers: {:?}", req_headers);
+
+                                                let response = client
+                                                    .request(
+                                                        Method::GET,
+                                                        "https://api.github.com/user",
+                                                    )
+                                                    // .get("https://api.github.com/user")
+                                                    .headers(req_headers)
+                                                    .send()
+                                                    .await?
+                                                    .json::<DecodedGithubOAuthToken>()
+                                                    .await?;
+
+                                                println!("response: {:?}", response);
+
+                                                return Ok(AuthStatus {
+                                                    is_auth: true,
+                                                    sub: response.id.to_string(),
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                                None => Err(ExtendedError::new(
+                                    "Not Authorized!",
+                                    Some(403.to_string()),
+                                )
+                                .build()),
+                            }
+                        }
+                        None => {
+                            Err(ExtendedError::new("Not Authorized!", Some(403.to_string()))
+                                .build())
+                        }
+                    }
+                }
+                None => Err(ExtendedError::new("Not Authorized!", Some(403.to_string())).build()),
+            }
+        }
+        None => Err(ExtendedError::new("Invalid request!", Some(400.to_string())).build()),
     }
 }

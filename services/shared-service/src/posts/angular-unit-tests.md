@@ -117,14 +117,14 @@ NullInjectorError: No provider for FormBuilder!
 ```
 The coverage report is as follows:
     
-    ```bash
-    =============================== Coverage summary ===============================
-    Statements   : 72.73% ( 8/11 )
-    Branches     : 100% ( 0/0 )
-    Functions    : 0% ( 0/2 )
-    Lines        : 66.67% ( 6/9 )
-    ================================================================================
-    ```
+```bash
+=============================== Coverage summary ===============================
+Statements   : 72.73% ( 8/11 )
+Branches     : 100% ( 0/0 )
+Functions    : 0% ( 0/2 )
+Lines        : 66.67% ( 6/9 )
+================================================================================
+```
 
 ## Understanding the principle behind the Component TestBed and how to configure it
 This error means that we have failed to inject the missing providers into the Testing module as well, just like we injected in the component and imported it into the ```app.module.ts``` file.

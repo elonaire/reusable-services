@@ -1,5 +1,4 @@
 use async_graphql::{ComplexObject, Enum, InputObject, SimpleObject};
-use chrono::{DateTime, FixedOffset};
 use serde::{Deserialize, Serialize};
 use surrealdb::sql::{Datetime, Thing};
 
@@ -21,25 +20,18 @@ pub struct BlogPost {
     pub author: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct BlogPostInputWithSurrealDatetime {
-    pub title: String,
-    pub short_description: String,
-    pub status: Option<String>,
-    pub image: String,
-    pub category: BlogCategory,
-    pub link: String,
-    pub published_date: Option<DateTime<FixedOffset>>,
-    pub author: String,
-}
-
 // enum for BlogCategory: "WebDevelopment", "MobileDevelopment", "AI", "Technology", "Lifestyle"
 #[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
 pub enum BlogCategory {
+    #[graphql(name="WebDevelopment")]
     WebDevelopment,
+    #[graphql(name="MobileDevelopment")]
     MobileDevelopment,
+    #[graphql(name="ArtificialIntelligence")]
     ArtificialIntelligence,
+    #[graphql(name="Technology")]
     Technology,
+    #[graphql(name="Lifestyle")]
     Lifestyle,
 }
 

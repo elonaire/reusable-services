@@ -188,8 +188,12 @@ DEFINE FIELD out ON TABLE has_reaction TYPE record<reaction>;
 DEFINE TABLE message SCHEMAFULL;
 -- define some fields.
 DEFINE FIELD sender_name ON TABLE message TYPE string;
-DEFINE FIELD sender_email ON TABLE message TYPE string;
-DEFINE FIELD content ON TABLE message TYPE string;
+DEFINE FIELD sender_email ON TABLE message TYPE string
+  ASSERT string::is::email($value);
+DEFINE FIELD subject ON TABLE message TYPE string
+-- Allow only these values in the array
+  ASSERT $value INSIDE ["JobOffer", "Consultation", "Feedback", "Complaint", "Enquiry"];
+DEFINE FIELD body ON TABLE message TYPE string;
 DEFINE FIELD created_at ON TABLE message TYPE datetime
   DEFAULT time::now();
 

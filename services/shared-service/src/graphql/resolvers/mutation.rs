@@ -731,4 +731,22 @@ impl Mutation {
             None => Err(ExtendedError::new("Not Authorized!", Some(403.to_string())).build()),
         }
     }
+
+    pub async fn send_message(
+        &self,
+        ctx: &Context<'_>,
+        message: shared::Message,
+    ) -> async_graphql::Result<Vec<shared::Message>> {
+        let db = ctx
+            .data::<Extension<Arc<Surreal<SurrealClient>>>>()
+            .unwrap();
+
+        let message: Vec<shared::Message> = db
+            .create("message")
+            .content(message)
+            .await
+            .map_err(|e| Error::new(e.to_string()))?;
+
+        Ok(message)
+    }
 }
