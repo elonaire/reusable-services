@@ -26,6 +26,3 @@ markdown = "1.0.0-alpha.17"
 
 [lints.rust]
 unsafe_code = "forbid"
-
-[profile.release]
-strip = true  # Automatically strip symbols from the binary.

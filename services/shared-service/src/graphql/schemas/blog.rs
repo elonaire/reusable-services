@@ -15,9 +15,8 @@ pub struct BlogPost {
     pub category: BlogCategory,
     pub link: String,
     pub published_date: Option<String>,
-    #[graphql(skip)]
-    pub created_at: Datetime,
-    pub author: String,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
 }
 
 // enum for BlogCategory: "WebDevelopment", "MobileDevelopment", "AI", "Technology", "Lifestyle"
@@ -69,21 +68,14 @@ impl BlogPost {
     // e.g. if link is "my-first-blog-post", the content will be read from "posts/my-first-blog-post.md"
     // On live server, the markdown files might be stored on AWS S3 or other cloud storage services
     async fn content(&self) -> String {
+        let blog_posts_dir: String = std::env::var("BLOG_POSTS_DIR").expect("POSTS_DIR not set");
+
         let content =
-            std::fs::read_to_string(format!("src/posts/{}.md", self.link)).expect("content");
+            std::fs::read_to_string(format!("{}{}.md", blog_posts_dir, self.link)).expect("content");
         println!("content: {:?}", content);
         let html_content = markdown::to_html(&content);
         html_content
     }
-
-    // convert date_created from Surreal Datetime to String
-    async fn created_at(&self) -> String {
-        self.created_at.to_rfc3339()
-    }
-
-    // async fn published_date(&self) -> String {
-    //     self.published_date.as_ref().map(|t| t.to_rfc3339()).expect("published_date")
-    // }
 }
 
 #[ComplexObject]

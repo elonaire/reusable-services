@@ -19,7 +19,7 @@ pub struct Mutation;
 
 #[Object]
 impl Mutation {
-    // multipart upload to AWS S3
+    /// multipart upload to AWS S3(Deprecated)
     async fn upload_file(
         &self,
         ctx: &Context<'_>,
@@ -111,6 +111,7 @@ impl Mutation {
         Ok(response)
     }
 
+    /// Create new professional details
     async fn add_professional_details(
         &self,
         ctx: &Context<'_>,
@@ -163,6 +164,7 @@ impl Mutation {
         }
     }
 
+    /// Create a new user service
     pub async fn add_user_service(
         &self,
         ctx: &Context<'_>,
@@ -215,6 +217,7 @@ impl Mutation {
         }
     }
 
+    /// Create a new user project/portfolio item
     pub async fn add_portfolio_item(
         &self,
         ctx: &Context<'_>,
@@ -267,6 +270,7 @@ impl Mutation {
         }
     }
 
+    /// Create a new user resume item
     pub async fn add_resume_item(
         &self,
         ctx: &Context<'_>,
@@ -319,6 +323,7 @@ impl Mutation {
         }
     }
 
+    /// Create a new user resume item achievement
     pub async fn add_resume_item_achievement(
         &self,
         ctx: &Context<'_>,
@@ -372,6 +377,7 @@ impl Mutation {
         }
     }
 
+    /// Create a new user skill
     pub async fn add_skill(
         &self,
         ctx: &Context<'_>,
@@ -424,6 +430,7 @@ impl Mutation {
         }
     }
 
+    /// Create a new blog post
     pub async fn add_blog_post(
         &self,
         ctx: &Context<'_>,
@@ -476,12 +483,14 @@ impl Mutation {
         }
     }
 
+    /// Add a comment to a blog post
     pub async fn add_comment_to_blog_post(
         &self,
         ctx: &Context<'_>,
         blog_comment: blog::BlogComment,
         blog_post_id: String,
     ) -> async_graphql::Result<Vec<blog::BlogComment>> {
+        // TODO: Might have to allow anonymous comments?
         let db = ctx
             .data::<Extension<Arc<Surreal<SurrealClient>>>>()
             .unwrap();
@@ -538,6 +547,7 @@ impl Mutation {
         }
     }
 
+    /// Reply to a comment
     pub async fn reply_to_a_comment(
         &self,
         ctx: &Context<'_>,
@@ -604,6 +614,7 @@ impl Mutation {
         }
     }
 
+    /// React to a blog post
     pub async fn react_to_blog_post(
         &self,
         ctx: &Context<'_>,
@@ -668,6 +679,7 @@ impl Mutation {
         }
     }
 
+    /// React to a blog comment
     pub async fn react_to_blog_comment(
         &self,
         ctx: &Context<'_>,
@@ -732,6 +744,7 @@ impl Mutation {
         }
     }
 
+    /// Send a message
     pub async fn send_message(
         &self,
         ctx: &Context<'_>,

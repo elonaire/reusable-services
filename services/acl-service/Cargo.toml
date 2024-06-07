@@ -29,6 +29,3 @@ frequency = "always"
 
 [lints.rust]
 unsafe_code = "forbid"
-
-[profile.release]
-strip = true  # Automatically strip symbols from the binary.

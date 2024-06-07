@@ -8,6 +8,17 @@ DEFINE INDEX userIndex ON TABLE user_id COLUMNS user_id UNIQUE;
 DEFINE TABLE professional_details SCHEMAFULL;
 -- define some fields.
 DEFINE FIELD occupation ON TABLE professional_details TYPE string;
+DEFINE FIELD active ON TABLE professional_details TYPE bool
+  DEFAULT false;
+DEFINE EVENT enforce_single_true ON professional_details WHEN $event = 'CREATE' OR $event = 'UPDATE' THEN {
+    IF $before.active == true {
+        LET $existing_true = SELECT * FROM professional_details WHERE active = true;
+        IF array::len($existing_true) > 0 {
+            THROW 'You have an active professional detail already. Please deactivate it first.';
+        };
+    };
+};
+DEFINE INDEX occupationIndex ON TABLE professional_details COLUMNS occupation;
 DEFINE FIELD description ON TABLE professional_details TYPE string;
 DEFINE FIELD start_date ON TABLE professional_details VALUE <datetime>$value;
 DEFINE FIELD created_at ON TABLE professional_details TYPE datetime
@@ -38,7 +49,7 @@ DEFINE FIELD link ON TABLE portfolio TYPE string;
 DEFINE FIELD image ON TABLE portfolio TYPE string;
 DEFINE FIELD category ON TABLE portfolio TYPE string
 -- Allow only these values in the array
-  ASSERT $value INSIDE ["JavaScript", "Rust", "Database", "Cloud", "DevOps"];
+  ASSERT $value INSIDE ["JavaScript", "Rust", "Database", "Cloud", "DevOps", "Mobile"];
 DEFINE FIELD created_at ON TABLE portfolio TYPE datetime
   DEFAULT time::now();
 DEFINE FIELD updated_at ON TABLE portfolio TYPE datetime
@@ -98,6 +109,7 @@ DEFINE FIELD out ON TABLE has_resume TYPE record<resume>;
 DEFINE TABLE service SCHEMAFULL;
 -- define some fields.
 DEFINE FIELD title ON TABLE service TYPE string;
+DEFINE INDEX titleIndex ON TABLE service COLUMNS title UNIQUE;
 DEFINE FIELD description ON TABLE service TYPE string;
 DEFINE FIELD image ON TABLE service TYPE string;
 DEFINE FIELD created_at ON TABLE service TYPE datetime
@@ -117,7 +129,6 @@ DEFINE TABLE blog_post SCHEMAFULL;
 -- define some fields.
 DEFINE FIELD title ON TABLE blog_post TYPE string;
 DEFINE FIELD short_description ON TABLE blog_post TYPE string;
-DEFINE FIELD author ON TABLE blog_post TYPE string;
 DEFINE FIELD image ON TABLE blog_post TYPE string;
 DEFINE FIELD category ON TABLE blog_post TYPE string
 -- Allow only these values in the array
@@ -127,11 +138,13 @@ DEFINE INDEX blogPostIndex ON TABLE blog_post COLUMNS link UNIQUE;
 DEFINE FIELD status ON TABLE blog_post TYPE option<string>
 -- Allow only these values in the array
   ASSERT $value INSIDE ["Draft", "Published"]
-  DEFAULT "Draft";
-DEFINE FIELD published_date ON TABLE blog_post VALUE 
-  IF $value IS NOT NONE THEN <datetime>$value
-  ELSE NONE
-  END;
+  DEFAULT "Published";
+DEFINE FIELD published_date ON TABLE blog_post TYPE datetime
+  DEFAULT time::now(); 
+-- remove this for now, we want to use the default value
+  -- IF $value IS NOT NONE THEN <datetime>$value
+  -- ELSE NONE
+  -- END;
 DEFINE FIELD created_at ON TABLE blog_post TYPE datetime
   DEFAULT time::now();
 DEFINE FIELD updated_at ON TABLE blog_post TYPE datetime
@@ -228,6 +241,7 @@ DEFINE FIELD name ON TABLE skill TYPE string;
 DEFINE FIELD type ON TABLE skill TYPE string
 -- Allow only these values in the array
   ASSERT $value INSIDE ["Technical", "Soft"];
+DEFINE INDEX skillIndex ON TABLE skill COLUMNS name UNIQUE;
 DEFINE FIELD image ON TABLE skill TYPE string;
 DEFINE FIELD level ON TABLE skill TYPE option<string>
 -- Allow only these values in the array
