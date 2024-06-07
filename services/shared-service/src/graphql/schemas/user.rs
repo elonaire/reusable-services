@@ -234,6 +234,7 @@ impl UserResume {
     }
 
     async fn years_of_experience(&self) -> u32 {
+        // TODO: factor in months, currently only years e.g. 1 year 6 months
         // calculate years of experience from &self.start_date
         let parsed_start_date =
             DateTime::parse_from_rfc3339(&self.start_date).expect("Invalid date format");
