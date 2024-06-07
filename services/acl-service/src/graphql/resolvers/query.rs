@@ -36,8 +36,6 @@ impl Query {
             .await
             .map_err(|e| Error::new(e.to_string()))?;
 
-        // let user: Option<User> = response.take(0)?;
-
         match user {
             Some(user) => Ok(user),
             None => Err(Error::new("User not found")),
@@ -46,10 +44,7 @@ impl Query {
 
     async fn check_auth(&self, ctx: &Context<'_>) -> Result<AuthStatus> {
         dotenv().ok();
-        // let jwt_secret =
-        //     env::var("JWT_SECRET").expect("Missing the JWT_SECRET environment variable.");
-        // let jwt_refresh_secret = env::var("JWT_REFRESH_SECRET")
-        //     .expect("Missing the JWT_REFRESH_SECRET environment variable.");
+        
         confirm_auth(ctx).await
     }
 }

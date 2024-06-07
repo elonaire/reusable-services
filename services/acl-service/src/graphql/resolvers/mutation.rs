@@ -18,12 +18,6 @@ use crate::{
     },
 };
 
-// #[derive(Serialize)]
-// struct Credentials<'a> {
-//     username: &'a str,
-//     password: &'a str,
-// }
-
 pub struct Mutation;
 
 #[Object]
@@ -140,7 +134,7 @@ impl Mutation {
                             let mut user_roles_res = db.query(get_user_roles_query).await?;
                             let user_roles: Option<SurrealRelationQueryResponse<SystemRole>> =
                                 user_roles_res.take(0)?;
-                            println!("user_roles: {:?}", user_roles);
+                        
 
                             let auth_claim = AuthClaim {
                                 roles: match user_roles {
@@ -151,7 +145,6 @@ impl Mutation {
                                             .unwrap()
                                             .get("out")
                                             .unwrap()
-                                            // existing_roles["->has_role"]["out"]
                                             .into_iter()
                                             .map(|role| {
                                                 role.id
@@ -226,16 +219,6 @@ impl Mutation {
                                 None => {}
                             }
 
-                            // ctx.insert_http_header(
-                            //     SET_COOKIE,
-                            //     format!(
-                            //         "oauth_client=; SameSite=None; Secure=False; Path=/; Domain={}",
-                            //         ctx.http_header("Host").unwrap_or("127.0.0.1")
-                            //     ),
-                            // );
-
-                            println!("header exists: {}", ctx.http_header_contains(SET_COOKIE));
-
                             Ok(AuthDetails {
                                 token: Some(token_str),
                                 url: None,
@@ -293,14 +276,9 @@ impl Mutation {
                         Some(bcrypt::hash(user.password.unwrap(), bcrypt::DEFAULT_COST).unwrap());
                 }
 
-                // user.updated_at = Some(chrono::Utc::now().to_rfc3339());
-
-                println!("user: {:?}", user);
-
                 let response = db
                     .update("user")
                     .merge(user)
-                    // .patch(PatchOp::replace("/updated_at", chrono::Utc::now().to_rfc3339()))
                     .await
                     .map_err(|e| Error::new(e.to_string()))?;
 

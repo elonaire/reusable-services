@@ -120,13 +120,6 @@ pub struct AuthDetails {
     pub token: Option<String>,
 }
 
-// #[derive(Serialize)]
-// #[serde(untagged)]
-// pub enum JWTClaimBTreeMapItem {
-//     String(String),
-//     Integer(u64),
-// }
-
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
 pub struct DecodedGoogleOAuthToken {
     pub azp: String,

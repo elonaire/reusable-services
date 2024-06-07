@@ -72,7 +72,7 @@ impl BlogPost {
 
         let content =
             std::fs::read_to_string(format!("{}{}.md", blog_posts_dir, self.link)).expect("content");
-        println!("content: {:?}", content);
+        
         let html_content = markdown::to_html(&content);
         html_content
     }

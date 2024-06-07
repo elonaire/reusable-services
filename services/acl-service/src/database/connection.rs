@@ -9,12 +9,6 @@ use surrealdb::{
     Result, Surreal,
 };
 
-// #[derive(Serialize)]
-// struct Credentials<'a> {
-//     username: &'a str,
-//     password: &'a str,
-// }
-
 pub async fn create_db_connection() -> Result<Surreal<Client>> {
     dotenv().ok();
     println!("Creating Surreal database connection...");
