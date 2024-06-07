@@ -15,6 +15,18 @@ pub enum Gender {
     Female,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
+pub enum AccountStatus {
+    #[graphql(name = "Active")]
+    Active,
+    #[graphql(name = "Inactive")]
+    Inactive,
+    #[graphql(name = "Suspended")]
+    Suspended,
+    #[graphql(name = "Deleted")]
+    Deleted,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
 #[graphql(input_name = "UserInput")]
 #[graphql(complex)]
@@ -34,6 +46,7 @@ pub struct User {
     pub password: String,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
+    pub status: AccountStatus,
     #[graphql(skip)]
     pub roles: Option<Vec<Thing>>,
     pub oauth_client: Option<OAuthClientName>,

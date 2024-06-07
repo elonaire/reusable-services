@@ -10,7 +10,7 @@ use surrealdb::{engine::remote::ws::Client, Surreal};
 use crate::{
     graphql::schemas::{
         role::SystemRole,
-        user::{AuthDetails, SurrealRelationQueryResponse, User, UserLogins, UserUpdate},
+        user::{AccountStatus, AuthDetails, SurrealRelationQueryResponse, User, UserLogins, UserUpdate},
     },
     middleware::oauth::{
         confirm_auth, decode_token, get_user_id_from_token, initiate_auth_code_grant_flow,
@@ -107,7 +107,7 @@ impl Mutation {
                         )
                         .unwrap();
 
-                        if password_match {
+                        if password_match && user.status == AccountStatus::Active {
                             let refresh_token_expiry_duration =
                                 Duration::from_secs(30 * 24 * 60 * 60); // minutes by 60 seconds
                             let key: Vec<u8>;
@@ -241,7 +241,7 @@ impl Mutation {
                                 url: None,
                             })
                         } else {
-                            Err(Error::new("Invalid username or password"))
+                            Err(Error::new("Invalid username or password OR Unauthorized access(contact admin)."))
                         }
                     }
                     None => Err(Error::new("Invalid username or password")),
