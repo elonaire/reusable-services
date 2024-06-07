@@ -13,9 +13,12 @@ services:
     networks:
       - app-tier
     user: root
-    command: start --log debug --auth --bind 0.0.0.0:8001 file:/db-data/mydatabase.db
+    command: start --log debug --auth --user ${DATABASE_USER} --pass ${DATABASE_PASSWORD} --bind 0.0.0.0:8001 file:/db-data/mydatabase.db
     volumes:
       - tt-shared-servicedb:/db-data
+    environment:
+      - DATABASE_USER=${DATABASE_USER}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
 
   tt-shared-service:
     image: elonaire/tt-shared-service:latest
@@ -30,7 +33,8 @@ services:
       args:
         SERVICE_NAME: shared-service
     volumes:
-      - ./services/shared-service/src/database/schemas/schemas.surql:/usr/src/db/schemas.surql
+      - ./services/shared-service/database/schemas/schemas.surql:/usr/src/db/schemas.surql
+      - ./services/shared-service/posts:/usr/src/posts
     environment:
       - DATABASE_NAMESPACE=${DATABASE_NAMESPACE}
       - DATABASE_NAME_SHARED=${DATABASE_NAME_SHARED}

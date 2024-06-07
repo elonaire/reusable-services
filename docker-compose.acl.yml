@@ -13,9 +13,12 @@ services:
     networks:
       - app-tier
     user: root
-    command: start --log debug --auth file:/db-data/mydatabase.db
+    command: start --log debug --auth --user ${DATABASE_USER} --pass ${DATABASE_PASSWORD} file:/db-data/mydatabase.db
     volumes:
       - tt-acl-servicedb:/db-data
+    environment:
+      - DATABASE_USER=${DATABASE_USER}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
   tt-acl-service:
     image: elonaire/tt-acl-service:latest
     ports:
@@ -29,7 +32,7 @@ services:
       args:
         SERVICE_NAME: acl-service
     volumes:
-      - ./services/acl-service/src/database/schemas/schemas.surql:/usr/src/db/schemas.surql
+      - ./services/acl-service/database/schemas/schemas.surql:/usr/src/db/schemas.surql
     environment:
       - GOOGLE_OAUTH_CLIENT_ID=${GOOGLE_OAUTH_CLIENT_ID}
       - GOOGLE_OAUTH_CLIENT_SECRET=${GOOGLE_OAUTH_CLIENT_SECRET}

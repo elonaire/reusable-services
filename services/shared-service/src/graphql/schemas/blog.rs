@@ -68,8 +68,10 @@ impl BlogPost {
     // e.g. if link is "my-first-blog-post", the content will be read from "posts/my-first-blog-post.md"
     // On live server, the markdown files might be stored on AWS S3 or other cloud storage services
     async fn content(&self) -> String {
+        let blog_posts_dir: String = std::env::var("BLOG_POSTS_DIR").expect("POSTS_DIR not set");
+
         let content =
-            std::fs::read_to_string(format!("src/posts/{}.md", self.link)).expect("content");
+            std::fs::read_to_string(format!("{}{}.md", blog_posts_dir, self.link)).expect("content");
         println!("content: {:?}", content);
         let html_content = markdown::to_html(&content);
         html_content
