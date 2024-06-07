@@ -177,7 +177,7 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USERNAME }}
           password: ${{ secrets.SERVER_PASSWORD }}
-          source: "nginx/,docker-compose.yml,docker-compose.acl.yml,docker-compose.shared.yml,prod.env"
+          source: "nginx/,docker-compose.yml,docker-compose.acl.yml,docker-compose.shared.yml"
           target: ~/
 
       - name: Deploy to server via SSH
