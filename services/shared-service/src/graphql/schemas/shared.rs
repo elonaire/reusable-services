@@ -60,6 +60,8 @@ pub enum Subject {
     Complaint,
     #[graphql(name = "Enquiry")]
     Enquiry,
+    #[graphql(name = "Suggestion")]
+    Suggestion,
 }
 
 #[ComplexObject]

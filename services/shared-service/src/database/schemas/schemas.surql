@@ -205,7 +205,7 @@ DEFINE FIELD sender_email ON TABLE message TYPE string
   ASSERT string::is::email($value);
 DEFINE FIELD subject ON TABLE message TYPE string
 -- Allow only these values in the array
-  ASSERT $value INSIDE ["JobOffer", "Consultation", "Feedback", "Complaint", "Enquiry"];
+  ASSERT $value INSIDE ["JobOffer", "Consultation", "Feedback", "Complaint", "Suggestion", "Enquiry"];
 DEFINE FIELD body ON TABLE message TYPE string;
 DEFINE FIELD created_at ON TABLE message TYPE datetime
   DEFAULT time::now();
