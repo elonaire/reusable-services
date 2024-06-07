@@ -15,9 +15,8 @@ pub struct BlogPost {
     pub category: BlogCategory,
     pub link: String,
     pub published_date: Option<String>,
-    #[graphql(skip)]
-    pub created_at: Datetime,
-    pub author: String,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
 }
 
 // enum for BlogCategory: "WebDevelopment", "MobileDevelopment", "AI", "Technology", "Lifestyle"
@@ -75,15 +74,6 @@ impl BlogPost {
         let html_content = markdown::to_html(&content);
         html_content
     }
-
-    // convert date_created from Surreal Datetime to String
-    async fn created_at(&self) -> String {
-        self.created_at.to_rfc3339()
-    }
-
-    // async fn published_date(&self) -> String {
-    //     self.published_date.as_ref().map(|t| t.to_rfc3339()).expect("published_date")
-    // }
 }
 
 #[ComplexObject]

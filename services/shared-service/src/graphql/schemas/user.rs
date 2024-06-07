@@ -1,7 +1,12 @@
+use std::collections::HashMap;
+
 use async_graphql::{ComplexObject, Enum, InputObject, SimpleObject};
 use chrono::{DateTime, Datelike, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use surrealdb::sql::Thing;
+
+use super::blog::BlogPost;
+pub type ResumeAchievements = HashMap<String, Vec<String>>;
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
 #[graphql(input_name = "UserProfessionalInfoInput")]
@@ -10,6 +15,7 @@ pub struct UserProfessionalInfo {
     #[graphql(skip)]
     pub id: Option<Thing>,
     pub description: String,
+    pub active: bool,
     pub occupation: String,
     pub start_date: String,
 }
@@ -32,10 +38,15 @@ pub struct UserPortfolio {
 // enum for UserPortfolio category
 #[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
 pub enum UserPortfolioCategory {
+    #[graphql(name = "JavaScript")]
     JavaScript,
+    #[graphql(name = "Rust")]
     Rust,
+    #[graphql(name = "Database")]
     Database,
+    #[graphql(name = "DevOps")]
     DevOps,
+    #[graphql(name = "Cloud")]
     Cloud,
 }
 
@@ -53,21 +64,30 @@ pub struct UserResume {
     pub section: UserResumeSection,
 }
 
-// enum for UserResume section("Education", "Experience", "Achievements", "Skills", "Projects", "Certifications", "Volunteer", "Publications", "Languages", "Interests", "References")
+
 #[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
 pub enum UserResumeSection {
+    #[graphql(name = "Education")]
     Education,
+    #[graphql(name = "Experience")]
     Experience,
+    #[graphql(name = "Achievements")]
     Achievements,
+    #[graphql(name = "Projects")]
     Projects,
+    #[graphql(name = "Certifications")]
     Certifications,
+    #[graphql(name = "Volunteer")]
     Volunteer,
+    #[graphql(name = "Publications")]
     Publications,
+    #[graphql(name = "Languages")]
     Languages,
+    #[graphql(name = "Interests")]
     Interests,
+    #[graphql(name = "References")]
     References,
 }
-
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
 #[graphql(input_name = "ResumeAchievementInput")]
@@ -87,7 +107,7 @@ pub struct UserSkill {
     pub id: Option<Thing>,
     pub image: String,
     pub name: String,
-    pub level: UserSkillLevel,
+    pub level: Option<UserSkillLevel>,
     pub r#type: UserSkillType,
     pub start_date: String,
 }
@@ -95,16 +115,22 @@ pub struct UserSkill {
 // UserSkillType enum
 #[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
 pub enum UserSkillType {
+    #[graphql(name = "Technical")]
     Technical,
+    #[graphql(name = "Soft")]
     Soft,
 }
 
 // UserSkillLevel enum
 #[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
 pub enum UserSkillLevel {
+    #[graphql(name = "Beginner")]
     Beginner,
+    #[graphql(name = "Intermediate")]
     Intermediate,
+    #[graphql(name = "Advanced")]
     Advanced,
+    #[graphql(name = "Expert")]
     Expert,
 }
 
@@ -120,6 +146,17 @@ pub struct UserService {
     pub image: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
+pub struct UserResources {
+    pub blog_posts: Vec<BlogPost>,
+    pub professional_info: Vec<UserProfessionalInfo>,
+    pub portfolio: Vec<UserPortfolio>,
+    pub resume: Vec<UserResume>,
+    pub skills: Vec<UserSkill>,
+    pub services: Vec<UserService>,
+    pub achievements: ResumeAchievements,
+}
+
 #[ComplexObject]
 impl UserProfessionalInfo {
     async fn id(&self) -> String {
@@ -128,8 +165,14 @@ impl UserProfessionalInfo {
 
     async fn years_of_experience(&self) -> u32 {
         // calculate years of experience from &self.start_date
-        let parsed_start_date = DateTime::parse_from_rfc3339(&self.start_date).expect("Invalid date format");
-        let start_date_ymd = NaiveDate::from_ymd_opt(parsed_start_date.year(), parsed_start_date.month0(), parsed_start_date.day()).unwrap();
+        let parsed_start_date =
+            DateTime::parse_from_rfc3339(&self.start_date).expect("Invalid date format");
+        let start_date_ymd = NaiveDate::from_ymd_opt(
+            parsed_start_date.year(),
+            parsed_start_date.month0(),
+            parsed_start_date.day(),
+        )
+        .unwrap();
 
         let today = Utc::now().date_naive();
         today.years_since(start_date_ymd).unwrap()
@@ -151,14 +194,26 @@ impl UserPortfolio {
 
     async fn years_of_experience(&self) -> u32 {
         // calculate years of experience from &self.start_date
-        let parsed_start_date = DateTime::parse_from_rfc3339(&self.start_date).expect("Invalid date format");
-        let start_date_ymd = NaiveDate::from_ymd_opt(parsed_start_date.year(), parsed_start_date.month0(), parsed_start_date.day()).unwrap();
+        let parsed_start_date =
+            DateTime::parse_from_rfc3339(&self.start_date).expect("Invalid date format");
+        let start_date_ymd = NaiveDate::from_ymd_opt(
+            parsed_start_date.year(),
+            parsed_start_date.month0(),
+            parsed_start_date.day(),
+        )
+        .unwrap();
 
         match &self.end_date {
             Some(end_date) => {
-                let parsed_end_date = DateTime::parse_from_rfc3339(end_date).expect("Invalid date format");
-                
-                let end_date_ymd = NaiveDate::from_ymd_opt(parsed_end_date.year(), parsed_end_date.month0(), parsed_end_date.day()).unwrap();
+                let parsed_end_date =
+                    DateTime::parse_from_rfc3339(end_date).expect("Invalid date format");
+
+                let end_date_ymd = NaiveDate::from_ymd_opt(
+                    parsed_end_date.year(),
+                    parsed_end_date.month0(),
+                    parsed_end_date.day(),
+                )
+                .unwrap();
 
                 end_date_ymd.years_since(start_date_ymd).unwrap()
             }
@@ -178,13 +233,25 @@ impl UserResume {
 
     async fn years_of_experience(&self) -> u32 {
         // calculate years of experience from &self.start_date
-        let parsed_start_date = DateTime::parse_from_rfc3339(&self.start_date).expect("Invalid date format");
-        let start_date_ymd = NaiveDate::from_ymd_opt(parsed_start_date.year(), parsed_start_date.month0(), parsed_start_date.day()).unwrap();
+        let parsed_start_date =
+            DateTime::parse_from_rfc3339(&self.start_date).expect("Invalid date format");
+        let start_date_ymd = NaiveDate::from_ymd_opt(
+            parsed_start_date.year(),
+            parsed_start_date.month0(),
+            parsed_start_date.day(),
+        )
+        .unwrap();
 
         match &self.end_date {
             Some(end_date) => {
-                let parsed_end_date = DateTime::parse_from_rfc3339(end_date).expect("Invalid date format");
-                let end_date_ymd = NaiveDate::from_ymd_opt(parsed_end_date.year(), parsed_end_date.month0(), parsed_end_date.day()).unwrap();
+                let parsed_end_date =
+                    DateTime::parse_from_rfc3339(end_date).expect("Invalid date format");
+                let end_date_ymd = NaiveDate::from_ymd_opt(
+                    parsed_end_date.year(),
+                    parsed_end_date.month0(),
+                    parsed_end_date.day(),
+                )
+                .unwrap();
 
                 end_date_ymd.years_since(start_date_ymd).unwrap()
             }

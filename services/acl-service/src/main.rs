@@ -111,7 +111,7 @@ async fn main() -> Result<()> {
     let origins = [
         "http://localhost:8080".parse::<HeaderValue>().unwrap(),
         "http://localhost:3002".parse::<HeaderValue>().unwrap(),
-        "http://127.0.0.1:8080".parse::<HeaderValue>().unwrap(),
+        "http://localhost:3003".parse::<HeaderValue>().unwrap(),
     ];
 
     let app = Router::new()

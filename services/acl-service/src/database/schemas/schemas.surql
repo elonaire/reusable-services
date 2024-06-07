@@ -69,7 +69,7 @@ DEFINE FUNCTION fn::assign_default_role($user_id: record) {
   LET $edge_name = "->has_role";
 
   -- LET $results = SELECT VALUE id FROM type::table("has_role") WHERE in = $user_id;
-  if array::len($results[0][$edge_name]) == 0 {
+  IF array::len($results[0][$edge_name]) == 0 {
     LET $default_role = SELECT * FROM role WHERE role_name = "User" LIMIT 1;
     LET $role_id = $default_role[0].id;
     RELATE $user_id->has_role->$role_id CONTENT {
