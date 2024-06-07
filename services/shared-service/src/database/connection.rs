@@ -15,7 +15,7 @@ pub async fn create_db_connection() -> Result<Surreal<Client>> {
 
     let db_url = format!("{}:{}", db_host, db_port);
     // format!("{}:{}", db_host, db_port).as_str()
-    println!("DB URL: {}", db_url);
+    // println!("DB URL: {}", db_url);
     let db = Surreal::new::<Ws>(db_url).await?;
 
     db.signin(Root {

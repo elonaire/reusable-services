@@ -94,8 +94,6 @@ impl Query {
                 let services: Option<SurrealRelationQueryResponse<user::UserService>> = query_results.take(5)?;
                 let mut achievements: ResumeAchievements = ResumeAchievements::new();
 
-                println!("blog_posts: {:?}", blog_posts);
-                println!("resume: {:?}", resume);
                 let resume_vec = match resume {
                     Some(resume) => {
                         let user_resume: Vec<UserResume> = resume.get("->has_resume").unwrap().get("out").unwrap().into_iter().map(|resume| resume.to_owned()).collect();

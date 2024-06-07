@@ -3,7 +3,7 @@ mod database;
 mod graphql;
 
 use core::panic;
-use std::{sync::Arc, vec};
+use std::{env, sync::Arc, vec};
 
 use async_graphql::{http::{Credentials, GraphiQLSource}, EmptySubscription, Schema};
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
@@ -108,10 +108,14 @@ async fn main() -> Result<()> {
 
     println!("GraphiQL IDE: http://localhost:3001");
 
+    let shared_service_endpoint = env::var("SHARED_SERVICE")
+                    .expect("Missing the OAUTH_SERVICE environment variable.");
+
     let origins = [
         "http://localhost:8080".parse::<HeaderValue>().unwrap(),
         "http://localhost:3002".parse::<HeaderValue>().unwrap(),
         "http://localhost:3003".parse::<HeaderValue>().unwrap(),
+        shared_service_endpoint.as_str().parse::<HeaderValue>().unwrap(),
     ];
 
     let app = Router::new()

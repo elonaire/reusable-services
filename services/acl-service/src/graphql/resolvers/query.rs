@@ -7,7 +7,7 @@ use lib::utils::auth::AuthStatus;
 use surrealdb::{engine::remote::ws::Client, Surreal};
 
 use crate::{
-    graphql::schemas::user::User,
+    graphql::schemas::user::UserOutput,
     middleware::oauth::confirm_auth,
 };
 
@@ -17,7 +17,7 @@ pub struct Query;
 
 #[Object]
 impl Query {
-    async fn get_users(&self, ctx: &Context<'_>) -> Result<Vec<User>> {
+    async fn get_users(&self, ctx: &Context<'_>) -> Result<Vec<UserOutput>> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
 
         let response = db
@@ -28,15 +28,13 @@ impl Query {
         Ok(response)
     }
 
-    async fn get_user(&self, ctx: &Context<'_>, id: String) -> Result<User> {
+    async fn get_user(&self, ctx: &Context<'_>, id: String) -> Result<UserOutput> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
 
-        let user: Option<User> = db
+        let user: Option<UserOutput> = db
             .select(("user", id.as_str()))
             .await
             .map_err(|e| Error::new(e.to_string()))?;
-
-        // let user: Option<User> = response.take(0)?;
 
         match user {
             Some(user) => Ok(user),
@@ -46,10 +44,7 @@ impl Query {
 
     async fn check_auth(&self, ctx: &Context<'_>) -> Result<AuthStatus> {
         dotenv().ok();
-        // let jwt_secret =
-        //     env::var("JWT_SECRET").expect("Missing the JWT_SECRET environment variable.");
-        // let jwt_refresh_secret = env::var("JWT_REFRESH_SECRET")
-        //     .expect("Missing the JWT_REFRESH_SECRET environment variable.");
+        
         confirm_auth(ctx).await
     }
 }

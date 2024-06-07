@@ -239,18 +239,7 @@ pub async fn decode_token(
 
             match &_claims {
                 Ok(_) => {
-                    // let sub = _claims
-                    //     .as_ref()
-                    //     .unwrap()
-                    //     .subject
-                    //     .as_ref()
-                    //     .map(|t| t.to_string())
-                    //     .unwrap_or("".to_string());
-                    // let is_auth = true;
-                    // Ok(AuthStatus {
-                    //     is_auth,
-                    //     sub: sub.to_string(),
-                    // })
+                    // Token verification successful
                     Ok(_claims.unwrap())
                 }
                 Err(e) => Err(ExtendedError::new(e.to_string(), Some(403.to_string())).build()),

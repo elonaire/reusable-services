@@ -22,7 +22,6 @@ pub async fn add_user_id_if_not_exists(ctx: &Context<'_>, user_id: String) -> bo
         Ok(mut result) => {
             let response: Option<User> = result.take(0).unwrap();
             if response.is_none() {
-                println!("User not found, adding user_id");
                 let user_id_add_res = db
                     .query("INSERT INTO user_id (user_id) VALUES ($user_id)")
                     .bind(("user_id", user_id))
