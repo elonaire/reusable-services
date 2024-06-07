@@ -47,8 +47,6 @@ pub struct User {
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
     pub status: AccountStatus,
-    #[graphql(skip)]
-    pub roles: Option<Vec<Thing>>,
     pub oauth_client: Option<OAuthClientName>,
     pub profile_picture: Option<String>,
     pub bio: Option<String>,
@@ -78,13 +76,53 @@ impl User {
         let today = Utc::now().date_naive();
         today.years_since(from_ymd).unwrap()
     }
+}
 
-    async fn roles(&self) -> Vec<String> {
-        // implement same as for id, only that this time we are returning a vector of Thing
-        self.roles
-            .as_ref()
-            .map(|t| t.iter().map(|t| t.id.to_raw()).collect())
-            .unwrap_or(vec![])
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
+#[graphql(complex)]
+pub struct UserOutput {
+    #[graphql(skip)]
+    pub id: Option<Thing>,
+    pub user_name: String,
+    pub first_name: String,
+    pub middle_name: Option<String>,
+    pub last_name: String,
+    pub gender: Gender,
+    pub dob: String,
+    pub email: String,
+    pub country: String,
+    pub phone: String,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+    pub status: AccountStatus,
+    pub oauth_client: Option<OAuthClientName>,
+    pub profile_picture: Option<String>,
+    pub bio: Option<String>,
+    pub website: Option<String>,
+    pub address: Option<String>,
+}
+
+#[ComplexObject]
+impl UserOutput {
+    async fn id(&self) -> String {
+        self.id.as_ref().map(|t| &t.id).expect("id").to_raw()
+    }
+
+    async fn full_name(&self) -> String {
+        format!(
+            "{} {} {}",
+            self.first_name,
+            self.middle_name.as_ref().unwrap_or(&"".to_string()),
+            self.last_name
+        )
+    }
+
+    async fn age(&self) -> u32 {
+        // calculate age from &self.dob
+        let dob = DateTime::parse_from_rfc3339(&self.dob).expect("Invalid date format");
+        let from_ymd = NaiveDate::from_ymd_opt(dob.year(), dob.month(), dob.day()).unwrap();
+        let today = Utc::now().date_naive();
+        today.years_since(from_ymd).unwrap()
     }
 }
 
