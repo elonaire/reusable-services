@@ -49,7 +49,7 @@ DEFINE FIELD link ON TABLE portfolio TYPE string;
 DEFINE FIELD image ON TABLE portfolio TYPE string;
 DEFINE FIELD category ON TABLE portfolio TYPE string
 -- Allow only these values in the array
-  ASSERT $value INSIDE ["JavaScript", "Rust", "Database", "Cloud", "DevOps"];
+  ASSERT $value INSIDE ["JavaScript", "Rust", "Database", "Cloud", "DevOps", "Mobile"];
 DEFINE FIELD created_at ON TABLE portfolio TYPE datetime
   DEFAULT time::now();
 DEFINE FIELD updated_at ON TABLE portfolio TYPE datetime

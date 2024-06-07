@@ -48,6 +48,8 @@ pub enum UserPortfolioCategory {
     DevOps,
     #[graphql(name = "Cloud")]
     Cloud,
+    #[graphql(name = "Mobile")]
+    Mobile,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
@@ -169,7 +171,7 @@ impl UserProfessionalInfo {
             DateTime::parse_from_rfc3339(&self.start_date).expect("Invalid date format");
         let start_date_ymd = NaiveDate::from_ymd_opt(
             parsed_start_date.year(),
-            parsed_start_date.month0(),
+            parsed_start_date.month(),
             parsed_start_date.day(),
         )
         .unwrap();
@@ -198,7 +200,7 @@ impl UserPortfolio {
             DateTime::parse_from_rfc3339(&self.start_date).expect("Invalid date format");
         let start_date_ymd = NaiveDate::from_ymd_opt(
             parsed_start_date.year(),
-            parsed_start_date.month0(),
+            parsed_start_date.month(),
             parsed_start_date.day(),
         )
         .unwrap();
@@ -210,7 +212,7 @@ impl UserPortfolio {
 
                 let end_date_ymd = NaiveDate::from_ymd_opt(
                     parsed_end_date.year(),
-                    parsed_end_date.month0(),
+                    parsed_end_date.month(),
                     parsed_end_date.day(),
                 )
                 .unwrap();
@@ -237,7 +239,7 @@ impl UserResume {
             DateTime::parse_from_rfc3339(&self.start_date).expect("Invalid date format");
         let start_date_ymd = NaiveDate::from_ymd_opt(
             parsed_start_date.year(),
-            parsed_start_date.month0(),
+            parsed_start_date.month(),
             parsed_start_date.day(),
         )
         .unwrap();
@@ -248,7 +250,7 @@ impl UserResume {
                     DateTime::parse_from_rfc3339(end_date).expect("Invalid date format");
                 let end_date_ymd = NaiveDate::from_ymd_opt(
                     parsed_end_date.year(),
-                    parsed_end_date.month0(),
+                    parsed_end_date.month(),
                     parsed_end_date.day(),
                 )
                 .unwrap();

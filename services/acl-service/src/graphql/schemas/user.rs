@@ -61,7 +61,7 @@ impl User {
     async fn age(&self) -> u32 {
         // calculate age from &self.dob
         let dob = DateTime::parse_from_rfc3339(&self.dob).expect("Invalid date format");
-        let from_ymd = NaiveDate::from_ymd_opt(dob.year(), dob.month0(), dob.day0()).unwrap();
+        let from_ymd = NaiveDate::from_ymd_opt(dob.year(), dob.month(), dob.day()).unwrap();
         let today = Utc::now().date_naive();
         today.years_since(from_ymd).unwrap()
     }
