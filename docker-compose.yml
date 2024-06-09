@@ -25,7 +25,7 @@ services:
     image: elonaire/tt-frontend:latest
     pull_policy: always
     ports:
-      - 8080:8080
+      - 8080:80
     container_name: tt-frontend
     depends_on:
       - tt-acl-service
