@@ -192,7 +192,7 @@ jobs:
             username: ${{ secrets.SERVER_USERNAME }}
             password: ${{ secrets.SERVER_PASSWORD }}
             source: "nginx.tar"
-            target: ~/nginx
+            target: ~/
 
       - name: Deploy to server via SSH
         uses: appleboy/ssh-action@v0.1.4
@@ -203,7 +203,6 @@ jobs:
           password: ${{ secrets.SERVER_PASSWORD }}
           script: |
             CI=true docker service stop
-            cd ~/nginx
             tar -xvf nginx.tar
             cd ~
             echo "${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}" | CI=true docker login -u "${{ secrets.DOCKER_HUB_USERNAME }}" --password-stdin
