@@ -109,7 +109,7 @@ async fn main() -> Result<()> {
     println!("GraphiQL IDE: http://localhost:3001");
 
     let shared_service_endpoint = env::var("SHARED_SERVICE")
-                    .expect("Missing the OAUTH_SERVICE environment variable.");
+                    .expect("Missing the SHARED_SERVICE environment variable.");
 
     let origins = [
         "http://localhost:8080".parse::<HeaderValue>().unwrap(),

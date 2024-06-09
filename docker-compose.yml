@@ -14,8 +14,21 @@ services:
     depends_on:
       - tt-acl-service
       - tt-shared-service
+      - tt-frontend
     volumes:
       - /etc/ssl/certs:/etc/nginx/certs # Uncomment this line if you want to use https
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf
+      - ./nginx:/var/log/nginx
+    networks:
+      - app-tier
+  tt-frontend:
+    image: elonaire/tt-frontend:latest
+    pull_policy: always
+    ports:
+      - 8080:8080
+    container_name: tt-frontend
+    depends_on:
+      - tt-acl-service
+      - tt-shared-service
     networks:
       - app-tier
