@@ -21,16 +21,12 @@ services:
       - DATABASE_PASSWORD=${DATABASE_PASSWORD}
   tt-acl-service:
     image: elonaire/tt-acl-service:latest
+    pull_policy: always
     ports:
       - 3001:3001
     container_name: tt-acl-service
     networks:
       - app-tier
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        SERVICE_NAME: acl-service
     volumes:
       - ./services/acl-service/database/schemas/schemas.surql:/usr/src/db/schemas.surql
     environment:
@@ -51,6 +47,7 @@ services:
       - DATABASE_HOST_ACL=${DATABASE_HOST_ACL}
       - DATABASE_PORT_ACL=${DATABASE_PORT_ACL}
       - DATABASE_SCHEMA_FILE_PATH=${DATABASE_SCHEMA_FILE_PATH}
+      - SHARED_SERVICE=${SHARED_SERVICE}
     depends_on:
       - tt-acl-db
 
