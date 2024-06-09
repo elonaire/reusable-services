@@ -202,11 +202,11 @@ jobs:
           # key: ${{ secrets.SERVER_SSH_PRIVATE_KEY }}
           password: ${{ secrets.SERVER_PASSWORD }}
           script: |
+            CI=true docker service stop
             cd ~/nginx
             tar -xvf nginx.tar
             cd ~
             echo "${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}" | CI=true docker login -u "${{ secrets.DOCKER_HUB_USERNAME }}" --password-stdin
-            CI=true docker service stop
             CI=true docker service start
             CI=true docker container prune -f
             CI=true docker image prune -a -f
