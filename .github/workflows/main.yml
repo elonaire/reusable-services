@@ -163,7 +163,6 @@ jobs:
     needs: [build_and_deploy_acl, build_and_deploy_shared_service]
     if: |
       always() &&
-      github.ref == 'refs/heads/main' &&
       (
         (needs.build_and_deploy_acl.result == 'success' && needs.build_and_deploy_shared_service.result == 'success') ||
         (needs.build_and_deploy_shared_service.result == 'success' && needs.build_and_deploy_acl.result == 'skipped') ||
