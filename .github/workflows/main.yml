@@ -183,13 +183,15 @@ jobs:
           source: "docker-compose.yml,docker-compose.acl.yml,docker-compose.shared.yml"
           target: ~/
 
+      - name: 'Tar files'
+        run: tar -cvf nginx.tar nginx/
       - name: SCP nginx.conf to server
         uses: appleboy/scp-action@v0.1.4
         with:
             host: ${{ secrets.SERVER_HOST }}
             username: ${{ secrets.SERVER_USERNAME }}
             password: ${{ secrets.SERVER_PASSWORD }}
-            source: "nginx/nginx.conf"
+            source: "nginx.tar"
             target: ~/nginx
 
       - name: Deploy to server via SSH
@@ -200,6 +202,10 @@ jobs:
           # key: ${{ secrets.SERVER_SSH_PRIVATE_KEY }}
           password: ${{ secrets.SERVER_PASSWORD }}
           script: |
+            cd ~/nginx
+            tar -xvf nginx.tar
+            rm nginx.tar
+            cd ~
             echo "${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}" | CI=true docker login -u "${{ secrets.DOCKER_HUB_USERNAME }}" --password-stdin
             CI=true docker service stop
             CI=true docker service start
