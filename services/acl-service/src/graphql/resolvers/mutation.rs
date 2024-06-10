@@ -287,4 +287,46 @@ impl Mutation {
             _ => return Err(Error::new("Unauthorized")),
         }
     }
+
+    pub async fn update_user_password(
+        &self,
+        ctx: &Context<'_>,
+        user_id: String,
+        new_password: String,
+        mut user_info: UserUpdate,
+    ) -> Result<Vec<User>> {
+        // no auth check just check old password against password entered by user
+        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
+        
+        let mut found_user_result = db
+            .query("SELECT * FROM type::table($table) WHERE id = type::thing($user) LIMIT 1",)
+            .bind(("table", "user"))
+            .bind(("user", format!("user:{}", user_id)))
+            .await?;
+
+        let found_user: Option<User> = found_user_result.take(0)?;
+
+        match found_user {
+            Some(user) => {
+                let password_match = bcrypt::verify(&user_info.password.unwrap().as_str(), user.password.as_str()).unwrap();
+
+                if password_match {
+                    let new_password_hash = bcrypt::hash(new_password, bcrypt::DEFAULT_COST).unwrap();
+                    user_info.password = Some(new_password_hash);
+                    let response = db
+                        .update("user")
+                        .merge(user_info)
+                        .await
+                        .map_err(|e| Error::new(e.to_string()))?;
+
+                    Ok(response)
+                } else {
+                    Err(Error::new("Verification failed"))
+                }
+            }
+            None => Err(Error::new("User not found")),
+        }
+
+        // Ok(found_user)
+    }
 }
