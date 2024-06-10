@@ -16,7 +16,9 @@ impl Query {
     pub async fn get_blog_posts(
         &self,
         ctx: &Context<'_>,
+        id: String
     ) -> async_graphql::Result<Vec<blog::BlogPost>> {
+        println!("id: {} is just a trick for Nginx to accept my request", id);
         let db = ctx
             .data::<Extension<Arc<Surreal<SurrealClient>>>>()
             .unwrap();
