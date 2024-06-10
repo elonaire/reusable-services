@@ -39,6 +39,13 @@ services:
     container_name: tt-acl-db
     networks:
       - app-tier
+    user: root
+    command: start --log debug --auth --user ${DATABASE_USER} --pass ${DATABASE_PASSWORD} file:/db-data/mydatabase.db
+    volumes:
+      - tt-acl-servicedb:/db-data
+    environment:
+      - DATABASE_USER=${DATABASE_USER}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
   tt-shared-servicedb:
     image: surrealdb/surrealdb:v1.5.1
     ports:
@@ -46,6 +53,13 @@ services:
     container_name: tt-shared-servicedb
     networks:
       - app-tier
+    user: root
+    command: start --log debug --auth --user ${DATABASE_USER} --pass ${DATABASE_PASSWORD} --bind 0.0.0.0:8001 file:/db-data/mydatabase.db
+    volumes:
+      - tt-shared-servicedb:/db-data
+    environment:
+      - DATABASE_USER=${DATABASE_USER}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
   tt-acl-service:
     image: elonaire/tt-acl-service:latest
     pull_policy: always
