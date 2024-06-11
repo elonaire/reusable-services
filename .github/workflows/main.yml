@@ -219,11 +219,11 @@ jobs:
     if: |
       always() &&
       (
-        (needs.build_and_deploy_acl.result == 'success' && needs.build_and_deploy_shared_service.result == 'skipped' && needs.deploy_to_server.result == 'skipped') ||
-        (needs.build_and_deploy_acl.result == 'success' && needs.build_and_deploy_shared_service.result == 'success' && needs.deploy_to_server.result == 'skipped') ||
         (needs.build_and_deploy_acl.result == 'success' && needs.build_and_deploy_shared_service.result == 'success' && needs.deploy_to_server.result == 'success') ||
-        (needs.build_and_deploy_acl.result == 'skipped' && needs.build_and_deploy_shared_service.success == 'skipped' && needs.deploy_to_server.result == 'success') ||
-        (needs.build_and_deploy_acl.result == 'skipped' && needs.build_and_deploy_shared_service.success == 'success' && needs.deploy_to_server.result == 'success')
+        (needs.build_and_deploy_shared_service.result == 'success' && needs.build_and_deploy_acl.result == 'skipped' && needs.deploy_to_server.result == 'success') ||
+        (needs.build_and_deploy_acl.result == 'skipped' && needs.build_and_deploy_shared_service.result == 'skipped' && needs.deploy_to_server.result == 'success') ||
+        (needs.build_and_deploy_acl.result == 'success' && needs.build_and_deploy_shared_service.result == 'skipped' && needs.deploy_to_server.result == 'success') ||
+        (needs.build_and_deploy_acl.result == 'skipped' && needs.build_and_deploy_shared_service.result == 'skipped' && needs.deploy_to_server.result == 'success')
       )
 
     steps:
