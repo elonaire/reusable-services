@@ -307,32 +307,22 @@ impl Mutation {
         let found_user: Option<User> = found_user_result.take(0)?;
 
         match found_user {
-            Some(_user) => {
-                // let password_match = bcrypt::verify(&user_info.password.unwrap().as_str(), user.password.as_str()).unwrap();
+            Some(user) => {
+                let password_match = bcrypt::verify(&user_info.password.unwrap().as_str(), user.password.as_str()).unwrap();
 
-                // if password_match {
-                //     let new_password_hash = bcrypt::hash(new_password, bcrypt::DEFAULT_COST).unwrap();
-                //     user_info.password = Some(new_password_hash);
-                //     let response = db
-                //         .update("user")
-                //         .merge(user_info)
-                //         .await
-                //         .map_err(|e| Error::new(e.to_string()))?;
-
-                //     Ok(response)
-                // } else {
-                //     Err(Error::new("Verification failed"))
-                // }
-                let new_password_hash = bcrypt::hash(new_password, bcrypt::DEFAULT_COST).unwrap();
-                user_info.password = Some(new_password_hash);
-
-                let response = db
+                if password_match {
+                    let new_password_hash = bcrypt::hash(new_password, bcrypt::DEFAULT_COST).unwrap();
+                    user_info.password = Some(new_password_hash);
+                    let response = db
                         .update("user")
                         .merge(user_info)
                         .await
                         .map_err(|e| Error::new(e.to_string()))?;
 
-                Ok(response)
+                    Ok(response)
+                } else {
+                    Err(Error::new("Verification failed"))
+                }
             }
             None => Err(Error::new("User not found")),
         }
