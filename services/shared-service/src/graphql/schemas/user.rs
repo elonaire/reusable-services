@@ -7,6 +7,7 @@ use surrealdb::sql::Thing;
 
 use super::blog::BlogPost;
 pub type ResumeAchievements = HashMap<String, Vec<String>>;
+pub type UserPortfolioSkills = HashMap<String, Vec<UserSkill>>;
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
 #[graphql(input_name = "UserProfessionalInfoInput")]
@@ -157,6 +158,7 @@ pub struct UserResources {
     pub skills: Vec<UserSkill>,
     pub services: Vec<UserService>,
     pub achievements: ResumeAchievements,
+    pub portfolio_skills: UserPortfolioSkills,
 }
 
 #[ComplexObject]

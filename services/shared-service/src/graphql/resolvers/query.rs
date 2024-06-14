@@ -7,7 +7,7 @@ use surrealdb::{engine::remote::ws::Client as SurrealClient, Surreal};
 use crate::{graphql::schemas::{
     blog,
     shared::{self, SurrealRelationQueryResponse},
-    user::{self, ResumeAchievements, UserResources, UserResume},
+    user::{self, ResumeAchievements, UserPortfolioSkills, UserResources, UserResume, UserSkill},
 }, middleware::auth::check_auth_from_acl};
 
 pub struct Query;
@@ -107,6 +107,7 @@ impl Query {
                 let services: Option<SurrealRelationQueryResponse<user::UserService>> =
                     query_results.take(5)?;
                 let mut achievements: ResumeAchievements = ResumeAchievements::new();
+                let mut portfolio_skills: UserPortfolioSkills = UserPortfolioSkills::new();
 
                 let resume_vec = match resume {
                     Some(resume) => {
@@ -153,12 +154,73 @@ impl Query {
                                     .get("out")
                                     .unwrap()
                                     .into_iter()
-                                    .map(|achievement| achievement.to_owned().description)
+                                    .map(|achievement| {
+                                        achievement.to_owned().description
+                                    })
                                     .collect(),
                             );
                         }
 
                         user_resume
+                    }
+                    None => vec![],
+                };
+
+                let portfolio_vec = match portfolio {
+                    Some(portfolio) => {
+                        let user_portfolio: Vec<user::UserPortfolio> = portfolio
+                            .get("->has_portfolio")
+                            .unwrap()
+                            .get("out")
+                            .unwrap()
+                            .into_iter()
+                            .map(|portfolio| portfolio.to_owned())
+                            .collect();
+
+                        for portfolio in user_portfolio.clone().into_iter() {
+                            let user_portfolio = portfolio.clone();
+                            let mut query_results = db
+                                .query(
+                                    "SELECT ->has_skill.out.* FROM type::thing($portfolio_id)",
+                                )
+                                .bind((
+                                    "portfolio_id",
+                                    format!(
+                                        "portfolio:{}",
+                                        user_portfolio
+                                            .id
+                                            .as_ref()
+                                            .map(|t| &t.id)
+                                            .expect("id")
+                                            .to_raw()
+                                    ),
+                                ))
+                                .await
+                                .map_err(|e| Error::new(e.to_string()))?;
+
+                            let portfolio_skills_val: Option<
+                                SurrealRelationQueryResponse<user::UserSkill>,
+                            > = query_results.take(0)?;
+
+                            portfolio_skills.insert(
+                                portfolio.id.as_ref().map(|t| &t.id).expect("id").to_raw(),
+                                portfolio_skills_val
+                                    .unwrap()
+                                    .get("->has_skill")
+                                    .unwrap()
+                                    .get("out")
+                                    .unwrap()
+                                    .into_iter()
+                                    .map(|skill| {
+                                        let mut skill_mut: UserSkill = skill.to_owned();
+                                        skill_mut.id = None;
+                                        skill_mut
+                                    })
+                                    .collect(),
+                            );
+                        }
+
+                        user_portfolio
                     }
                     None => vec![],
                 };
@@ -182,15 +244,7 @@ impl Query {
                         .into_iter()
                         .map(|info| info.to_owned())
                         .collect(),
-                    portfolio: portfolio
-                        .unwrap()
-                        .get("->has_portfolio")
-                        .unwrap()
-                        .get("out")
-                        .unwrap()
-                        .into_iter()
-                        .map(|portfolio| portfolio.to_owned())
-                        .collect(),
+                    portfolio: portfolio_vec,
                     resume: resume_vec,
                     skills: skills
                         .unwrap()
@@ -211,6 +265,7 @@ impl Query {
                         .into_iter()
                         .map(|service| service.to_owned())
                         .collect(),
+                    portfolio_skills: portfolio_skills,
                 };
 
                 Ok(user_resources)
@@ -275,5 +330,23 @@ impl Query {
                 }
                 None => Err(Error::new("Unauthorized")),
             }
+    }
+
+    pub async fn get_skills(
+        &self,
+        ctx: &Context<'_>,
+    ) -> async_graphql::Result<Vec<user::UserSkill>> {
+        let db = ctx
+            .data::<Extension<Arc<Surreal<SurrealClient>>>>()
+            .unwrap();
+
+        let mut query_results = db
+            .query("SELECT * FROM skill")
+            .await
+            .map_err(|e| Error::new(e.to_string()))?;
+
+        let skills: Vec<user::UserSkill> = query_results.take(0)?;
+
+        Ok(skills)
     }
 }

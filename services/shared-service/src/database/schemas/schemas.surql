@@ -257,5 +257,5 @@ DEFINE FIELD updated_at ON TABLE skill TYPE datetime
 DEFINE TABLE has_skill SCHEMAFULL;
 DEFINE INDEX skillIndex ON TABLE has_skill
 COLUMNS in, out UNIQUE;
-DEFINE FIELD in ON TABLE has_skill TYPE record<user_id>;
+DEFINE FIELD in ON TABLE has_skill TYPE record;
 DEFINE FIELD out ON TABLE has_skill TYPE record<skill>;

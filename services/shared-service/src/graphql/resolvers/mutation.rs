@@ -668,4 +668,50 @@ impl Mutation {
 
         Ok(message)
     }
+
+    /// Relate a skill to a portfolio item
+    pub async fn relate_skill_to_portfolio_item(
+        &self,
+        ctx: &Context<'_>,
+        skill_id: String,
+        portfolio_item_id: String,
+    ) -> async_graphql::Result<Vec<user::UserSkill>> {
+        let db = ctx
+            .data::<Extension<Arc<Surreal<SurrealClient>>>>()
+            .unwrap();
+
+        let auth_res_from_acl = check_auth_from_acl(ctx).await?;
+
+        match auth_res_from_acl {
+            Some(_) => {
+                let mut database_transaction = db
+                .query(
+                    "
+                    BEGIN TRANSACTION;
+                    -- Get the skill and portfolio item
+                    LET $skill = (SELECT * FROM type::table($skill_table) WHERE id = type::thing($skill_id) LIMIT 1);
+                    LET $portfolio_item = (SELECT id FROM type::table($portfolio_table) WHERE id = type::thing($portfolio_item_id) LIMIT 1);
+
+                    -- Relate the skill to the portfolio item
+                    LET $skill_id = (SELECT VALUE id FROM $skill);
+                    RELATE $portfolio_item->has_skill->$skill_id;
+
+                    RETURN $skill;
+                    COMMIT TRANSACTION;
+                    "
+                )
+                .bind(("skill_id", format!("skill:{}", skill_id)))
+                .bind(("skill_table", "skill"))
+                .bind(("portfolio_item_id", format!("portfolio:{}", portfolio_item_id)))
+                .bind(("portfolio_table", "portfolio"))
+                .await
+                .map_err(|e| Error::new(e.to_string()))?;
+
+                let response: Vec<user::UserSkill> = database_transaction.take(0).unwrap();
+
+                Ok(response)
+            }
+            None => Err(ExtendedError::new("Not Authorized!", Some(403.to_string())).build()),
+        }
+    }
 }
