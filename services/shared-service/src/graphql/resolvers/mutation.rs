@@ -7,6 +7,7 @@ use axum::Extension;
 use lib::utils::custom_error::ExtendedError;
 use surrealdb::{engine::remote::ws::Client as SurrealClient, Surreal};
 
+use crate::graphql::schemas::blog::BlogPost;
 use crate::graphql::schemas::{blog, shared, user};
 use crate::graphql::schemas::user::UserProfessionalInfo;
 use crate::middleware::auth::check_auth_from_acl;
@@ -710,6 +711,35 @@ impl Mutation {
                 let response: Vec<user::UserSkill> = database_transaction.take(0).unwrap();
 
                 Ok(response)
+            }
+            None => Err(ExtendedError::new("Not Authorized!", Some(403.to_string())).build()),
+        }
+    }
+
+    pub async fn edit_blog_post(
+        &self,
+        ctx: &Context<'_>,
+        blog_post: blog::BlogPostUpdate,
+        blog_post_id: String,
+    ) -> async_graphql::Result<blog::BlogPost> {
+        let db = ctx
+            .data::<Extension<Arc<Surreal<SurrealClient>>>>()
+            .unwrap();
+
+        let auth_res_from_acl = check_auth_from_acl(ctx).await?;
+
+        match auth_res_from_acl {
+            Some(_) => {
+                let response: Option<BlogPost> = db
+                        .update(("blog_post", blog_post_id.clone()))
+                        .merge(blog_post)
+                        .await
+                        .map_err(|e| Error::new(e.to_string()))?;
+
+                match response {
+                    Some(blog_post) => Ok(blog_post),
+                    None => Err(ExtendedError::new("Blog post not found", Some(404.to_string())).build()),
+                }
             }
             None => Err(ExtendedError::new("Not Authorized!", Some(403.to_string())).build()),
         }
