@@ -258,7 +258,7 @@ impl Mutation {
         ctx: &Context<'_>,
         mut user: UserUpdate,
         user_id: String,
-    ) -> Result<Vec<User>> {
+    ) -> Result<User> {
         let check_auth = confirm_auth(ctx).await;
 
         match check_auth {
@@ -276,13 +276,16 @@ impl Mutation {
                         Some(bcrypt::hash(user.password.unwrap(), bcrypt::DEFAULT_COST).unwrap());
                 }
 
-                let response = db
-                    .update("user")
+                let response: Option<User> = db
+                    .update(("user", user_id.clone()))
                     .merge(user)
                     .await
                     .map_err(|e| Error::new(e.to_string()))?;
 
-                Ok(response)
+                match response {
+                    Some(user) => Ok(user),
+                    None => Err(Error::new("User not found")),
+                }
             }
             _ => return Err(Error::new("Unauthorized")),
         }
@@ -294,7 +297,7 @@ impl Mutation {
         user_id: String,
         new_password: String,
         mut user_info: UserUpdate,
-    ) -> Result<Vec<User>> {
+    ) -> Result<User> {
         // no auth check just check old password against password entered by user
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
         
@@ -313,13 +316,16 @@ impl Mutation {
                 if password_match {
                     let new_password_hash = bcrypt::hash(new_password, bcrypt::DEFAULT_COST).unwrap();
                     user_info.password = Some(new_password_hash);
-                    let response = db
-                        .update("user")
+                    let response: Option<User> = db
+                        .update(("user", user_id.clone()))
                         .merge(user_info)
                         .await
                         .map_err(|e| Error::new(e.to_string()))?;
 
-                    Ok(response)
+                    match response {
+                        Some(user) => Ok(user),
+                        None => Err(Error::new("User not found")),
+                    }
                 } else {
                     Err(Error::new("Verification failed"))
                 }
