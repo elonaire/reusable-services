@@ -266,4 +266,4 @@ DEFINE FIELD out ON TABLE has_skill TYPE record<skill>;
 
 /* Migrations */
 -- Migration for blog post table
-UPDATE blog_post SET is_featured = false, is_premium = false WHERE is_featured IS NULL OR is_premium IS NULL;
+UPDATE blog_post SET is_featured = false, is_premium = false WHERE is_featured IS NONE OR is_premium IS NONE;
