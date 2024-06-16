@@ -145,6 +145,10 @@ DEFINE FIELD published_date ON TABLE blog_post TYPE datetime
   -- IF $value IS NOT NONE THEN <datetime>$value
   -- ELSE NONE
   -- END;
+DEFINE FIELD is_featured ON TABLE blog_post TYPE bool
+  DEFAULT false;
+DEFINE FIELD is_premium ON TABLE blog_post TYPE bool
+  DEFAULT false;
 DEFINE FIELD created_at ON TABLE blog_post TYPE datetime
   DEFAULT time::now();
 DEFINE FIELD updated_at ON TABLE blog_post TYPE datetime
@@ -259,3 +263,7 @@ DEFINE INDEX skillIndex ON TABLE has_skill
 COLUMNS in, out UNIQUE;
 DEFINE FIELD in ON TABLE has_skill TYPE record;
 DEFINE FIELD out ON TABLE has_skill TYPE record<skill>;
+
+/* Migrations */
+-- Migration for blog post table
+UPDATE blog_post SET is_featured = false, is_premium = false WHERE is_featured IS NULL OR is_premium IS NULL;

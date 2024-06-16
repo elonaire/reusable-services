@@ -15,6 +15,8 @@ pub struct BlogPost {
     pub category: BlogCategory,
     pub link: String,
     pub published_date: Option<String>,
+    pub is_featured: bool,
+    pub is_premium: bool,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
 }
@@ -36,6 +38,10 @@ pub struct BlogPostUpdate {
     pub link: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub published_date: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_featured: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_premium: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
