@@ -30,11 +30,15 @@ RUN cargo build --release --package ${SERVICE_NAME}
 FROM ubuntu:latest
 ARG DEBIAN_FRONTEND=noninteractive
 ARG SERVICE_NAME
+ARG PORT
 
 ENV SERVICE_NAME=${SERVICE_NAME}
+ENV PORT=${PORT}
 
 # # Copy the binary from the builder stage
 COPY --from=0 /app/target/release/${SERVICE_NAME} .
 
+# # Expose the port
+EXPOSE ${PORT}
 # # Command to run
 CMD ./${SERVICE_NAME}

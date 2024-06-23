@@ -13,4 +13,5 @@ services:
       dockerfile: Dockerfile
       args:
         SERVICE_NAME: acl-service
+        PORT: 3001
   
