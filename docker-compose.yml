@@ -7,10 +7,11 @@ networks:
 services:
   gateway:
     image: nginx:latest
-    # container_name: gateway
+    container_name: gateway
+    restart: unless-stopped
     ports:
-      - "80-89:80"
-      - "443-452:443" # Uncomment this line if you want to use https
+      - "80:80"
+      - "443:443" # Uncomment this line if you want to use https
     depends_on:
       - tt-acl-service
       - tt-shared-service
@@ -24,9 +25,10 @@ services:
   tt-frontend:
     image: elonaire/tt-frontend:latest
     pull_policy: always
+    restart: unless-stopped
     ports:
-      - "8080-8089:8080"
-    # container_name: tt-frontend
+      - 8080:8080
+    container_name: tt-frontend
     depends_on:
       - tt-acl-service
       - tt-shared-service
@@ -34,9 +36,10 @@ services:
       - app-tier
   tt-acl-db:
     image: surrealdb/surrealdb:v1.5.1
+    restart: unless-stopped
     ports:
-      - "8000-8009:8000"
-    # container_name: tt-acl-db
+      - 8000:8000
+    container_name: tt-acl-db
     networks:
       - app-tier
     user: root
@@ -48,9 +51,10 @@ services:
       - DATABASE_PASSWORD=${DATABASE_PASSWORD}
   tt-shared-servicedb:
     image: surrealdb/surrealdb:v1.5.1
+    restart: unless-stopped
     ports:
-      - "8010-8019:8001"
-    # container_name: tt-shared-servicedb
+      - 8001:8001
+    container_name: tt-shared-servicedb
     networks:
       - app-tier
     user: root
@@ -63,9 +67,10 @@ services:
   tt-acl-service:
     image: elonaire/tt-acl-service:latest
     pull_policy: always
+    restart: unless-stopped
     ports:
-      - "3001-3010:3001"
-    # container_name: tt-acl-service
+      - 3001:3001
+    container_name: tt-acl-service
     networks:
       - app-tier
     depends_on:
@@ -73,9 +78,10 @@ services:
   tt-shared-service:
     image: elonaire/tt-shared-service:latest
     pull_policy: always
+    restart: unless-stopped
     ports:
-      - "3011-3020:3002"
-    # container_name: tt-shared-service
+      - 3002:3002
+    container_name: tt-shared-service
     networks:
       - app-tier
     depends_on:
