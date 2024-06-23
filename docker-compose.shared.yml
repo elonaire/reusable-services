@@ -10,7 +10,7 @@ services:
     pull_policy: always
     ports:
       - 3002:3002
-    container_name: tt-shared-service
+    # container_name: tt-shared-service
     networks:
       - app-tier
     volumes:
