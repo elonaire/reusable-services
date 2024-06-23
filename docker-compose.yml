@@ -44,7 +44,7 @@ services:
           memory: 200M
     # ports:
     #   - 8080:8080
-    container_name: tt-frontend
+    # container_name: tt-frontend
     depends_on:
       - tt-acl-service
       - tt-shared-service
