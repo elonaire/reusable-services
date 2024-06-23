@@ -8,6 +8,13 @@ services:
   gateway:
     image: nginx:latest
     container_name: gateway
+    restart: always
+    deploy:
+      replicas: 5
+      resources:
+        limits:
+          cpus: "0.1"
+          memory: 200M
     ports:
       - "80:80"
       - "443:443" # Uncomment this line if you want to use https
@@ -24,6 +31,13 @@ services:
   tt-frontend:
     image: elonaire/tt-frontend:latest
     pull_policy: always
+    restart: always
+    deploy:
+      replicas: 5
+      resources:
+        limits:
+          cpus: "0.1"
+          memory: 200M
     ports:
       - 8080:8080
     container_name: tt-frontend
@@ -34,6 +48,13 @@ services:
       - app-tier
   tt-acl-db:
     image: surrealdb/surrealdb:v1.5.1
+    restart: always
+    deploy:
+      replicas: 5
+      resources:
+        limits:
+          cpus: "0.1"
+          memory: 200M
     ports:
       - 8000:8000
     container_name: tt-acl-db
@@ -48,6 +69,13 @@ services:
       - DATABASE_PASSWORD=${DATABASE_PASSWORD}
   tt-shared-servicedb:
     image: surrealdb/surrealdb:v1.5.1
+    restart: always
+    deploy:
+      replicas: 5
+      resources:
+        limits:
+          cpus: "0.1"
+          memory: 200M
     ports:
       - 8001:8001
     container_name: tt-shared-servicedb
@@ -63,6 +91,13 @@ services:
   tt-acl-service:
     image: elonaire/tt-acl-service:latest
     pull_policy: always
+    restart: always
+    deploy:
+      replicas: 5
+      resources:
+        limits:
+          cpus: "0.1"
+          memory: 200M
     ports:
       - 3001:3001
     container_name: tt-acl-service
@@ -73,6 +108,13 @@ services:
   tt-shared-service:
     image: elonaire/tt-shared-service:latest
     pull_policy: always
+    restart: always
+    deploy:
+      replicas: 5
+      resources:
+        limits:
+          cpus: "0.1"
+          memory: 200M
     ports:
       - 3002:3002
     container_name: tt-shared-service
