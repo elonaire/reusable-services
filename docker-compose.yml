@@ -7,11 +7,19 @@ networks:
 services:
   gateway:
     image: nginx:latest
-    container_name: gateway
+    # container_name: gateway
     restart: unless-stopped
+    deploy:
+      mode: replicated
+      replicas: 2
+      endpoint_mode: vip
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 200M
     ports:
-      - "80:80"
-      - "443:443" # Uncomment this line if you want to use https
+      - "80-89:80"
+      - "443-452:443" # Uncomment this line if you want to use https
     depends_on:
       - tt-acl-service
       - tt-shared-service
