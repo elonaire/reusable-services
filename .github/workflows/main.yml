@@ -204,7 +204,7 @@ jobs:
           script: |
             tar -xvf nginx.tar
             echo "${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}" | CI=true docker login -u "${{ secrets.DOCKER_HUB_USERNAME }}" --password-stdin
-            CI=true docker compose --env-file prod.env -f docker-compose.yml -f docker-compose.acl.yml -f docker-compose.shared.yml up -d --force-recreate
+            CI=true docker compose --env-file prod.env -f docker-compose.yml -f docker-compose.acl.yml -f docker-compose.shared.yml up -d --force-recreate --scale tt-frontend=5 --scale tt-acl-service=2 --scale tt-shared-service=2 --scale tt-acl-db=2 --scale tt-shared-servicedb=2 --scale gateway=5
             
 
   automerge:
