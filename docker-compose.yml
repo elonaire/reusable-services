@@ -43,7 +43,7 @@ services:
           cpus: '0.5'
           memory: 200M
     ports:
-      - 8080:8080
+      - "8080-8083:8080"
     # container_name: tt-frontend
     depends_on:
       - tt-acl-service
