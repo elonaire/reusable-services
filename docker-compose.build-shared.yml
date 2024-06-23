@@ -13,3 +13,4 @@ services:
       dockerfile: Dockerfile
       args:
         SERVICE_NAME: shared-service
+        PORT: 3002

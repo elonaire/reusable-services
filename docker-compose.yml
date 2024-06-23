@@ -34,9 +34,17 @@ services:
     image: elonaire/tt-frontend:latest
     pull_policy: always
     restart: unless-stopped
-    ports:
-      - 8080:8080
-    container_name: tt-frontend
+    deploy:
+      mode: replicated
+      replicas: 3
+      endpoint_mode: dnsrr
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 200M
+    # ports:
+    #   - 8080:8080
+    # container_name: tt-frontend
     depends_on:
       - tt-acl-service
       - tt-shared-service
@@ -45,8 +53,8 @@ services:
   tt-acl-db:
     image: surrealdb/surrealdb:v1.5.1
     restart: unless-stopped
-    ports:
-      - 8000:8000
+    # ports:
+    #   - 8000:8000
     container_name: tt-acl-db
     networks:
       - app-tier
@@ -60,8 +68,8 @@ services:
   tt-shared-servicedb:
     image: surrealdb/surrealdb:v1.5.1
     restart: unless-stopped
-    ports:
-      - 8001:8001
+    # ports:
+    #   - 8001:8001
     container_name: tt-shared-servicedb
     networks:
       - app-tier
@@ -76,8 +84,8 @@ services:
     image: elonaire/tt-acl-service:latest
     pull_policy: always
     restart: unless-stopped
-    ports:
-      - 3001:3001
+    # ports:
+    #   - 3001:3001
     container_name: tt-acl-service
     networks:
       - app-tier
@@ -87,8 +95,8 @@ services:
     image: elonaire/tt-shared-service:latest
     pull_policy: always
     restart: unless-stopped
-    ports:
-      - 3002:3002
+    # ports:
+    #   - 3002:3002
     container_name: tt-shared-service
     networks:
       - app-tier
