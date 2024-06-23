@@ -12,7 +12,7 @@ services:
     deploy:
       mode: replicated
       replicas: 2
-      endpoint_mode: vip
+      endpoint_mode: dnsrr
       resources:
         limits:
           cpus: '0.5'
