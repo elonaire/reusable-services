@@ -11,15 +11,15 @@ services:
     restart: unless-stopped
     deploy:
       mode: replicated
-      replicas: 2
+      replicas: 3
       endpoint_mode: dnsrr
       resources:
         limits:
           cpus: '0.5'
           memory: 200M
     ports:
-      - "80-89:80"
-      - "443-452:443" # Uncomment this line if you want to use https
+      - "80-83:80"
+      - "443-446:443" # Uncomment this line if you want to use https
     depends_on:
       - tt-acl-service
       - tt-shared-service
