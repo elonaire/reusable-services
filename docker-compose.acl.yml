@@ -8,8 +8,8 @@ services:
   tt-acl-service:
     image: elonaire/tt-acl-service:latest
     pull_policy: always
-    ports:
-      - 3001:3001
+    # ports:
+    #   - 3001:3001
     # container_name: tt-acl-service
     networks:
       - app-tier
