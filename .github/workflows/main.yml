@@ -13,10 +13,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  # ACL_SHOULD_DEPLOY: 'false'
-  # SHARED_SERVICE_SHOULD_DEPLOY: 'false'
   ACL_PATHS: 'services/acl-service/'
-  SHARED_SERVICE_PATHS: 'services/shared-service/'
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
   check_acl_changes:
@@ -60,47 +57,7 @@ jobs:
             echo "ACL_SHOULD_DEPLOY=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-  check_shared_service_changes:
-    runs-on: ubuntu-latest
-    # needs: [build]
-    outputs:
-      shared_service_should_deploy: ${{ steps.confirm_changes.outputs.SHARED_SERVICE_SHOULD_DEPLOY }}
 
-    permissions:
-      id-token: write # required to use OIDC authentication
-      contents: read # required to checkout the code from the repo
-
-    steps:
-      - uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
-
-      - id: file_changes
-        name: Check for Shared Service Changes
-        run: |
-          echo "Base SHA: ${{ github.event.pull_request.base.sha }}"
-          echo "Head SHA: ${{ github.sha }}"
-          files_temp=$(git diff --name-only --diff-filter=ACMRT ${{ github.event.pull_request.base.sha }} ${{ github.sha }})
-          files=$(echo "$files_temp" | tr "\n" " ")
-          echo "changed_files=$files" >> "$GITHUB_OUTPUT"
-
-      - id: confirm_changes
-        name: Confirm Changes
-        shell: bash
-        run: |
-          echo "Changed files: ${{ steps.file_changes.outputs.changed_files }}"
-          echo "If you see here files that you have not modified, please update your branch with changes from main."
-
-          # Check if the modified files include this path
-          if echo "${{ steps.file_changes.outputs.changed_files }}" | grep -q "${{ env.SHARED_SERVICE_PATHS }}"; then
-            # Set the output variable and exit the loop
-            echo "triggering_path is ${{ env.SHARED_SERVICE_PATHS }}"
-            echo "SHARED_SERVICE_SHOULD_DEPLOY=true" >> "$GITHUB_OUTPUT"
-            cat "$GITHUB_OUTPUT"
-          else
-            echo "SHARED_SERVICE_SHOULD_DEPLOY=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
 
   build_and_deploy_acl:
     runs-on: ubuntu-latest
@@ -124,103 +81,16 @@ jobs:
           password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
 
       - name: Build the Docker image
-        # run: docker-compose  -f docker-compose.yml -f docker-compose.acl.yml build
-        run: docker-compose -f docker-compose.acl.yml -f docker-compose.build-acl.yml build
+        run: |
+          docker buildx build --build-arg SERVICE_NAME=acl-service --build-arg PORT=3003 -t elonaire/acl-service:latest --push .
 
-      - name: Push the Docker image
-        run: docker push elonaire/tt-acl-service:latest
-
-  build_and_deploy_shared_service:
-    runs-on: ubuntu-latest
-    needs: [check_shared_service_changes]
-    if: ${{ needs.check_shared_service_changes.outputs.shared_service_should_deploy == 'true' }}
-
-    permissions:
-      id-token: write # required to use OIDC authentication
-      contents: read # required to checkout the code from the repo
-
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v1
-
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v1
-        with:
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
-
-      - name: Build the Docker image
-        # run: docker-compose  -f docker-compose.yml -f docker-compose.shared.yml build
-        run: docker-compose -f docker-compose.shared.yml -f docker-compose.build-shared.yml build
-
-      - name: Push the Docker image
-        run: docker push elonaire/tt-shared-service:latest
-  
-  deploy_to_server:
-    runs-on: ubuntu-latest
-    needs: [build_and_deploy_acl, build_and_deploy_shared_service]
-    if: |
-      always() &&
-      (
-        (needs.build_and_deploy_acl.result == 'success' && needs.build_and_deploy_shared_service.result == 'success') ||
-        (needs.build_and_deploy_shared_service.result == 'success' && needs.build_and_deploy_acl.result == 'skipped') ||
-        (needs.build_and_deploy_acl.result == 'skipped' && needs.build_and_deploy_shared_service.result == 'skipped') ||
-        (needs.build_and_deploy_acl.result == 'skipped' && needs.build_and_deploy_shared_service.result == 'success') ||
-        (needs.build_and_deploy_acl.result == 'success' && needs.build_and_deploy_shared_service.result == 'skipped')
-      )
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-      - name: SCP files to server
-        uses: appleboy/scp-action@v0.1.4
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USERNAME }}
-          password: ${{ secrets.SERVER_PASSWORD }}
-          source: "docker-compose.yml,docker-compose.acl.yml,docker-compose.shared.yml"
-          target: ~/
-
-      - name: 'Tar files'
-        run: tar -cvf nginx.tar nginx/
-      - name: SCP nginx.conf to server
-        uses: appleboy/scp-action@v0.1.4
-        with:
-            host: ${{ secrets.SERVER_HOST }}
-            username: ${{ secrets.SERVER_USERNAME }}
-            password: ${{ secrets.SERVER_PASSWORD }}
-            source: "nginx.tar"
-            target: ~/
-
-      - name: Deploy to server via SSH
-        uses: appleboy/ssh-action@v0.1.4
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USERNAME }}
-          # key: ${{ secrets.SERVER_SSH_PRIVATE_KEY }}
-          password: ${{ secrets.SERVER_PASSWORD }}
-          script: |
-            tar -xvf nginx.tar
-            echo "${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}" | CI=true docker login -u "${{ secrets.DOCKER_HUB_USERNAME }}" --password-stdin
-            CI=true docker compose --env-file prod.env -f docker-compose.yml -f docker-compose.acl.yml -f docker-compose.shared.yml --compatibility up -d --force-recreate
-            
 
   automerge:
     runs-on: ubuntu-latest
 
-    needs: [build_and_deploy_acl, build_and_deploy_shared_service, deploy_to_server]
+    needs: [build_and_deploy_acl]
     if: |
-      always() &&
-      (
-        (needs.build_and_deploy_acl.result == 'success' && needs.build_and_deploy_shared_service.result == 'success' && needs.deploy_to_server.result == 'success') ||
-        (needs.build_and_deploy_shared_service.result == 'success' && needs.build_and_deploy_acl.result == 'skipped' && needs.deploy_to_server.result == 'success') ||
-        (needs.build_and_deploy_acl.result == 'skipped' && needs.build_and_deploy_shared_service.result == 'skipped' && needs.deploy_to_server.result == 'success') ||
-        (needs.build_and_deploy_acl.result == 'success' && needs.build_and_deploy_shared_service.result == 'skipped' && needs.deploy_to_server.result == 'success') ||
-        (needs.build_and_deploy_acl.result == 'skipped' && needs.build_and_deploy_shared_service.result == 'skipped' && needs.deploy_to_server.result == 'success') ||
-        (needs.build_and_deploy_acl.result == 'skipped' && needs.build_and_deploy_shared_service.result == 'skipped' && needs.deploy_to_server.result == 'skipped')
-      )
+      always() && needs.build_and_deploy_acl.result == 'success'
 
     steps:
       - id: automerge

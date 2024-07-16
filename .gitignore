@@ -3,4 +3,3 @@
 /services/**/db-file
 history.txt
 prod.env
-/services/shared-service/src/posts

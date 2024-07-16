@@ -3,23 +3,22 @@ mod database;
 mod graphql;
 
 use core::panic;
+use cookie::Cookie;
 use std::{env, sync::Arc, vec};
 
-use async_graphql::{http::{Credentials, GraphiQLSource}, EmptySubscription, Schema};
+use async_graphql::{EmptySubscription, Schema};
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use axum::{
     extract::{Extension, Query as AxumQuery},
-    headers::Cookie,
-    http::{HeaderMap, HeaderValue},
-    response::{Html, IntoResponse},
-    routing::get,
-    Json, Router, TypedHeader,
+    http::{HeaderMap, HeaderValue, header::COOKIE as AXUM_COOKIE},
+    routing::{get, post},
+    Json, Router, serve,
 };
 
 use graphql::resolvers::query::Query;
 use hyper::{
     header::{ACCEPT, ACCESS_CONTROL_ALLOW_CREDENTIALS, ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS, AUTHORIZATION, CONTENT_TYPE, COOKIE, SET_COOKIE},
-    Method, Server,
+    Method,
 };
 use oauth2::{
     basic::BasicTokenType, reqwest::async_http_client, AuthorizationCode, EmptyExtraTokenFields,
@@ -47,10 +46,6 @@ async fn graphql_handler(
     schema.execute(request).await.into()
 }
 
-async fn graphiql() -> impl IntoResponse {
-    Html(GraphiQLSource::build().endpoint("/").title("ACL Service").credentials(Credentials::Include).finish())
-}
-
 #[derive(Debug, Deserialize, Clone)]
 struct Params {
     code: Option<String>,
@@ -60,23 +55,28 @@ struct Params {
 // client agnostic oauth handler
 async fn oauth_handler(
     params: AxumQuery<Params>,
-    TypedHeader(cookies): TypedHeader<Cookie>,
+    headers: HeaderMap,
 ) -> Json<StandardTokenResponse<EmptyExtraTokenFields, BasicTokenType>> {
     // println!("params: {:?}", params.0);
     // get the csrf state from the cookie
     // Extract the csrf_state, oauth_client, pkce_verifier cookies
+    // Extract cookies from the headers
+    let cookie_header = headers.get(AXUM_COOKIE).and_then(|v| v.to_str().ok()).unwrap_or("");
 
-    let oauth_client_name = cookies
-        .get("oauth_client")
-        .unwrap_or_else(|| panic!("OAuth client name cookie not found"));
-    let pcke_verifier_secret = cookies
-        .get("k")
-        .unwrap_or_else(|| panic!("OAuth client name cookie not found"));
-    let csrf_state = cookies
-        .get("j")
-        .unwrap_or_else(|| panic!("CSRF state cookie not found"));
+    // Split and parse cookies manually
+    let cookie_map: std::collections::HashMap<_, _> = cookie_header
+        .split(';')
+        .filter_map(|s| {
+            let c = Cookie::parse(s.trim()).ok()?;
+            Some((c.name().to_string(), c.value().to_string()))
+        })
+        .collect();
 
-    if params.0.state.unwrap() != csrf_state {
+    let oauth_client_name = cookie_map.get("oauth_client").expect("OAuth client name cookie not found");
+    let pcke_verifier_secret = cookie_map.get("k").expect("PKCE verifier cookie not found");
+    let csrf_state = cookie_map.get("j").expect("CSRF state cookie not found");
+
+    if params.0.state.unwrap() != csrf_state.to_owned() {
         panic!("CSRF token mismatch! Aborting request. Might be a hacker 🥷🏻!");
     }
 
@@ -119,7 +119,7 @@ async fn main() -> Result<()> {
     ];
 
     let app = Router::new()
-        .route("/", get(graphiql).post(graphql_handler))
+        .route("/", post(graphql_handler))
         .route("/oauth/callback", get(oauth_handler))
         .layer(Extension(schema))
         .layer(Extension(db))
@@ -131,8 +131,8 @@ async fn main() -> Result<()> {
                 .allow_methods(vec![Method::GET, Method::POST]),
         );
 
-    Server::bind(&"0.0.0.0:3001".parse().unwrap())
-        .serve(app.into_make_service())
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3003").await.unwrap();
+    serve(listener, app)
         .await
         .unwrap();
 

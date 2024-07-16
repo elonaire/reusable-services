@@ -6,22 +6,22 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-axum = "0.6.18"
-async-graphql = "6.0.7"
-async-graphql-axum = "6.0.7"
-tokio = { version = "1", features = ["full"] }
-hyper = "0.14.26"
-tower-http = { version = "0.4.0", features = ["cors"] }
-surrealdb = "1.5.1"
-chrono = "0.4.37"
-serde = "1.0.189"
+axum = "0.7.5"
+async-graphql = "7.0.7"
+async-graphql-axum = "7.0.7"
+tokio = { version = "1.38.0", features = ["full"] }
+hyper = "1.4.1"
+tower-http = { version = "0.5.2", features = ["cors"] }
+surrealdb = { version = "1.5.4", features = ["sql2"] }
+chrono = "0.4.38"
+serde = "1.0.204"
 bcrypt = "0.15.0"
 oauth2 = "4.4.2"
 cookie = "0.18.0"
 dotenvy = "0.15.7"
 async-trait = "0.1.74"
 lib = { path = "../../lib" }
-reqwest = { version = "0.11.6", features = ["json"] }
+reqwest = { version = "0.12.5", features = ["json"] }
 jwt-simple = "0.11.9"
 
 [future-incompat-report]
