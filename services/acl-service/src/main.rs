@@ -3,7 +3,6 @@ mod database;
 mod graphql;
 
 use core::panic;
-use cookie::Cookie;
 use std::{env, sync::Arc, vec};
 
 use async_graphql::{EmptySubscription, Schema};
@@ -31,6 +30,7 @@ use tower_http::cors::CorsLayer;
 use graphql::resolvers::mutation::Mutation;
 
 use crate::middleware::oauth::{initiate_auth_code_grant_flow, OAuthClientName};
+use lib::utils::cookie_parser::parse_cookies;
 
 type MySchema = Schema<Query, Mutation, EmptySubscription>;
 
@@ -64,13 +64,7 @@ async fn oauth_handler(
     let cookie_header = headers.get(AXUM_COOKIE).and_then(|v| v.to_str().ok()).unwrap_or("");
 
     // Split and parse cookies manually
-    let cookie_map: std::collections::HashMap<_, _> = cookie_header
-        .split(';')
-        .filter_map(|s| {
-            let c = Cookie::parse(s.trim()).ok()?;
-            Some((c.name().to_string(), c.value().to_string()))
-        })
-        .collect();
+    let cookie_map: std::collections::HashMap<_, _> = parse_cookies(cookie_header);
 
     let oauth_client_name = cookie_map.get("oauth_client").expect("OAuth client name cookie not found");
     let pcke_verifier_secret = cookie_map.get("k").expect("PKCE verifier cookie not found");
@@ -106,17 +100,10 @@ async fn main() -> Result<()> {
 
     let schema = Schema::build(Query, Mutation, EmptySubscription).finish();
 
-    println!("GraphiQL IDE: http://localhost:3001");
+    let allowed_services_cors = env::var("ALLOWED_SERVICES_CORS")
+                    .expect("Missing the ALLOWED_SERVICES environment variable.");
 
-    let shared_service_endpoint = env::var("SHARED_SERVICE")
-                    .expect("Missing the SHARED_SERVICE environment variable.");
-
-    let origins = [
-        "http://localhost:8080".parse::<HeaderValue>().unwrap(),
-        "http://localhost:3002".parse::<HeaderValue>().unwrap(),
-        "http://localhost:3003".parse::<HeaderValue>().unwrap(),
-        shared_service_endpoint.as_str().parse::<HeaderValue>().unwrap(),
-    ];
+    let origins: Vec<HeaderValue> = allowed_services_cors.as_str().split(",").into_iter().map(|endpoint| endpoint.parse::<HeaderValue>().unwrap()).collect();
 
     let app = Router::new()
         .route("/", post(graphql_handler))
