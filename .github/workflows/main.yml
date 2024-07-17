@@ -82,7 +82,7 @@ jobs:
 
       - name: Build the Docker image
         run: |
-          docker buildx build --build-arg SERVICE_NAME=acl-service --build-arg PORT=3003 -t elonaire/acl-service:latest --push .
+          docker buildx build --build-arg SERVICE_NAME=acl-service --build-arg PORT=3007 -t elonaire/acl-service:latest --push .
 
 
   automerge:
