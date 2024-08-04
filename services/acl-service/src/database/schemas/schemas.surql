@@ -2,21 +2,22 @@
 DEFINE TABLE user SCHEMAFULL;
 
 -- define some fields.
-DEFINE FIELD user_name ON TABLE user TYPE string;
+DEFINE FIELD user_name ON TABLE user TYPE option<string>;
 DEFINE INDEX userNameIndex ON TABLE user COLUMNS user_name UNIQUE;
 DEFINE FIELD first_name ON TABLE user TYPE string;
-DEFINE FIELD middle_name ON TABLE user TYPE string;
+DEFINE FIELD middle_name ON TABLE user TYPE option<string>;
 DEFINE FIELD last_name ON TABLE user TYPE string;
-DEFINE FIELD gender ON TABLE user TYPE string
+DEFINE FIELD gender ON TABLE user TYPE option<string>
 -- Allow only these values in the array
-  ASSERT $value INSIDE ["Male", "Female", "Other"];
-DEFINE FIELD dob ON TABLE user VALUE <datetime>$value;
+  ASSERT $value INSIDE ["Male", "Female", "Other", None];
+-- DEFINE FIELD dob ON TABLE user TYPE option<datetime> VALUE <datetime>$value;
+DEFINE FIELD dob ON TABLE user TYPE option<datetime> VALUE time::now();
 DEFINE FIELD email ON TABLE user TYPE string
   ASSERT string::is::email($value);
 DEFINE INDEX userEmailIndex ON TABLE user COLUMNS email UNIQUE;
-DEFINE FIELD country ON TABLE user TYPE string;
-DEFINE FIELD phone ON TABLE user TYPE string
-  ASSERT string::len($value) == 10;
+DEFINE FIELD country ON TABLE user TYPE option<string>;
+DEFINE FIELD phone ON TABLE user TYPE option<string>;
+  -- ASSERT string::len($value) == 10;
 DEFINE INDEX userPhoneIndex ON TABLE user COLUMNS phone UNIQUE;
 DEFINE FIELD password ON TABLE user TYPE string;
 DEFINE EVENT user_created ON TABLE user WHEN $event = "CREATE" THEN (
@@ -24,7 +25,7 @@ DEFINE EVENT user_created ON TABLE user WHEN $event = "CREATE" THEN (
     fn::assign_default_role($after.id)
 );
 DEFINE FIELD status ON TABLE user TYPE string
-  DEFAULT "Inactive"
+  DEFAULT "Active"
 -- Allow only these values in the array
   ASSERT $value INSIDE ["Active", "Inactive", "Suspended", "Deleted"];
 DEFINE FIELD oauth_client ON TABLE user TYPE option<string>
@@ -58,7 +59,7 @@ DEFINE FIELD updated_at ON TABLE role TYPE datetime
 
 -- Relationship between user and roles
 DEFINE TABLE has_role SCHEMAFULL;
-DEFINE INDEX userRoleIndex ON TABLE has_role 
+DEFINE INDEX userRoleIndex ON TABLE has_role
 COLUMNS in, out UNIQUE;
 DEFINE FIELD in ON TABLE has_role TYPE record<user>;
 DEFINE FIELD out ON TABLE has_role TYPE record<role>;
