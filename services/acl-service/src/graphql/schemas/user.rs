@@ -35,9 +35,9 @@ pub struct User {
     #[graphql(skip)]
     pub id: Option<Thing>,
     pub user_name: Option<String>,
-    pub first_name: String,
+    pub first_name: Option<String>,
     pub middle_name: Option<String>,
-    pub last_name: String,
+    pub last_name: Option<String>,
     pub gender: Option<Gender>,
     pub dob: Option<String>,
     pub email: String,
@@ -65,9 +65,9 @@ impl User {
     async fn full_name(&self) -> String {
         format!(
             "{} {} {}",
-            self.first_name,
+            self.first_name.as_ref().unwrap_or(&"".to_string()),
             self.middle_name.as_ref().unwrap_or(&"".to_string()),
-            self.last_name
+            self.last_name.as_ref().unwrap_or(&"".to_string())
         )
     }
 
