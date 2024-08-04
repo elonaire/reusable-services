@@ -168,7 +168,6 @@ pub async fn navigate_to_redirect_url(
 
     // This is the URL you should redirect the user to, in order to trigger the authorization
     // process.
-    println!("Browse to: {}", auth_url);
 
     // Insert the csrf_state, oauth_client, pkce_verifier cookies
     // TODO: Add back these on HTTPS? <cookie_name>={}; HttpOnly; SameSite=Strict;
@@ -206,7 +205,7 @@ pub async fn decode_token(
 
     match token {
         Some(token) => {
-            println!("token: {:?}", token);
+
             let key: Vec<u8>;
 
             let db = ctx
@@ -220,7 +219,6 @@ pub async fn decode_token(
 
             match &response {
                 Some(key_container) => {
-                    println!("key_container: {:?}", key_container.key.clone());
                     key = key_container.key.clone();
                 }
                 None => {
@@ -234,8 +232,6 @@ pub async fn decode_token(
             let converted_key = HS256Key::from_bytes(&key);
 
             let _claims = converted_key.verify_token::<AuthClaim>(&token, None);
-
-            println!("claims: {:?}", _claims);
 
             match &_claims {
                 Ok(_) => {
@@ -274,7 +270,6 @@ pub async fn confirm_auth(ctx: &Context<'_>) -> Result<AuthStatus> {
             // Check if Authorization header is present
             match headers.get("Authorization") {
                 Some(token) => {
-                    println!("headers: {:?}", headers);
                     // Check if Cookie header is present
                     match headers.get(COOKIE) {
                         Some(cookie_header) => {
@@ -286,7 +281,6 @@ pub async fn confirm_auth(ctx: &Context<'_>) -> Result<AuthStatus> {
                             // Check if oauth_client cookie is present
                             match cookies.get("oauth_client") {
                                 Some(oauth_client) => {
-                                    println!("oauth_client: {:?}", oauth_client);
                                     if oauth_client.is_empty() {
                                         let key: Vec<u8>;
                                         let db =
@@ -329,7 +323,6 @@ pub async fn confirm_auth(ctx: &Context<'_>) -> Result<AuthStatus> {
                                                 });
                                             }
                                             Err(_err) => {
-                                                println!("err: {:?}", _err.message);
                                                 // Token verification failed, check if refresh token is present
                                                 match cookies.get("t") {
                                                     Some(refresh_token) => {
@@ -341,10 +334,6 @@ pub async fn confirm_auth(ctx: &Context<'_>) -> Result<AuthStatus> {
 
                                                         match refresh_claims {
                                                             Ok(refresh_claims) => {
-                                                                println!(
-                                                                    "refresh_claims: {:?}",
-                                                                    refresh_claims
-                                                                );
                                                                 // TODO: Refresh token verification successful, issue new access token
                                                                 // call sign_in mutation
                                                                 let user: Option<User> = db
@@ -482,7 +471,6 @@ pub async fn confirm_auth(ctx: &Context<'_>) -> Result<AuthStatus> {
                                                         .await?
                                                         .json::<DecodedGoogleOAuthToken>()
                                                         .await?;
-                                                println!("response: {:?}", response);
 
                                                 return Ok(AuthStatus {
                                                     is_auth: true,
@@ -507,7 +495,6 @@ pub async fn confirm_auth(ctx: &Context<'_>) -> Result<AuthStatus> {
                                                     "2022-11-28".parse().unwrap(),
                                                 );
 
-                                                println!("req_headers: {:?}", req_headers);
 
                                                 let response = client
                                                     .request(
@@ -521,7 +508,6 @@ pub async fn confirm_auth(ctx: &Context<'_>) -> Result<AuthStatus> {
                                                     .json::<DecodedGithubOAuthToken>()
                                                     .await?;
 
-                                                println!("response: {:?}", response);
 
                                                 return Ok(AuthStatus {
                                                     is_auth: true,

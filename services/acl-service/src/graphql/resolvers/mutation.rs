@@ -24,9 +24,13 @@ pub struct Mutation;
 impl Mutation {
     async fn sign_up(&self, ctx: &Context<'_>, mut user: User) -> Result<Vec<User>> {
         user.password = bcrypt::hash(user.password, bcrypt::DEFAULT_COST).unwrap();
-        user.dob = chrono::DateTime::parse_from_rfc3339(&user.dob)
-            .unwrap()
-            .to_rfc3339();
+        user.dob = match &user.dob {
+            Some(ref date_str) =>Some(chrono::DateTime::parse_from_rfc3339(date_str).unwrap().to_rfc3339()),
+            None => None,
+        };
+            // chrono::DateTime::parse_from_rfc3339(&user.dob)
+            // .unwrap()
+            // .to_rfc3339();
 
         // User signup
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
@@ -134,7 +138,7 @@ impl Mutation {
                             let mut user_roles_res = db.query(get_user_roles_query).await?;
                             let user_roles: Option<SurrealRelationQueryResponse<SystemRole>> =
                                 user_roles_res.take(0)?;
-                        
+
 
                             let auth_claim = AuthClaim {
                                 roles: match user_roles {
@@ -300,7 +304,7 @@ impl Mutation {
     ) -> Result<User> {
         // no auth check just check old password against password entered by user
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
-        
+
         let mut found_user_result = db
             .query("SELECT * FROM type::table($table) WHERE id = type::thing($user) LIMIT 1",)
             .bind(("table", "user"))

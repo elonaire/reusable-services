@@ -17,9 +17,9 @@ pub enum Gender {
 
 #[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq, Default)]
 pub enum AccountStatus {
+    #[default]
     #[graphql(name = "Active")]
     Active,
-    #[default]
     #[graphql(name = "Inactive")]
     Inactive,
     #[graphql(name = "Suspended")]
@@ -34,15 +34,15 @@ pub enum AccountStatus {
 pub struct User {
     #[graphql(skip)]
     pub id: Option<Thing>,
-    pub user_name: String,
-    pub first_name: String,
+    pub user_name: Option<String>,
+    pub first_name: Option<String>,
     pub middle_name: Option<String>,
-    pub last_name: String,
-    pub gender: Gender,
-    pub dob: String,
+    pub last_name: Option<String>,
+    pub gender: Option<Gender>,
+    pub dob: Option<String>,
     pub email: String,
-    pub country: String,
-    pub phone: String,
+    pub country: Option<String>,
+    pub phone: Option<String>,
     #[graphql(secret)]
     pub password: String,
     pub created_at: Option<String>,
@@ -65,15 +65,15 @@ impl User {
     async fn full_name(&self) -> String {
         format!(
             "{} {} {}",
-            self.first_name,
+            self.first_name.as_ref().unwrap_or(&"".to_string()),
             self.middle_name.as_ref().unwrap_or(&"".to_string()),
-            self.last_name
+            self.last_name.as_ref().unwrap_or(&"".to_string())
         )
     }
 
     async fn age(&self) -> u32 {
         // calculate age from &self.dob
-        let dob = DateTime::parse_from_rfc3339(&self.dob).expect("Invalid date format");
+        let dob = DateTime::parse_from_rfc3339(&self.dob.as_ref().unwrap()).expect("Invalid date format");
         let from_ymd = NaiveDate::from_ymd_opt(dob.year(), dob.month(), dob.day()).unwrap();
         let today = Utc::now().date_naive();
         today.years_since(from_ymd).unwrap()

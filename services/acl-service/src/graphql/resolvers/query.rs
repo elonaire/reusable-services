@@ -3,6 +3,7 @@ use std::sync::Arc;
 use async_graphql::{Context, Error, Object, Result};
 use axum::Extension;
 use dotenvy::dotenv;
+use hyper::HeaderMap;
 use lib::utils::auth::AuthStatus;
 use surrealdb::{engine::remote::ws::Client, Surreal};
 
@@ -44,6 +45,8 @@ impl Query {
 
     async fn check_auth(&self, ctx: &Context<'_>) -> Result<AuthStatus> {
         dotenv().ok();
+
+        let headers = ctx.data_opt::<HeaderMap>().unwrap();
 
         confirm_auth(ctx).await
     }
