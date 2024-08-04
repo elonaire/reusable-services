@@ -4,9 +4,9 @@ DEFINE TABLE user SCHEMAFULL;
 -- define some fields.
 DEFINE FIELD user_name ON TABLE user TYPE option<string>;
 DEFINE INDEX userNameIndex ON TABLE user COLUMNS user_name UNIQUE;
-DEFINE FIELD first_name ON TABLE user TYPE string;
+DEFINE FIELD first_name ON TABLE user TYPE option<string>;
 DEFINE FIELD middle_name ON TABLE user TYPE option<string>;
-DEFINE FIELD last_name ON TABLE user TYPE string;
+DEFINE FIELD last_name ON TABLE user TYPE option<string>;
 DEFINE FIELD gender ON TABLE user TYPE option<string>
 -- Allow only these values in the array
   ASSERT $value INSIDE ["Male", "Female", "Other", None];
