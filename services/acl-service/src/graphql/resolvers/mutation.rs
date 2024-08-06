@@ -10,7 +10,9 @@ use surrealdb::{engine::remote::ws::Client, Surreal};
 use crate::{
     graphql::schemas::{
         role::SystemRole,
-        user::{AccountStatus, AuthDetails, SurrealRelationQueryResponse, User, UserLogins, UserUpdate},
+        user::{
+            AccountStatus, AuthDetails, SurrealRelationQueryResponse, User, UserLogins, UserUpdate,
+        },
     },
     middleware::oauth::{
         confirm_auth, decode_token, get_user_id_from_token, initiate_auth_code_grant_flow,
@@ -22,15 +24,19 @@ pub struct Mutation;
 
 #[Object]
 impl Mutation {
-    async fn sign_up(&self, ctx: &Context<'_>, mut user: User) -> Result<Vec<User>> {
+    async fn sign_up(&self, ctx: &Context<'_>, mut user: User) -> Result<Option<User>> {
         user.password = bcrypt::hash(user.password, bcrypt::DEFAULT_COST).unwrap();
         user.dob = match &user.dob {
-            Some(ref date_str) =>Some(chrono::DateTime::parse_from_rfc3339(date_str).unwrap().to_rfc3339()),
+            Some(ref date_str) => Some(
+                chrono::DateTime::parse_from_rfc3339(date_str)
+                    .unwrap()
+                    .to_rfc3339(),
+            ),
             None => None,
         };
-            // chrono::DateTime::parse_from_rfc3339(&user.dob)
-            // .unwrap()
-            // .to_rfc3339();
+        // chrono::DateTime::parse_from_rfc3339(&user.dob)
+        // .unwrap()
+        // .to_rfc3339();
 
         // User signup
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
@@ -44,7 +50,7 @@ impl Mutation {
             .await
             .map_err(|e| Error::new(e.to_string()))?;
 
-        Ok(response)
+        Ok(response.iter().nth(0).cloned())
     }
 
     async fn create_user_role(
@@ -138,7 +144,6 @@ impl Mutation {
                             let mut user_roles_res = db.query(get_user_roles_query).await?;
                             let user_roles: Option<SurrealRelationQueryResponse<SystemRole>> =
                                 user_roles_res.take(0)?;
-
 
                             let auth_claim = AuthClaim {
                                 roles: match user_roles {
@@ -306,7 +311,7 @@ impl Mutation {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
 
         let mut found_user_result = db
-            .query("SELECT * FROM type::table($table) WHERE id = type::thing($user) LIMIT 1",)
+            .query("SELECT * FROM type::table($table) WHERE id = type::thing($user) LIMIT 1")
             .bind(("table", "user"))
             .bind(("user", format!("user:{}", user_id)))
             .await?;
@@ -315,10 +320,15 @@ impl Mutation {
 
         match found_user {
             Some(user) => {
-                let password_match = bcrypt::verify(&user_info.password.unwrap().as_str(), user.password.as_str()).unwrap();
+                let password_match = bcrypt::verify(
+                    &user_info.password.unwrap().as_str(),
+                    user.password.as_str(),
+                )
+                .unwrap();
 
                 if password_match {
-                    let new_password_hash = bcrypt::hash(new_password, bcrypt::DEFAULT_COST).unwrap();
+                    let new_password_hash =
+                        bcrypt::hash(new_password, bcrypt::DEFAULT_COST).unwrap();
                     user_info.password = Some(new_password_hash);
                     let response: Option<User> = db
                         .update(("user", user_id.clone()))
