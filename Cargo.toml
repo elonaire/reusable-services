@@ -8,4 +8,4 @@ members = [
 ]
 
 [profile.release]
-strip = true  # Automatically strip symbols from the binary.
+strip = true # Automatically strip symbols from the binary.
