@@ -59,6 +59,8 @@ impl Query {
             .await
             .map_err(|e| Error::new(e.to_string()))?;
 
+        println!("user: {:?}", user);
+
         match user {
             Some(user) => Ok(user.email),
             None => Err(Error::new("User not found")),
