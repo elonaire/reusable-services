@@ -23,6 +23,8 @@ async-trait = "0.1.74"
 lib = { path = "../../lib" }
 reqwest = { version = "0.12.5", features = ["json"] }
 jwt-simple = "0.11.9"
+tracing-subscriber = "0.3.18"
+tracing = "0.1.40"
 
 [future-incompat-report]
 frequency = "always"

@@ -1,6 +1,6 @@
-mod middleware;
 mod database;
 mod graphql;
+mod middleware;
 
 use core::panic;
 use std::{env, sync::Arc, vec};
@@ -9,14 +9,18 @@ use async_graphql::{EmptySubscription, Schema};
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use axum::{
     extract::{Extension, Query as AxumQuery},
-    http::{HeaderMap, HeaderValue, header::COOKIE as AXUM_COOKIE},
+    http::{header::COOKIE as AXUM_COOKIE, HeaderMap, HeaderValue},
     routing::{get, post},
-    Json, Router, serve,
+    serve, Json, Router,
 };
 
 use graphql::resolvers::query::Query;
 use hyper::{
-    header::{ACCEPT, ACCESS_CONTROL_ALLOW_CREDENTIALS, ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS, AUTHORIZATION, CONTENT_TYPE, COOKIE, SET_COOKIE},
+    header::{
+        ACCEPT, ACCESS_CONTROL_ALLOW_CREDENTIALS, ACCESS_CONTROL_ALLOW_HEADERS,
+        ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS,
+        AUTHORIZATION, CONTENT_TYPE, COOKIE, SET_COOKIE,
+    },
     Method,
 };
 use oauth2::{
@@ -43,7 +47,16 @@ async fn graphql_handler(
     let mut request = req.0;
     request = request.data(db.clone());
     request = request.data(headers.clone());
-    schema.execute(request).await.into()
+    tracing::info!("Executing GraphQL request: {:?}", request);
+
+    // Execute the GraphQL request
+    let response = schema.execute(request).await;
+
+    // Log the response
+    tracing::debug!("GraphQL response: {:?}", response);
+
+    // Convert GraphQL response into the Axum response type
+    response.into()
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -61,12 +74,17 @@ async fn oauth_handler(
     // get the csrf state from the cookie
     // Extract the csrf_state, oauth_client, pkce_verifier cookies
     // Extract cookies from the headers
-    let cookie_header = headers.get(AXUM_COOKIE).and_then(|v| v.to_str().ok()).unwrap_or("");
+    let cookie_header = headers
+        .get(AXUM_COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
 
     // Split and parse cookies manually
     let cookie_map: std::collections::HashMap<_, _> = parse_cookies(cookie_header);
 
-    let oauth_client_name = cookie_map.get("oauth_client").expect("OAuth client name cookie not found");
+    let oauth_client_name = cookie_map
+        .get("oauth_client")
+        .expect("OAuth client name cookie not found");
     let pcke_verifier_secret = cookie_map.get("k").expect("PKCE verifier cookie not found");
     let csrf_state = cookie_map.get("j").expect("CSRF state cookie not found");
 
@@ -101,9 +119,18 @@ async fn main() -> Result<()> {
     let schema = Schema::build(Query, Mutation, EmptySubscription).finish();
 
     let allowed_services_cors = env::var("ALLOWED_SERVICES_CORS")
-                    .expect("Missing the ALLOWED_SERVICES environment variable.");
+        .expect("Missing the ALLOWED_SERVICES environment variable.");
 
-    let origins: Vec<HeaderValue> = allowed_services_cors.as_str().split(",").into_iter().map(|endpoint| endpoint.parse::<HeaderValue>().unwrap()).collect();
+    let origins: Vec<HeaderValue> = allowed_services_cors
+        .as_str()
+        .split(",")
+        .into_iter()
+        .map(|endpoint| endpoint.parse::<HeaderValue>().unwrap())
+        .collect();
+
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .init();
 
     let app = Router::new()
         .route("/", post(graphql_handler))
@@ -113,15 +140,25 @@ async fn main() -> Result<()> {
         .layer(
             CorsLayer::new()
                 .allow_origin(origins)
-                .allow_headers([AUTHORIZATION, ACCEPT, CONTENT_TYPE, SET_COOKIE, COOKIE, ACCESS_CONTROL_ALLOW_CREDENTIALS, ACCESS_CONTROL_ALLOW_CREDENTIALS, ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_EXPOSE_HEADERS])
+                .allow_headers([
+                    AUTHORIZATION,
+                    ACCEPT,
+                    CONTENT_TYPE,
+                    SET_COOKIE,
+                    COOKIE,
+                    ACCESS_CONTROL_ALLOW_CREDENTIALS,
+                    ACCESS_CONTROL_ALLOW_CREDENTIALS,
+                    ACCESS_CONTROL_ALLOW_HEADERS,
+                    ACCESS_CONTROL_ALLOW_ORIGIN,
+                    ACCESS_CONTROL_ALLOW_METHODS,
+                    ACCESS_CONTROL_EXPOSE_HEADERS,
+                ])
                 .allow_credentials(true)
                 .allow_methods(vec![Method::GET, Method::POST]),
         );
 
-        let listener = tokio::net::TcpListener::bind("0.0.0.0:3007").await.unwrap();
-        serve(listener, app)
-        .await
-        .unwrap();
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3007").await.unwrap();
+    serve(listener, app).await.unwrap();
 
     Ok(())
 }
