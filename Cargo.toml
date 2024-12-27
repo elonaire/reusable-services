@@ -4,7 +4,7 @@ members = [
     # Libs
     "lib",
     # Services
-    "services/acl-service", "services/files",
+    "services/acl-service", "services/files", "services/email"
 ]
 
 [profile.release]

@@ -1,0 +1,24 @@
+[package]
+name = "email"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = "0.7.5"
+async-graphql = "7.0.7"
+async-graphql-axum = "7.0.7"
+tokio = { version = "1.38.0", features = ["full"] }
+hyper = "1.4.1"
+tower-http = { version = "0.5.2", features = ["cors"] }
+surrealdb = "2.1.4"
+chrono = "0.4.38"
+serde = "1.0.204"
+dotenvy = "0.15.7"
+lettre = { version = "0.11.7", features = ["builder", "serde", "rustls-tls"] }
+lib = { path = "../../lib" }
+reqwest = { version = "0.12.5", features = ["blocking"] }
+tracing-subscriber = "0.3.18"
+tracing = "0.1.40"
+
+[lints.rust]
+unsafe_code = "forbid"

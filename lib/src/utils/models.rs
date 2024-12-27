@@ -50,3 +50,30 @@ pub struct UserLoginsVar {
     #[serde(rename = "rawUserDetails")]
     pub raw_user_details: UserLogins,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
+pub struct EmailUser {
+    #[serde(rename = "fullName")]
+    pub full_name: Option<String>,
+    #[serde(rename = "emailAddress")]
+    pub email_address: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
+#[graphql(input_name = "EmailInput")]
+pub struct Email {
+    pub recipient: EmailUser,
+    pub subject: String,
+    pub title: String,
+    pub body: String,
+}
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SendEmailVar {
+    pub email: Email,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SendEmailResponse {
+    #[serde(rename = "sendEmail")]
+    pub send_email: String,
+}
