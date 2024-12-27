@@ -1,7 +1,10 @@
 use axum::{http::HeaderValue, Extension};
 use jwt_simple::prelude::*;
 use lib::utils::{
-    auth::{AuthClaim, AuthStatus, SymKey}, cookie_parser::parse_cookies, custom_error::ExtendedError
+    auth::{AuthClaim, SymKey},
+    cookie_parser::parse_cookies,
+    custom_error::ExtendedError,
+    models::AuthStatus,
 };
 use std::time::Duration;
 use std::{env, sync::Arc};
@@ -9,7 +12,10 @@ use surrealdb::{engine::remote::ws::Client as SurrealClient, Surreal};
 
 use async_graphql::{Context, Enum, Result};
 use dotenvy::dotenv;
-use hyper::{header::{COOKIE, SET_COOKIE}, HeaderMap, Method};
+use hyper::{
+    header::{COOKIE, SET_COOKIE},
+    HeaderMap, Method,
+};
 use oauth2::basic::{BasicClient, BasicErrorResponseType, BasicTokenType};
 use reqwest::{header::HeaderMap as ReqWestHeaderMap, Client as ReqWestClient};
 
@@ -20,7 +26,10 @@ use oauth2::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::graphql::schemas::{role::SystemRole, user::{DecodedGithubOAuthToken, DecodedGoogleOAuthToken, SurrealRelationQueryResponse, User}};
+use crate::graphql::schemas::{
+    role::SystemRole,
+    user::{DecodedGithubOAuthToken, DecodedGoogleOAuthToken, SurrealRelationQueryResponse, User},
+};
 
 // use crate::SharedState;
 
@@ -205,7 +214,6 @@ pub async fn decode_token(
 
     match token {
         Some(token) => {
-
             let key: Vec<u8>;
 
             let db = ctx
@@ -283,8 +291,9 @@ pub async fn confirm_auth(ctx: &Context<'_>) -> Result<AuthStatus> {
                                 Some(oauth_client) => {
                                     if oauth_client.is_empty() {
                                         let key: Vec<u8>;
-                                        let db =
-                                            ctx.data::<Extension<Arc<Surreal<SurrealClient>>>>().unwrap();
+                                        let db = ctx
+                                            .data::<Extension<Arc<Surreal<SurrealClient>>>>()
+                                            .unwrap();
                                         let mut result = db.query("SELECT * FROM type::table($table) WHERE name = 'jwt_key' LIMIT 1")
                                                 .bind(("table", "crypto_key"))
                                                 .await?;
@@ -495,7 +504,6 @@ pub async fn confirm_auth(ctx: &Context<'_>) -> Result<AuthStatus> {
                                                     "2022-11-28".parse().unwrap(),
                                                 );
 
-
                                                 let response = client
                                                     .request(
                                                         Method::GET,
@@ -507,7 +515,6 @@ pub async fn confirm_auth(ctx: &Context<'_>) -> Result<AuthStatus> {
                                                     .await?
                                                     .json::<DecodedGithubOAuthToken>()
                                                     .await?;
-
 
                                                 return Ok(AuthStatus {
                                                     is_auth: true,

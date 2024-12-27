@@ -75,9 +75,10 @@ DEFINE FUNCTION fn::assign_default_role($user_id: record) {
   IF array::len($results) == 0 {
     LET $default_role = SELECT id FROM ONLY role WHERE role_name = "User" LIMIT 1;
 
-    RELATE $user_id->has_role->$default_role CONTENT {
-      in: $user_id,
-      out: $default_role
-    };
+    -- RELATE $user_id->has_role->$default_role CONTENT {
+    --   in: $user_id,
+    --   out: $default_role
+    -- };
+    RELATE $user_id->has_role->$default_role;
   };
 };

@@ -16,7 +16,7 @@ RUN apt install -y build-essential \
 RUN apt update
 RUN curl https://sh.rustup.rs -sSf | bash -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
-RUN rustup default nightly-2024-03-09
+RUN rustup default nightly-2024-08-08
 
 WORKDIR /app
 

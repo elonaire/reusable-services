@@ -1,11 +1,7 @@
 use async_graphql::SimpleObject;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
-pub struct AuthStatus {
-    pub is_auth: bool,
-    pub sub: String,
-}
+use super::models::AuthStatus;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SymKey {
@@ -23,4 +19,10 @@ pub struct AuthClaim {
 pub struct DecodeTokenResponse {
     #[serde(rename = "decodeToken")]
     pub decode_token: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, SimpleObject)]
+pub struct CheckAuthResponse {
+    #[serde(rename = "checkAuth")]
+    pub check_auth: AuthStatus,
 }

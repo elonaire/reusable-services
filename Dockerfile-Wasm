@@ -1,20 +1,40 @@
 # Dockerfile
-FROM rust:latest AS build
+# FROM rust:latest AS build
+FROM ubuntu:latest
+
+ARG DEBIAN_FRONTEND=noninteractive
+
 ARG SERVICE_NAME
 
 ENV SERVICE_NAME=${SERVICE_NAME}
 
-RUN rustup target add wasm32-wasi
+RUN apt update
+RUN apt install -y build-essential \
+    curl \
+    pkg-config \
+    clang \
+    libssl-dev
 
-RUN apt update && apt install -y clang
+RUN apt update
+RUN curl https://sh.rustup.rs -sSf | bash -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+RUN rustup default nightly-2024-08-08
+
+# RUN rustup target add wasm32-wasi
+RUN rustup target add wasm32-wasip1
+# RUN apt update && apt install -y clang
 RUN mkdir -p /build
 WORKDIR /build
 COPY . .
 
-RUN cargo build --target wasm32-wasi --release --package ${SERVICE_NAME}
-RUN chmod a+x /build/target/wasm32-wasi/release/${SERVICE_NAME}.wasm
+# RUN cargo build --target wasm32-wasi --release --package ${SERVICE_NAME}
+RUN cargo build --target wasm32-wasip1 --release --package ${SERVICE_NAME}
+
+# RUN chmod a+x /build/target/wasm32-wasi/release/${SERVICE_NAME}.wasm
+RUN chmod a+x /build/target/wasm32-wasip1/release/${SERVICE_NAME}.wasm
 
 FROM scratch
-COPY --from=0 /build/target/wasm32-wasi/release/${SERVICE_NAME} /${SERVICE_NAME}.wasm
+# COPY --from=0 /build/target/wasm32-wasi/release/${SERVICE_NAME} /${SERVICE_NAME}.wasm
+COPY --from=0 /build/target/wasm32-wasip1/release/${SERVICE_NAME} /${SERVICE_NAME}.wasm
 # Command to run
 CMD ./${SERVICE_NAME}
