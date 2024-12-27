@@ -165,7 +165,10 @@ jobs:
 
     needs: [build_and_deploy_acl, build_and_deploy_email_service, build_and_deploy_files]
     if: |
-      always() && needs.build_and_deploy_acl.result == 'success'
+      always() &&
+      (needs.build_and_deploy_acl.result != 'failure' &&
+      needs.build_and_deploy_files.result != 'failure' &&
+      needs.build_and_deploy_email_service != 'failure')
 
     steps:
       - id: automerge
