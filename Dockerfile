@@ -26,6 +26,7 @@ RUN cargo build --release --package ${SERVICE_NAME}
 
 # Final stage: use a lightweight image
 FROM alpine:latest
+
 ARG DEBIAN_FRONTEND=noninteractive
 ARG SERVICE_NAME
 ARG PORT
@@ -39,6 +40,11 @@ RUN apk add --no-cache \
     musl \
     openssl \
     && rm -rf /var/cache/apk/*
+
+# Create a non-root user
+RUN adduser -D myuser
+# Switch to the new user
+USER myuser
 
 # Copy the binary from the builder stage
 COPY --from=0 /app/target/release/${SERVICE_NAME} .
