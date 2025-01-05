@@ -1,9 +1,7 @@
 [package]
-name = "acl-service"
+name = "email"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 axum = "0.7.5"
@@ -15,19 +13,12 @@ tower-http = { version = "0.5.2", features = ["cors"] }
 surrealdb = "2.1.4"
 chrono = "0.4.38"
 serde = "1.0.204"
-bcrypt = "0.15.0"
-oauth2 = "4.4.2"
-cookie = "0.18.0"
 dotenvy = "0.15.7"
-async-trait = "0.1.74"
+lettre = { version = "0.11.7", features = ["builder", "serde", "rustls-tls"] }
 lib = { path = "../../lib" }
-reqwest = { version = "0.12.5", features = ["json"] }
-jwt-simple = "0.11.9"
+reqwest = { version = "0.12.5", features = ["blocking"] }
 tracing-subscriber = "0.3.18"
 tracing = "0.1.40"
-
-[future-incompat-report]
-frequency = "always"
 
 [lints.rust]
 unsafe_code = "forbid"

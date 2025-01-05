@@ -1,3 +1,6 @@
+-- Enable GraphQL
+DEFINE CONFIG GRAPHQL AUTO;
+
 -- A schema-full user table.
 DEFINE TABLE user SCHEMAFULL;
 
@@ -58,7 +61,7 @@ DEFINE FIELD updated_at ON TABLE role TYPE datetime
 
 
 -- Relationship between user and roles
-DEFINE TABLE has_role SCHEMAFULL;
+DEFINE TABLE has_role SCHEMAFULL TYPE RELATION;
 DEFINE INDEX userRoleIndex ON TABLE has_role
 COLUMNS in, out UNIQUE;
 DEFINE FIELD in ON TABLE has_role TYPE record<user>;
@@ -66,16 +69,16 @@ DEFINE FIELD out ON TABLE has_role TYPE record<role>;
 
 -- Function to check if user has a role, if not, assign a default role using edge relationship
 DEFINE FUNCTION fn::assign_default_role($user_id: record) {
-  LET $results = SELECT ->has_role FROM $user_id;
-  LET $edge_name = "->has_role";
+  LET $results = SELECT id, ->has_role FROM ONLY $user_id;
 
   -- LET $results = SELECT VALUE id FROM type::table("has_role") WHERE in = $user_id;
-  IF array::len($results[0][$edge_name]) == 0 {
-    LET $default_role = SELECT * FROM role WHERE role_name = "User" LIMIT 1;
-    LET $role_id = $default_role[0].id;
-    RELATE $user_id->has_role->$role_id CONTENT {
-      in: $user_id,
-      out: $role_id
-    };
+  IF array::len($results) == 0 {
+    LET $default_role = SELECT id FROM ONLY role WHERE role_name = "User" LIMIT 1;
+
+    -- RELATE $user_id->has_role->$default_role CONTENT {
+    --   in: $user_id,
+    --   out: $default_role
+    -- };
+    RELATE $user_id->has_role->$default_role;
   };
 };

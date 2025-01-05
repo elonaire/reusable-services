@@ -1,22 +1,20 @@
-FROM ubuntu:latest
+FROM rust:1.83-alpine3.20
 
 ARG DEBIAN_FRONTEND=noninteractive
+ARG RUSTFLAGS='-C target-feature=-crt-static'
 
 # Set the working directory to the service specified in the build argument
 ARG SERVICE_NAME
 
 ENV SERVICE_NAME=${SERVICE_NAME}
 
-RUN apt update
-RUN apt install -y build-essential \
-    curl \
-    pkg-config \
-    libssl-dev
+# Install necessary packages
+RUN apk update && apk add --no-cache \
+    perl    \
+    musl-dev \
+    openssl-dev
 
-RUN apt update
-RUN curl https://sh.rustup.rs -sSf | bash -s -- -y
-ENV PATH="/root/.cargo/bin:${PATH}"
-RUN rustup default nightly-2024-03-09
+RUN rustup default nightly-2024-08-08
 
 WORKDIR /app
 
@@ -27,7 +25,8 @@ COPY . .
 RUN cargo build --release --package ${SERVICE_NAME}
 
 # Final stage: use a lightweight image
-FROM ubuntu:latest
+FROM alpine:latest
+
 ARG DEBIAN_FRONTEND=noninteractive
 ARG SERVICE_NAME
 ARG PORT
@@ -35,10 +34,23 @@ ARG PORT
 ENV SERVICE_NAME=${SERVICE_NAME}
 ENV PORT=${PORT}
 
-# # Copy the binary from the builder stage
+# Copy necessary shared libraries
+RUN apk add --no-cache \
+    libgcc \
+    musl \
+    openssl \
+    && rm -rf /var/cache/apk/*
+
+# Create a non-root user
+RUN adduser -D myuser
+# Switch to the new user
+USER myuser
+
+# Copy the binary from the builder stage
 COPY --from=0 /app/target/release/${SERVICE_NAME} .
 
-# # Expose the port
+# Expose the port
 EXPOSE ${PORT}
-# # Command to run
+
+# Command to run
 CMD ./${SERVICE_NAME}

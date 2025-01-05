@@ -48,7 +48,8 @@ impl Mutation {
                 ..user
             })
             .await
-            .map_err(|e| Error::new(e.to_string()))?;
+            .map_err(|e| Error::new(e.to_string()))?
+            .expect("Error creating user");
 
         Ok(response.iter().nth(0).cloned())
     }
@@ -67,7 +68,8 @@ impl Mutation {
                     .create("role")
                     .content(SystemRole { ..role })
                     .await
-                    .map_err(|e| Error::new(e.to_string()))?;
+                    .map_err(|e| Error::new(e.to_string()))?
+                    .expect("Error creating role");
 
                 Ok(response)
             }
@@ -133,7 +135,8 @@ impl Mutation {
                                             key: key.clone(),
                                             name: "jwt_key".to_string(),
                                         })
-                                        .await?;
+                                        .await?
+                                        .expect("Error creating key");
                                 }
                             }
 

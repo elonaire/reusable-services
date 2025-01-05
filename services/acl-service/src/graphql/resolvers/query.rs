@@ -4,13 +4,10 @@ use async_graphql::{Context, Error, Object, Result};
 use axum::Extension;
 use dotenvy::dotenv;
 use hyper::HeaderMap;
-use lib::utils::auth::AuthStatus;
+use lib::utils::models::AuthStatus;
 use surrealdb::{engine::remote::ws::Client, Surreal};
 
-use crate::{
-    graphql::schemas::user::UserOutput,
-    middleware::oauth::confirm_auth,
-};
+use crate::{graphql::schemas::user::UserOutput, middleware::oauth::confirm_auth};
 
 // use super::mutation::AuthClaim;
 
