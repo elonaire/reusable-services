@@ -18,7 +18,7 @@ env:
   EMAIL_SERVICE_PATHS: 'services/files/'
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  check_acl_changes:
+  check_service_changes:
     runs-on: ubuntu-latest
     # needs: [build]
     outputs:
@@ -87,8 +87,8 @@ jobs:
 
   build_and_deploy_acl:
     runs-on: ubuntu-latest
-    needs: [check_acl_changes]
-    if: ${{ needs.check_acl_changes.outputs.acl_service_should_deploy == 'true' }}
+    needs: [check_service_changes]
+    if: ${{ needs.check_service_changes.outputs.acl_service_should_deploy == 'true' }}
 
     permissions:
       id-token: write # required to use OIDC authentication
