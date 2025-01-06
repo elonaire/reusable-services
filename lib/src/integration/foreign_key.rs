@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use async_graphql::Context;
 use axum::Extension;
-// use lib::utils::custom_error::ExtendedError;
 use surrealdb::{engine::remote::ws::Client as SurrealClient, Surreal};
 
 use crate::utils::models::ForeignKey;
