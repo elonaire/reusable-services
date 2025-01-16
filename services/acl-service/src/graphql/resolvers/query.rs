@@ -43,7 +43,7 @@ impl Query {
     async fn check_auth(&self, ctx: &Context<'_>) -> Result<AuthStatus> {
         dotenv().ok();
 
-        let headers = ctx.data_opt::<HeaderMap>().unwrap();
+        let _headers = ctx.data_opt::<HeaderMap>().unwrap();
 
         confirm_auth(ctx).await
     }
