@@ -30,6 +30,7 @@ use surrealdb::{engine::remote::ws::Client, Result, Surreal};
 use tower_http::cors::CorsLayer;
 
 use graphql::resolvers::mutation::Mutation;
+use tracing_subscriber::fmt::writer::MakeWriterExt;
 
 type MySchema = Schema<Query, Mutation, EmptySubscription>;
 
@@ -43,13 +44,24 @@ async fn graphql_handler(
     request = request.data(db.clone());
     request = request.data(headers.clone());
 
-    tracing::info!("Executing GraphQL request: {:?}", request);
+    let operation_name = request.operation_name.clone();
+
+    // Log request info
+    tracing::info!("Executing GraphQL request: {:?}", &operation_name);
+    let start = std::time::Instant::now();
 
     // Execute the GraphQL request
     let response = schema.execute(request).await;
 
-    // Log the response
-    tracing::debug!("GraphQL response: {:?}", response);
+    let duration = start.elapsed();
+    tracing::info!("{:?} request processed in {:?}", operation_name, duration);
+
+    // Debug the response
+    if response.errors.len() > 0 {
+        tracing::debug!("GraphQL Error: {:?}", response.errors);
+    } else {
+        tracing::info!("GraphQL request completed without errors");
+    }
 
     // Convert GraphQL response into the Axum response type
     response.into()
@@ -72,8 +84,15 @@ async fn main() -> Result<()> {
         .map(|endpoint| endpoint.parse::<HeaderValue>().unwrap())
         .collect();
 
+    // Persist the server logs to a file on a daily basis using "tracing_subscriber"
+    let file_appender = tracing_appender::rolling::daily("./logs", "files.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
+    let stdout = std::io::stdout.with_max_level(tracing::Level::DEBUG); // Log to console at DEBUG level
+
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::DEBUG)
+        .with_writer(stdout.and(non_blocking))
         .init();
 
     let app = Router::new()

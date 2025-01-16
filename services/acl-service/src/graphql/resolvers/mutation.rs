@@ -24,7 +24,7 @@ pub struct Mutation;
 
 #[Object]
 impl Mutation {
-    async fn sign_up(&self, ctx: &Context<'_>, mut user: User) -> Result<Option<User>> {
+    async fn sign_up(&self, ctx: &Context<'_>, mut user: User) -> Result<User> {
         user.password = bcrypt::hash(user.password, bcrypt::DEFAULT_COST).unwrap();
         user.dob = match &user.dob {
             Some(ref date_str) => Some(
@@ -41,7 +41,7 @@ impl Mutation {
         // User signup
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
 
-        let response: Vec<User> = db
+        let response: User = db
             .create("user")
             .content(User {
                 oauth_client: None,
@@ -51,7 +51,7 @@ impl Mutation {
             .map_err(|e| Error::new(e.to_string()))?
             .expect("Error creating user");
 
-        Ok(response.iter().nth(0).cloned())
+        Ok(response)
     }
 
     async fn create_user_role(

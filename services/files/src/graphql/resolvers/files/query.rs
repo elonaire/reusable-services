@@ -12,33 +12,52 @@ pub struct FileQuery;
 
 #[Object]
 impl FileQuery {
-    pub async fn get_product_artifact(
-        &self,
-        ctx: &Context<'_>,
-        external_product_id: String,
-        external_license_id: String,
-    ) -> Result<String> {
+    pub async fn get_file_id(&self, ctx: &Context<'_>, file_name: String) -> Result<String> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
 
-        let mut product_artifact_query = db
-        .query(
-            "
+        let mut file_query = db
+            .query(
+                "
             BEGIN TRANSACTION;
-            LET $internal_product = (SELECT VALUE id FROM ONLY product_id WHERE product_id=$product_id LIMIT 1);
-            LET $internal_license = (SELECT VALUE id FROM ONLY license_id WHERE license_id=$license_id LIMIT 1);
 
-            LET $file = (SELECT * FROM ONLY file WHERE <-(product_license_artifact WHERE license=$internal_license AND in=$internal_product) LIMIT 1);
+            LET $file = (SELECT * FROM ONLY file WHERE system_filename=$file_name LIMIT 1);
 
             RETURN $file;
             COMMIT TRANSACTION;
-            "
-        )
-        .bind(("product_id", external_product_id))
-        .bind(("license_id", external_license_id))
-        .await
-        .map_err(|e| Error::new(e.to_string()))?;
+            ",
+            )
+            .bind(("file_name", file_name))
+            .await
+            .map_err(|e| Error::new(e.to_string()))?;
 
-        let response: Option<UploadedFile> = product_artifact_query.take(0)?;
+        let response: Option<UploadedFile> = file_query.take(0)?;
+
+        match response {
+            Some(file) => Ok(file.id.as_ref().map(|t| &t.id).expect("id").to_raw()),
+            None => Err(ExtendedError::new("Invalid parameters!", Some(400.to_string())).build()),
+        }
+    }
+
+    pub async fn get_file_name(&self, ctx: &Context<'_>, file_id: String) -> Result<String> {
+        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
+
+        let mut file_query = db
+            .query(
+                "
+            BEGIN TRANSACTION;
+            LET $file_thing = type::thing($file_id);
+
+            LET $file = (SELECT * FROM ONLY $file_thing LIMIT 1);
+
+            RETURN $file;
+            COMMIT TRANSACTION;
+            ",
+            )
+            .bind(("file_id", format!("file:{}", file_id)))
+            .await
+            .map_err(|e| Error::new(e.to_string()))?;
+
+        let response: Option<UploadedFile> = file_query.take(0)?;
 
         match response {
             Some(file) => Ok(file.system_filename),
@@ -47,9 +66,6 @@ impl FileQuery {
     }
 
     pub async fn serve_md_files(&self, _ctx: &Context<'_>, file_name: String) -> Result<String> {
-        // let files_service = env::var("FILES_SERVICE_PROD")
-        //     .expect("Missing the FILES_SERVICE_PROD environment variable.");
-
         let files_service =
             env::var("FILES_SERVICE").expect("Missing the FILES_SERVICE environment variable.");
 

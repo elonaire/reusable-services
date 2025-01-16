@@ -3,3 +3,5 @@
 /services/**/db-file
 history.txt
 prod.env
+/services/files/src/uploads
+/services/**/logs
