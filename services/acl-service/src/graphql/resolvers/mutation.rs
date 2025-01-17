@@ -129,7 +129,7 @@ impl Mutation {
                                 }
                                 None => {
                                     key = HS256Key::generate().to_bytes();
-                                    let _reslt: Vec<SymKey> = db
+                                    let _reslt: SymKey = db
                                         .create("crypto_key")
                                         .content(SymKey {
                                             key: key.clone(),
