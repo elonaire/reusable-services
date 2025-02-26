@@ -1,0 +1,13 @@
+syntax = "proto3";
+package acl;
+
+service Acl {
+    rpc CheckAuth(Empty) returns (AuthStatus);
+}
+
+message AuthStatus {
+    bool is_auth = 1;
+    string sub = 2;
+}
+
+message Empty {}

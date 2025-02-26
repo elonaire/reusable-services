@@ -7,7 +7,7 @@ use hyper::HeaderMap;
 use lib::utils::models::AuthStatus;
 use surrealdb::{engine::remote::ws::Client, Surreal};
 
-use crate::{graphql::schemas::user::UserOutput, middleware::oauth::confirm_auth};
+use crate::{graphql::schemas::user::UserOutput, utils::oauth::confirm_auth};
 
 // use super::mutation::AuthClaim;
 
@@ -45,7 +45,7 @@ impl Query {
 
         let _headers = ctx.data_opt::<HeaderMap>().unwrap();
 
-        confirm_auth(ctx).await
+        confirm_auth(ctx).await.map_err(Error::from)
     }
 
     async fn get_user_email(&self, ctx: &Context<'_>, id: String) -> Result<String> {

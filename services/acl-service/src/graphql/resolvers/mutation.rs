@@ -14,7 +14,7 @@ use crate::{
             AccountStatus, AuthDetails, SurrealRelationQueryResponse, User, UserLogins, UserUpdate,
         },
     },
-    middleware::oauth::{
+    utils::oauth::{
         confirm_auth, decode_token, get_user_id_from_token, initiate_auth_code_grant_flow,
         navigate_to_redirect_url,
     },
@@ -34,9 +34,6 @@ impl Mutation {
             ),
             None => None,
         };
-        // chrono::DateTime::parse_from_rfc3339(&user.dob)
-        // .unwrap()
-        // .to_rfc3339();
 
         // User signup
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
@@ -95,13 +92,15 @@ impl Mutation {
             }
             None => {
                 let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
-                let db_query = format!(
-                        "SELECT * FROM type::table($table) WHERE email = '{}' OR user_name = '{}' LIMIT 1",
-                        &user_details.user_name.clone().unwrap(),
-                        &user_details.user_name.clone().unwrap()
-                    );
 
-                let mut result = db.query(db_query).bind(("table", "user")).await?;
+                let mut result = db.query(
+                    "SELECT * FROM type::table($table) WHERE email = $login_id OR user_name = $login_id LIMIT 1
+                    ")
+                    .bind(("table", "user"))
+                    .bind(("login_id", user_details.user_name.clone().unwrap()))
+                    .await
+                    .map_err(|e| Error::new("DB Query failed"))?;
+
                 // Get the first result from the first query
                 let response: Option<User> = result.take(0)?;
 
@@ -120,8 +119,11 @@ impl Mutation {
                             let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
                             let mut result = db.query("SELECT * FROM type::table($table) WHERE name = 'jwt_key' LIMIT 1")
                                 .bind(("table", "crypto_key"))
-                                .await?;
-                            let response: Option<SymKey> = result.take(0)?;
+                                .await
+                                .map_err(|e| Error::new("DB Query failed"))?;
+                            let response: Option<SymKey> = result
+                                .take(0)
+                                .map_err(|e| Error::new("Deserialization failed"))?;
 
                             match &response {
                                 Some(key_container) => {
@@ -140,22 +142,32 @@ impl Mutation {
                                 }
                             }
 
-                            let get_user_roles_query = format!(
-                                "SELECT ->has_role.out.* FROM user:{}",
-                                user.id.as_ref().map(|t| &t.id).expect("id")
-                            );
-                            let mut user_roles_res = db.query(get_user_roles_query).await?;
+                            let mut user_roles_res = db
+                                .query(
+                                    "
+                                SELECT ->has_role->role.* AS roles FROM ONLY type::thing($user_id)
+                                ",
+                                )
+                                .bind((
+                                    "user_id",
+                                    format!(
+                                        "user:{}",
+                                        user.id.as_ref().map(|t| &t.id).expect("id")
+                                    ),
+                                ))
+                                .await
+                                .map_err(|e| Error::new("DB Query failed: Get Roles"))?;
                             let user_roles: Option<SurrealRelationQueryResponse<SystemRole>> =
-                                user_roles_res.take(0)?;
+                                user_roles_res
+                                    .take(0)
+                                    .map_err(|e| Error::new(e.to_string()))?;
 
                             let auth_claim = AuthClaim {
                                 roles: match user_roles {
                                     Some(existing_roles) => {
                                         // use id instead of Thing
                                         existing_roles
-                                            .get("->has_role")
-                                            .unwrap()
-                                            .get("out")
+                                            .get("roles")
                                             .unwrap()
                                             .into_iter()
                                             .map(|role| {
@@ -213,7 +225,7 @@ impl Mutation {
                                     ctx.insert_http_header(
                                         SET_COOKIE,
                                         format!(
-                                            "oauth_client=; SameSite=None; Secure; Domain={}; HttpOnly; Path=/",
+                                            "oauth_client=; SameSite=Strict; Secure; Domain={}; HttpOnly; Path=/",
                                             g_host.as_str()
                                         ),
                                     );
@@ -221,7 +233,7 @@ impl Mutation {
                                     ctx.append_http_header(
                                         SET_COOKIE,
                                         format!(
-                                            "t={}; Max-Age={}; SameSite=None; Secure; Domain={}; HttpOnly; Path=/",
+                                            "t={}; Max-Age={}; SameSite=Strict; Secure; Domain={}; HttpOnly; Path=/",
                                             refresh_token_str,
                                             refresh_token_expiry_duration.as_secs(),
                                             g_host.as_str()
@@ -254,11 +266,13 @@ impl Mutation {
     async fn decode_token(&self, ctx: &Context<'_>) -> Result<String> {
         match ctx.data_opt::<HeaderMap>() {
             Some(headers) => {
-                let token_claims = decode_token(ctx, headers.get("Authorization").unwrap()).await;
+                let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
+
+                let token_claims = decode_token(db, headers.get("Authorization").unwrap()).await;
 
                 match token_claims {
                     Ok(token_claims) => Ok(token_claims.subject.unwrap()),
-                    Err(e) => Err(e),
+                    Err(e) => Err(e.into()),
                 }
             }
             None => Err(Error::new("No headers found")),
@@ -317,9 +331,12 @@ impl Mutation {
             .query("SELECT * FROM type::table($table) WHERE id = type::thing($user) LIMIT 1")
             .bind(("table", "user"))
             .bind(("user", format!("user:{}", user_id)))
-            .await?;
+            .await
+            .map_err(|e| Error::new(e.to_string()))?;
 
-        let found_user: Option<User> = found_user_result.take(0)?;
+        let found_user: Option<User> = found_user_result
+            .take(0)
+            .map_err(|e| Error::new("Deserialization failed"))?;
 
         match found_user {
             Some(user) => {
@@ -349,7 +366,5 @@ impl Mutation {
             }
             None => Err(Error::new("User not found")),
         }
-
-        // Ok(found_user)
     }
 }

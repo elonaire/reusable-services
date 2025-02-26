@@ -1,9 +1,10 @@
 mod database;
 mod graphql;
-mod middleware;
+mod grpc;
+mod utils;
 
 use core::panic;
-use std::{env, sync::Arc, vec};
+use std::{env, net::SocketAddr, sync::Arc, vec};
 
 use async_graphql::{EmptySubscription, Schema};
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
@@ -15,6 +16,7 @@ use axum::{
 };
 
 use graphql::resolvers::query::Query;
+use grpc::server::{acl_service::acl_server::AclServer, AclServiceImplementation};
 use hyper::{
     header::{
         ACCEPT, ACCESS_CONTROL_ALLOW_CREDENTIALS, ACCESS_CONTROL_ALLOW_HEADERS,
@@ -29,12 +31,13 @@ use oauth2::{
 };
 use serde::Deserialize;
 use surrealdb::{engine::remote::ws::Client, Result, Surreal};
+use tonic::transport::Server;
 use tower_http::cors::CorsLayer;
 
 use graphql::resolvers::mutation::Mutation;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 
-use crate::middleware::oauth::{initiate_auth_code_grant_flow, OAuthClientName};
+use crate::utils::oauth::{initiate_auth_code_grant_flow, OAuthClientName};
 use lib::utils::cookie_parser::parse_cookies;
 
 type MySchema = Schema<Query, Mutation, EmptySubscription>;
@@ -126,12 +129,18 @@ async fn oauth_handler(
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // let the thread panic if database connection fails
     let db = Arc::new(database::connection::create_db_connection().await.unwrap());
 
     let schema = Schema::build(Query, Mutation, EmptySubscription).finish();
 
+    // Bring in some needed env vars
     let allowed_services_cors = env::var("ALLOWED_SERVICES_CORS")
         .expect("Missing the ALLOWED_SERVICES environment variable.");
+    let acl_http_port =
+        env::var("ACL_HTTP_PORT").expect("Missing the ACL_HTTP_PORT environment variable.");
+    let acl_grpc_port =
+        env::var("ACL_GRPC_PORT").expect("Missing the ACL_GRPC_PORT environment variable.");
 
     let origins: Vec<HeaderValue> = allowed_services_cors
         .as_str()
@@ -155,7 +164,7 @@ async fn main() -> Result<()> {
         .route("/", post(graphql_handler))
         .route("/oauth/callback", get(oauth_handler))
         .layer(Extension(schema))
-        .layer(Extension(db))
+        .layer(Extension(db.clone()))
         .layer(
             CorsLayer::new()
                 .allow_origin(origins)
@@ -176,8 +185,24 @@ async fn main() -> Result<()> {
                 .allow_methods(vec![Method::GET, Method::POST]),
         );
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3007").await.unwrap();
-    serve(listener, app).await.unwrap();
+    // Set up the gRPC server
+    let acl_grpc = AclServiceImplementation::new(db.clone());
+    let grpc_address: SocketAddr = format!("[::1]:{}", acl_grpc_port).as_str().parse().unwrap();
+
+    tokio::spawn(async move {
+        // let the thread panic if gRPC server fails to start
+        Server::builder()
+            .add_service(AclServer::new(acl_grpc))
+            .serve(grpc_address)
+            .await
+            .unwrap();
+    });
+
+    // Set up the http server and start it; let the thread panic if http server fails to start
+    let http_listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", acl_http_port))
+        .await
+        .unwrap();
+    let _http_server = serve(http_listener, app).await.unwrap();
 
     Ok(())
 }
