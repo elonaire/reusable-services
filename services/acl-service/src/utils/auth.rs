@@ -3,18 +3,17 @@ use jwt_simple::prelude::*;
 use lib::utils::{
     auth::{AuthClaim, SymKey},
     cookie_parser::parse_cookies,
-    custom_error::ExtendedError,
     models::AuthStatus,
 };
 use std::{
     collections::HashMap,
     io::{Error, ErrorKind},
-    time::Duration,
+    // time::Duration,
 };
 use std::{env, sync::Arc};
 use surrealdb::{engine::remote::ws::Client as SurrealClient, Surreal};
 
-use async_graphql::{Context, Enum, Result as GraphQLResult};
+use async_graphql::{Context, Enum};
 use dotenvy::dotenv;
 use hyper::{
     header::{COOKIE, SET_COOKIE},
@@ -32,7 +31,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::graphql::schemas::{
     role::SystemRole,
-    user::{DecodedGithubOAuthToken, DecodedGoogleOAuthToken, SurrealRelationQueryResponse, User},
+    user::{
+        AccountStatus, DecodedGithubOAuthToken, DecodedGoogleOAuthToken,
+        SurrealRelationQueryResponse, User, UserLogins,
+    },
 };
 
 // use crate::SharedState;
@@ -81,7 +83,7 @@ impl OAuthClientName {
 }
 
 // Define a trait to get the Surreal<Client>
-trait AsSurrealClient {
+pub trait AsSurrealClient {
     fn as_client(&self) -> &Surreal<SurrealClient>;
 }
 
@@ -244,7 +246,7 @@ pub async fn decode_token<T: Clone + AsSurrealClient>(
         Some(token) => {
             let converted_jwt_secret_key = get_converted_jwt_secret_key(db)
                 .await
-                .map_err(|e| Error::new(ErrorKind::PermissionDenied, "Jwt Key failed"))?;
+                .map_err(|_e| Error::new(ErrorKind::PermissionDenied, "Jwt Key failed"))?;
 
             let claims_result = converted_jwt_secret_key.verify_token::<AuthClaim>(&token, None);
 
@@ -322,7 +324,7 @@ pub async fn confirm_auth(ctx: &Context<'_>) -> Result<AuthStatus, Error> {
                                                 let converted_jwt_secret_key =
                                                     get_converted_jwt_secret_key(db)
                                                         .await
-                                                        .map_err(|e| {
+                                                        .map_err(|_e| {
                                                             Error::new(
                                                                 ErrorKind::PermissionDenied,
                                                                 "Jwt Key failed",
@@ -347,12 +349,12 @@ pub async fn confirm_auth(ctx: &Context<'_>) -> Result<AuthStatus, Error> {
                                                 let response =
                                                     reqwest::get(format!("https://oauth2.googleapis.com/tokeninfo?access_token={}", token.to_str().unwrap().strip_prefix("Bearer ").unwrap()).as_str())
                                                         .await
-                                                        .map_err(|e| {
+                                                        .map_err(|_e| {
                                                             Error::new(ErrorKind::Other, "OAuth request to Google failed")
                                                         })?
                                                         .json::<DecodedGoogleOAuthToken>()
                                                         .await
-                                                        .map_err(|e| {
+                                                        .map_err(|_e| {
                                                             Error::new(ErrorKind::Other, "Google Token deserialization failed")
                                                         })?;
 
@@ -387,7 +389,7 @@ pub async fn confirm_auth(ctx: &Context<'_>) -> Result<AuthStatus, Error> {
                                                     .headers(req_headers)
                                                     .send()
                                                     .await
-                                                    .map_err(|e| {
+                                                    .map_err(|_e| {
                                                         Error::new(
                                                             ErrorKind::Other,
                                                             "OAuth request to GitHub failed",
@@ -395,7 +397,7 @@ pub async fn confirm_auth(ctx: &Context<'_>) -> Result<AuthStatus, Error> {
                                                     })?
                                                     .json::<DecodedGithubOAuthToken>()
                                                     .await
-                                                    .map_err(|e| {
+                                                    .map_err(|_e| {
                                                         Error::new(
                                                             ErrorKind::Other,
                                                             "GitHub Token deserialization failed",
@@ -445,7 +447,9 @@ async fn handle_refresh_token(
                     let user: Option<User> = db
                         .select(("user", refresh_claims.subject.unwrap().as_str()))
                         .await
-                        .map_err(|e| Error::new(ErrorKind::Other, "User deserialization failed"))?;
+                        .map_err(|_e| {
+                            Error::new(ErrorKind::Other, "User deserialization failed")
+                        })?;
 
                     match user {
                         Some(user) => {
@@ -456,9 +460,9 @@ async fn handle_refresh_token(
                             let mut user_roles_res = db
                                 .query(get_user_roles_query)
                                 .await
-                                .map_err(|e| Error::new(ErrorKind::Other, "DB Query failed"))?;
+                                .map_err(|_e| Error::new(ErrorKind::Other, "DB Query failed"))?;
                             let user_roles: Option<SurrealRelationQueryResponse<SystemRole>> =
-                                user_roles_res.take(0).map_err(|e| {
+                                user_roles_res.take(0).map_err(|_e| {
                                     Error::new(ErrorKind::Other, "User Role deserialization failed")
                                 })?;
                             // println!("user_roles: {:?}", user_roles);
@@ -544,12 +548,86 @@ async fn get_converted_jwt_secret_key<T: Clone + AsSurrealClient>(
     })?;
 
     match &response {
-        Some(key_container) => {
-            // jwt_key = key_container.key.clone();
-            Ok(HS256Key::from_bytes(&key_container.key.clone()))
-        }
+        Some(key_container) => Ok(HS256Key::from_bytes(&key_container.key.clone())),
         None => {
-            return Err(Error::new(ErrorKind::PermissionDenied, "Not Authorized!"));
+            let key = HS256Key::generate();
+            let _reslt: Option<SymKey> = db
+                .as_client()
+                .create("crypto_key")
+                .content(SymKey {
+                    key: key.clone().to_bytes(),
+                    name: "jwt_key".to_string(),
+                })
+                .await
+                .map_err(|_e| Error::new(ErrorKind::Other, "DB Query failed"))?;
+
+            Ok(key)
         }
     }
 }
+
+/// A utility function to verify user login credentials(username/email and password)
+pub async fn verify_login_credentials<T: Clone + AsSurrealClient>(
+    db: &T,
+    raw_user_details: &UserLogins,
+) -> Result<User, Error> {
+    let user_details = raw_user_details.transformed();
+
+    let mut result = db
+        .as_client()
+        .query(
+            "
+        SELECT * FROM type::table($table) WHERE email = $login_id OR user_name = $login_id LIMIT 1
+        ",
+        )
+        .bind(("table", "user"))
+        .bind(("login_id", user_details.user_name.clone().unwrap()))
+        .await
+        .map_err(|_e| Error::new(ErrorKind::Other, "Database query failed"))?;
+
+    // Get the first result from the first query
+    let response: Option<User> = result.take(0).map_err(|e| {
+        eprintln!("Failed to fetch key: {}", e);
+        Error::new(ErrorKind::Other, "Database query deserialization failed")
+    })?;
+
+    match response {
+        Some(user) => {
+            if bcrypt::verify(&user_details.password.unwrap(), &user.password.as_str()).unwrap()
+                && user.status == AccountStatus::Active
+            {
+                Ok(user)
+            } else {
+                Err(Error::new(
+                    ErrorKind::PermissionDenied,
+                    "Invalid username or password",
+                ))
+            }
+        }
+        None => Err(Error::new(
+            ErrorKind::PermissionDenied,
+            "Invalid username or password",
+        )),
+    }
+}
+
+pub async fn sign_jwt<T: Clone + AsSurrealClient>(
+    db: &T,
+    auth_claim: &AuthClaim,
+    duration: Duration,
+    user: &User,
+) -> Result<String, Error> {
+    let converted_key = get_converted_jwt_secret_key(db)
+        .await
+        .map_err(|_e| Error::new(ErrorKind::Other, "Database query failed"))?;
+
+    let mut token_claims = Claims::with_custom_claims(auth_claim.clone(), duration);
+    token_claims.subject = Some(user.id.as_ref().map(|t| &t.id).expect("id").to_raw());
+
+    Ok(converted_key.authenticate(token_claims).unwrap())
+}
+
+// A utility function to login with username and password
+// pub async fn sign_in_with_password(db: &Extension<Arc<Surreal<Client>>>) -> Result<User, Error> {
+
+// }

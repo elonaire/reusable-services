@@ -7,7 +7,7 @@ use hyper::HeaderMap;
 use lib::utils::models::AuthStatus;
 use surrealdb::{engine::remote::ws::Client, Surreal};
 
-use crate::{graphql::schemas::user::UserOutput, utils::oauth::confirm_auth};
+use crate::{graphql::schemas::user::UserOutput, utils::auth::confirm_auth};
 
 // use super::mutation::AuthClaim;
 

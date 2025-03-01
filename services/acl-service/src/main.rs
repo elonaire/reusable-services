@@ -37,7 +37,7 @@ use tower_http::cors::CorsLayer;
 use graphql::resolvers::mutation::Mutation;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 
-use crate::utils::oauth::{initiate_auth_code_grant_flow, OAuthClientName};
+use crate::utils::auth::{initiate_auth_code_grant_flow, OAuthClientName};
 use lib::utils::cookie_parser::parse_cookies;
 
 type MySchema = Schema<Query, Mutation, EmptySubscription>;

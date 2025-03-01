@@ -3,6 +3,7 @@ package acl;
 
 service Acl {
     rpc CheckAuth(Empty) returns (AuthStatus);
+    rpc SignInAsService(Empty) returns (AuthDetails);
 }
 
 message AuthStatus {
@@ -11,3 +12,7 @@ message AuthStatus {
 }
 
 message Empty {}
+
+message AuthDetails {
+    string token = 1;
+}

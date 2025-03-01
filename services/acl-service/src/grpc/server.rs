@@ -1,13 +1,16 @@
-use std::sync::Arc;
+use std::{env, sync::Arc};
 
 use acl_service::acl_server::Acl;
-use acl_service::{AuthStatus, Empty};
+use acl_service::{AuthDetails, AuthStatus, Empty};
 use axum::http::HeaderValue;
+use jwt_simple::prelude::*;
+use lib::utils::auth::AuthClaim;
 use surrealdb::engine::remote::ws::Client;
 use surrealdb::Surreal;
 use tonic::{Request, Response, Status};
 
-use crate::utils::oauth::decode_token;
+use crate::graphql::schemas::user::UserLogins;
+use crate::utils::auth::{decode_token, sign_jwt, verify_login_credentials};
 
 pub mod acl_service {
     tonic::include_proto!("acl");
@@ -64,5 +67,36 @@ impl Acl for AclServiceImplementation {
         //     Ok(())
         // }
         // }
+    }
+
+    async fn sign_in_as_service(
+        &self,
+        _request: Request<Empty>,
+    ) -> Result<Response<AuthDetails>, Status> {
+        let username =
+            env::var("INTERNAL_USER").expect("Missing the INTERNAL_USER environment variable.");
+        let password = env::var("INTERNAL_USER_PASSWORD")
+            .expect("Missing the INTERNAL_USER_PASSWORD environment variable.");
+
+        let raw_user_details = UserLogins {
+            user_name: Some(username),
+            password: Some(password),
+            oauth_client: None,
+        };
+
+        match verify_login_credentials(&self.db, &raw_user_details).await {
+            Ok(user) => {
+                let auth_claim = AuthClaim { roles: vec![] };
+                let service_token_expiry_duration = Duration::from_secs(30);
+
+                let signed_jwt =
+                    sign_jwt(&self.db, &auth_claim, service_token_expiry_duration, &user)
+                        .await
+                        .map_err(|_e| Status::unauthenticated("Unauthorized"))?;
+
+                Ok(Response::new(AuthDetails { token: signed_jwt }))
+            }
+            Err(_e) => Err(Status::unauthenticated("Unauthorized")),
+        }
     }
 }

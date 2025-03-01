@@ -4,19 +4,17 @@ use async_graphql::{Context, Error, Object, Result};
 use axum::Extension;
 use hyper::{header::SET_COOKIE, HeaderMap};
 use jwt_simple::prelude::*;
-use lib::utils::auth::{AuthClaim, SymKey};
+use lib::utils::auth::AuthClaim;
 use surrealdb::{engine::remote::ws::Client, Surreal};
 
 use crate::{
     graphql::schemas::{
         role::SystemRole,
-        user::{
-            AccountStatus, AuthDetails, SurrealRelationQueryResponse, User, UserLogins, UserUpdate,
-        },
+        user::{AuthDetails, SurrealRelationQueryResponse, User, UserLogins, UserUpdate},
     },
-    utils::oauth::{
+    utils::auth::{
         confirm_auth, decode_token, get_user_id_from_token, initiate_auth_code_grant_flow,
-        navigate_to_redirect_url,
+        navigate_to_redirect_url, sign_jwt, verify_login_credentials,
     },
 };
 
@@ -93,165 +91,106 @@ impl Mutation {
             None => {
                 let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
 
-                let mut result = db.query(
-                    "SELECT * FROM type::table($table) WHERE email = $login_id OR user_name = $login_id LIMIT 1
-                    ")
-                    .bind(("table", "user"))
-                    .bind(("login_id", user_details.user_name.clone().unwrap()))
-                    .await
-                    .map_err(|e| Error::new("DB Query failed"))?;
+                let verified_credentials = verify_login_credentials(db, &raw_user_details).await;
 
-                // Get the first result from the first query
-                let response: Option<User> = result.take(0)?;
+                match &verified_credentials {
+                    Ok(user) => {
+                        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
 
-                match &response {
-                    Some(user) => {
-                        let password_match = bcrypt::verify(
-                            &user_details.password.unwrap(),
-                            response.clone().unwrap().password.as_str(),
-                        )
-                        .unwrap();
+                        let refresh_token_expiry_duration = Duration::from_secs(30 * 24 * 60 * 60); // days by hours by minutes by 60 seconds
+                        let access_token_expiry_duration = Duration::from_secs(15 * 60); // minutes by 60 seconds
 
-                        if password_match && user.status == AccountStatus::Active {
-                            let refresh_token_expiry_duration =
-                                Duration::from_secs(30 * 24 * 60 * 60); // minutes by 60 seconds
-                            let key: Vec<u8>;
-                            let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
-                            let mut result = db.query("SELECT * FROM type::table($table) WHERE name = 'jwt_key' LIMIT 1")
-                                .bind(("table", "crypto_key"))
-                                .await
-                                .map_err(|e| Error::new("DB Query failed"))?;
-                            let response: Option<SymKey> = result
+                        let mut user_roles_res = db
+                            .query(
+                                "
+                            SELECT ->has_role->role.* AS roles FROM ONLY type::thing($user_id)
+                            ",
+                            )
+                            .bind((
+                                "user_id",
+                                format!("user:{}", user.id.as_ref().map(|t| &t.id).expect("id")),
+                            ))
+                            .await
+                            .map_err(|_e| Error::new("DB Query failed: Get Roles"))?;
+                        let user_roles: Option<SurrealRelationQueryResponse<SystemRole>> =
+                            user_roles_res
                                 .take(0)
-                                .map_err(|e| Error::new("Deserialization failed"))?;
+                                .map_err(|e| Error::new(e.to_string()))?;
 
-                            match &response {
-                                Some(key_container) => {
-                                    key = key_container.key.clone();
-                                }
-                                None => {
-                                    key = HS256Key::generate().to_bytes();
-                                    let _reslt: SymKey = db
-                                        .create("crypto_key")
-                                        .content(SymKey {
-                                            key: key.clone(),
-                                            name: "jwt_key".to_string(),
+                        let auth_claim = AuthClaim {
+                            roles: match user_roles {
+                                Some(existing_roles) => {
+                                    // use id instead of Thing
+                                    existing_roles
+                                        .get("roles")
+                                        .unwrap()
+                                        .into_iter()
+                                        .map(|role| {
+                                            role.id.as_ref().map(|t| &t.id).expect("id").to_raw()
                                         })
-                                        .await?
-                                        .expect("Error creating key");
+                                        .collect()
                                 }
-                            }
+                                None => vec![],
+                            },
+                        };
 
-                            let mut user_roles_res = db
-                                .query(
-                                    "
-                                SELECT ->has_role->role.* AS roles FROM ONLY type::thing($user_id)
-                                ",
-                                )
-                                .bind((
-                                    "user_id",
-                                    format!(
-                                        "user:{}",
-                                        user.id.as_ref().map(|t| &t.id).expect("id")
-                                    ),
-                                ))
+                        let token_str =
+                            sign_jwt(db, &auth_claim, access_token_expiry_duration, user)
                                 .await
-                                .map_err(|e| Error::new("DB Query failed: Get Roles"))?;
-                            let user_roles: Option<SurrealRelationQueryResponse<SystemRole>> =
-                                user_roles_res
-                                    .take(0)
-                                    .map_err(|e| Error::new(e.to_string()))?;
+                                .map_err(|_e| Error::new("DB Query failed"))?;
 
-                            let auth_claim = AuthClaim {
-                                roles: match user_roles {
-                                    Some(existing_roles) => {
-                                        // use id instead of Thing
-                                        existing_roles
-                                            .get("roles")
+                        let refresh_token_str =
+                            sign_jwt(db, &auth_claim, refresh_token_expiry_duration, user)
+                                .await
+                                .map_err(|_e| Error::new("DB Query failed"))?;
+
+                        match ctx.data_opt::<HeaderMap>() {
+                            Some(headers) => {
+                                // Check if Host header is present
+                                let mut g_host: String = "127.0.0.1".to_string();
+                                match headers.get("Origin") {
+                                    Some(host) => {
+                                        // g_host = host.to_str().unwrap().to_string();
+                                        // remove http:// or https:// and port(:port_number)
+                                        g_host = host
+                                            .to_str()
                                             .unwrap()
-                                            .into_iter()
-                                            .map(|role| {
-                                                role.id
-                                                    .as_ref()
-                                                    .map(|t| &t.id)
-                                                    .expect("id")
-                                                    .to_raw()
-                                            })
-                                            .collect()
+                                            .split("//")
+                                            .collect::<Vec<&str>>()[1]
+                                            .split(":")
+                                            .collect::<Vec<&str>>()[0]
+                                            .to_string();
                                     }
-                                    None => vec![],
-                                },
-                            };
-
-                            let converted_key = HS256Key::from_bytes(&key);
-
-                            let mut token_claims = Claims::with_custom_claims(
-                                auth_claim.clone(),
-                                Duration::from_secs(15 * 60),
-                            );
-                            token_claims.subject =
-                                Some(user.id.as_ref().map(|t| &t.id).expect("id").to_raw());
-                            let token_str = converted_key.authenticate(token_claims).unwrap();
-
-                            let mut refresh_token_claims = Claims::with_custom_claims(
-                                auth_claim.clone(),
-                                refresh_token_expiry_duration,
-                            );
-                            refresh_token_claims.subject =
-                                Some(user.id.as_ref().map(|t| &t.id).expect("id").to_raw());
-                            let refresh_token_str =
-                                converted_key.authenticate(refresh_token_claims).unwrap();
-
-                            match ctx.data_opt::<HeaderMap>() {
-                                Some(headers) => {
-                                    // Check if Host header is present
-                                    let mut g_host: String = "127.0.0.1".to_string();
-                                    match headers.get("Origin") {
-                                        Some(host) => {
-                                            // g_host = host.to_str().unwrap().to_string();
-                                            // remove http:// or https:// and port(:port_number)
-                                            g_host = host
-                                                .to_str()
-                                                .unwrap()
-                                                .split("//")
-                                                .collect::<Vec<&str>>()[1]
-                                                .split(":")
-                                                .collect::<Vec<&str>>()[0]
-                                                .to_string();
-                                        }
-                                        None => {}
-                                    }
-
-                                    ctx.insert_http_header(
-                                        SET_COOKIE,
-                                        format!(
-                                            "oauth_client=; SameSite=Strict; Secure; Domain={}; HttpOnly; Path=/",
-                                            g_host.as_str()
-                                        ),
-                                    );
-
-                                    ctx.append_http_header(
-                                        SET_COOKIE,
-                                        format!(
-                                            "t={}; Max-Age={}; SameSite=Strict; Secure; Domain={}; HttpOnly; Path=/",
-                                            refresh_token_str,
-                                            refresh_token_expiry_duration.as_secs(),
-                                            g_host.as_str()
-                                        ),
-                                    );
+                                    None => {}
                                 }
-                                None => {}
-                            }
 
-                            Ok(AuthDetails {
-                                token: Some(token_str),
-                                url: None,
-                            })
-                        } else {
-                            Err(Error::new("Invalid username or password OR Unauthorized access(contact admin)."))
+                                ctx.insert_http_header(
+                                    SET_COOKIE,
+                                    format!(
+                                        "oauth_client=; SameSite=Strict; Secure; Domain={}; HttpOnly; Path=/",
+                                        g_host.as_str()
+                                    ),
+                                );
+
+                                ctx.append_http_header(
+                                    SET_COOKIE,
+                                    format!(
+                                        "t={}; Max-Age={}; SameSite=Strict; Secure; Domain={}; HttpOnly; Path=/",
+                                        refresh_token_str,
+                                        refresh_token_expiry_duration.as_secs(),
+                                        g_host.as_str()
+                                    ),
+                                );
+                            }
+                            None => {}
                         }
+
+                        Ok(AuthDetails {
+                            token: Some(token_str),
+                            url: None,
+                        })
                     }
-                    None => Err(Error::new("Invalid username or password")),
+                    Err(_e) => Err(Error::new("Invalid username or password")),
                 }
             }
         }
@@ -336,7 +275,7 @@ impl Mutation {
 
         let found_user: Option<User> = found_user_result
             .take(0)
-            .map_err(|e| Error::new("Deserialization failed"))?;
+            .map_err(|_e| Error::new("Deserialization failed"))?;
 
         match found_user {
             Some(user) => {
