@@ -35,6 +35,7 @@ dependencies = [
  "tokio",
  "tonic",
  "tonic-build",
+ "tonic-reflection",
  "tower-http",
  "tracing",
  "tracing-appender",
@@ -1230,10 +1231,15 @@ dependencies = [
  "hyper 1.6.0",
  "lettre",
  "lib",
+ "prost",
  "reqwest 0.12.12",
  "serde",
  "surrealdb",
  "tokio",
+ "tonic",
+ "tonic-build",
+ "tonic-middleware",
+ "tonic-reflection",
  "tower-http",
  "tracing",
  "tracing-appender",
@@ -5193,6 +5199,31 @@ dependencies = [
  "prost-types",
  "quote",
  "syn 2.0.98",
+]
+
+[[package]]
+name = "tonic-middleware"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd11ca7918ee9f94e217285ace20caf6187476f399244ba8438cdc92ce665236"
+dependencies = [
+ "async-trait",
+ "futures-util",
+ "tonic",
+ "tower 0.4.13",
+]
+
+[[package]]
+name = "tonic-reflection"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "878d81f52e7fcfd80026b7fdb6a9b578b3c3653ba987f87f0dce4b64043cba27"
+dependencies = [
+ "prost",
+ "prost-types",
+ "tokio",
+ "tokio-stream",
+ "tonic",
 ]
 
 [[package]]

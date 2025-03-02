@@ -1,7 +1,6 @@
 use std::{env, sync::Arc};
 
-use acl_service::acl_server::Acl;
-use acl_service::{AuthDetails, AuthStatus, Empty};
+use acl_service::{acl_server::Acl, AuthDetails, AuthStatus, Empty};
 use axum::http::HeaderValue;
 use jwt_simple::prelude::*;
 use lib::utils::auth::AuthClaim;

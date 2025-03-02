@@ -1,9 +1,10 @@
 mod graphql;
-// mod database;
+mod grpc;
 mod rest;
 
 use dotenvy::dotenv;
-use std::env;
+use std::{env, net::SocketAddr};
+use tonic::transport::Server;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 
 use async_graphql::{EmptySubscription, Schema};
@@ -27,6 +28,7 @@ use hyper::{
 
 // use serde::Deserialize;
 // use surrealdb::{engine::remote::ws::Client, Result, Surreal};
+use grpc::server::{email_service::email_server::EmailServer, EmailServiceImplementation};
 use tower_http::cors::CorsLayer;
 
 use graphql::resolvers::mutation::Mutation;
@@ -74,6 +76,10 @@ async fn main() -> () {
 
     let allowed_services_cors = env::var("ALLOWED_SERVICES_CORS")
         .expect("Missing the ALLOWED_SERVICES environment variable.");
+    let email_http_port =
+        env::var("EMAIL_HTTP_PORT").expect("Missing the EMAIL_HTTP_PORT environment variable.");
+    let email_grpc_port =
+        env::var("EMAIL_GRPC_PORT").expect("Missing the EMAIL_GRPC_PORT environment variable.");
 
     let origins: Vec<HeaderValue> = allowed_services_cors
         .as_str()
@@ -118,7 +124,25 @@ async fn main() -> () {
                 .allow_methods(vec![Method::GET, Method::POST]),
         );
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3019").await.unwrap();
+    // Set up the gRPC server
+    let email_grpc = EmailServiceImplementation::default();
+    let grpc_address: SocketAddr = format!("[::1]:{}", email_grpc_port)
+        .as_str()
+        .parse()
+        .unwrap();
+
+    tokio::spawn(async move {
+        // let the thread panic if gRPC server fails to start
+        Server::builder()
+            .add_service(EmailServer::new(email_grpc))
+            .serve(grpc_address)
+            .await
+            .unwrap();
+    });
+
+    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", email_http_port))
+        .await
+        .unwrap();
     serve(listener, app).await.unwrap();
 
     // Ok(())

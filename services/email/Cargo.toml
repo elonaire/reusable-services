@@ -20,6 +20,13 @@ reqwest = { version = "0.12.5", features = ["blocking"] }
 tracing-subscriber = "0.3.18"
 tracing = "0.1.40"
 tracing-appender = "0.2.3"
+tonic = "0.12.3"
+prost = "0.13.5"
+tonic-middleware = "0.2.3"
+tonic-reflection = "0.12.3"
+
+[build-dependencies]
+tonic-build = "*"
 
 [lints.rust]
 unsafe_code = "forbid"

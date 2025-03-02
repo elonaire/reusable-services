@@ -453,19 +453,20 @@ async fn handle_refresh_token(
 
                     match user {
                         Some(user) => {
-                            let get_user_roles_query = format!(
-                                "SELECT ->has_role->role.* AS roles FROM ONLY user:{}",
-                                user.id.as_ref().map(|t| &t.id).expect("id")
-                            );
                             let mut user_roles_res = db
-                                .query(get_user_roles_query)
+                                .query("
+                                    SELECT ->has_role->role.* AS roles FROM ONLY type::thing($user_id)
+                                    ")
+                                .bind(("user_id", format!(
+                                    "user:{}",
+                                    user.id.as_ref().map(|t| &t.id).expect("id")
+                                )))
                                 .await
                                 .map_err(|_e| Error::new(ErrorKind::Other, "DB Query failed"))?;
                             let user_roles: Option<SurrealRelationQueryResponse<SystemRole>> =
                                 user_roles_res.take(0).map_err(|_e| {
                                     Error::new(ErrorKind::Other, "User Role deserialization failed")
                                 })?;
-                            // println!("user_roles: {:?}", user_roles);
 
                             let auth_claim = AuthClaim {
                                 roles: match user_roles {
@@ -490,15 +491,12 @@ async fn handle_refresh_token(
                                 },
                             };
 
-                            let mut token_claims = Claims::with_custom_claims(
-                                auth_claim.clone(),
-                                Duration::from_secs(15 * 60).into(),
-                            );
-                            token_claims.subject =
-                                Some(user.id.as_ref().map(|t| &t.id).expect("id").to_raw());
-
-                            let token =
-                                converted_jwt_secret_key.authenticate(token_claims).unwrap();
+                            let token_expiry_duration = Duration::from_secs(15 * 60);
+                            let token = sign_jwt(db, &auth_claim, token_expiry_duration, &user)
+                                .await
+                                .map_err(|_e| {
+                                    Error::new(ErrorKind::PermissionDenied, "Unauthorized")
+                                })?;
 
                             ctx.insert_http_header(
                                 SET_COOKIE,
@@ -611,6 +609,7 @@ pub async fn verify_login_credentials<T: Clone + AsSurrealClient>(
     }
 }
 
+/// A utility function to sign JWTs
 pub async fn sign_jwt<T: Clone + AsSurrealClient>(
     db: &T,
     auth_claim: &AuthClaim,
@@ -626,8 +625,3 @@ pub async fn sign_jwt<T: Clone + AsSurrealClient>(
 
     Ok(converted_key.authenticate(token_claims).unwrap())
 }
-
-// A utility function to login with username and password
-// pub async fn sign_in_with_password(db: &Extension<Arc<Surreal<Client>>>) -> Result<User, Error> {
-
-// }

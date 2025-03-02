@@ -1,0 +1,24 @@
+syntax = "proto3";
+package email;
+
+service Email {
+    rpc SendEmail(EmailPayload) returns (EmailResponse);
+}
+
+message EmailUser {
+    string full_name = 1;
+    string email_address = 2;
+}
+
+message Empty {}
+
+message EmailPayload {
+    EmailUser recipient = 1;
+    string subject = 2;
+    string title = 3;
+    string body = 4;
+}
+
+message EmailResponse {
+    string message = 1;
+}
