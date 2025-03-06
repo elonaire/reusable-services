@@ -26,8 +26,8 @@ use hyper::{
     Method,
 };
 use oauth2::{
-    basic::BasicTokenType, reqwest::async_http_client, AuthorizationCode, EmptyExtraTokenFields,
-    PkceCodeVerifier, StandardTokenResponse,
+    basic::BasicTokenType, AuthorizationCode, EmptyExtraTokenFields, PkceCodeVerifier,
+    StandardTokenResponse,
 };
 use serde::Deserialize;
 use surrealdb::{engine::remote::ws::Client, Result, Surreal};
@@ -115,12 +115,18 @@ async fn oauth_handler(
     let pkce_verifier = PkceCodeVerifier::new(pcke_verifier_secret.to_string());
     let auth_code = AuthorizationCode::new(params.0.code.clone().unwrap());
 
+    let http_client = reqwest::ClientBuilder::new()
+        // Following redirects opens the client up to SSRF vulnerabilities.
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("Client should build");
+
     // Now you can trade it for an access token.
     let token_result = oauth_client
         .exchange_code(auth_code)
         // Set the PKCE code verifier.
         .set_pkce_verifier(pkce_verifier)
-        .request_async(async_http_client)
+        .request_async(&http_client)
         .await
         .unwrap();
 
@@ -153,6 +159,7 @@ async fn main() -> Result<()> {
     let file_appender = tracing_appender::rolling::daily("./logs", "acl.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
+    // TODO: I need to add filters here for the gRPC protocol, there is so much noise in there
     let stdout = std::io::stdout.with_max_level(tracing::Level::DEBUG); // Log to console at DEBUG level
 
     tracing_subscriber::fmt()

@@ -19,7 +19,10 @@ use hyper::{
     header::{COOKIE, SET_COOKIE},
     HeaderMap, Method,
 };
-use oauth2::basic::{BasicClient, BasicErrorResponseType, BasicTokenType};
+use oauth2::{
+    basic::{BasicClient, BasicErrorResponseType, BasicTokenType},
+    EndpointNotSet, EndpointSet,
+};
 use reqwest::{header::HeaderMap as ReqWestHeaderMap, Client as ReqWestClient};
 
 use oauth2::{
@@ -42,10 +45,14 @@ use crate::graphql::schemas::{
 pub type OAuthClientInstance = Client<
     StandardErrorResponse<BasicErrorResponseType>,
     StandardTokenResponse<EmptyExtraTokenFields, BasicTokenType>,
-    BasicTokenType,
     StandardTokenIntrospectionResponse<EmptyExtraTokenFields, BasicTokenType>,
     StandardRevocableToken,
     StandardErrorResponse<RevocationErrorResponseType>,
+    EndpointSet,
+    EndpointNotSet,
+    EndpointNotSet,
+    EndpointSet,
+    EndpointSet,
 >;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
@@ -107,57 +114,58 @@ pub async fn initiate_auth_code_grant_flow(oauth_client: OAuthClientName) -> OAu
     // Create an OAuth2 client by specifying the client ID, client secret, authorization URL and
     // token URL.
     let client = match oauth_client {
-        OAuthClientName::Google => BasicClient::new(
-            ClientId::new(
-                env::var("GOOGLE_OAUTH_CLIENT_ID")
-                    .expect("Missing the GOOGLE_OAUTH_CLIENT_ID environment variable."),
-            ),
-            Some(ClientSecret::new(
-                env::var("GOOGLE_OAUTH_CLIENT_SECRET")
-                    .expect("Missing the GOOGLE_OAUTH_CLIENT_SECRET environment variable."),
-            )),
+        OAuthClientName::Google => BasicClient::new(ClientId::new(
+            env::var("GOOGLE_OAUTH_CLIENT_ID")
+                .expect("Missing the GOOGLE_OAUTH_CLIENT_ID environment variable."),
+        ))
+        .set_client_secret(ClientSecret::new(
+            env::var("GOOGLE_OAUTH_CLIENT_SECRET")
+                .expect("Missing the GOOGLE_OAUTH_CLIENT_SECRET environment variable."),
+        ))
+        .set_auth_uri(
             AuthUrl::new(
                 env::var("GOOGLE_OAUTH_AUTHORIZE_URL")
                     .expect("Missing the GOOGLE_OAUTH_AUTHORIZE_URL environment variable."),
             )
             .unwrap(),
-            Some(
-                TokenUrl::new(
-                    env::var("GOOGLE_OAUTH_ACCESS_TOKEN_URL")
-                        .expect("Missing the GOOGLE_OAUTH_ACCESS_TOKEN_URL environment variable."),
-                )
-                .unwrap(),
-            ),
         )
-        .set_revocation_uri(
+        .set_token_uri(
+            TokenUrl::new(
+                env::var("GOOGLE_OAUTH_ACCESS_TOKEN_URL")
+                    .expect("Missing the GOOGLE_OAUTH_ACCESS_TOKEN_URL environment variable."),
+            )
+            .unwrap(),
+        )
+        .set_revocation_url(
             RevocationUrl::new(
                 env::var("GOOGLE_OAUTH_REVOKE_TOKEN_URL")
                     .expect("Missing the GOOGLE_OAUTH_REVOKE_TOKEN_URL environment variable."),
             )
             .expect("Invalid revocation endpoint URL"),
         ),
-        OAuthClientName::Github => BasicClient::new(
-            ClientId::new(
-                env::var("GITHUB_OAUTH_CLIENT_ID")
-                    .expect("Missing the GITHUB_OAUTH_CLIENT_ID environment variable."),
-            ),
-            Some(ClientSecret::new(
-                env::var("GITHUB_OAUTH_CLIENT_SECRET")
-                    .expect("Missing the GITHUB_OAUTH_CLIENT_SECRET environment variable."),
-            )),
+        OAuthClientName::Github => BasicClient::new(ClientId::new(
+            env::var("GITHUB_OAUTH_CLIENT_ID")
+                .expect("Missing the GITHUB_OAUTH_CLIENT_ID environment variable."),
+        ))
+        .set_client_secret(ClientSecret::new(
+            env::var("GITHUB_OAUTH_CLIENT_SECRET")
+                .expect("Missing the GITHUB_OAUTH_CLIENT_SECRET environment variable."),
+        ))
+        .set_auth_uri(
             AuthUrl::new(
                 env::var("GITHUB_OAUTH_AUTHORIZE_URL")
                     .expect("Missing the GITHUB_OAUTH_AUTHORIZE_URL environment variable."),
             )
             .unwrap(),
-            Some(
-                TokenUrl::new(
-                    env::var("GITHUB_OAUTH_ACCESS_TOKEN_URL")
-                        .expect("Missing the GITHUB_OAUTH_ACCESS_TOKEN_URL environment variable."),
-                )
-                .unwrap(),
-            ),
-        ),
+        )
+        .set_token_uri(
+            TokenUrl::new(
+                env::var("GITHUB_OAUTH_ACCESS_TOKEN_URL")
+                    .expect("Missing the GITHUB_OAUTH_ACCESS_TOKEN_URL environment variable."),
+            )
+            .unwrap(),
+        )
+        .set_revocation_url(RevocationUrl::new("".to_string()).unwrap()),
     };
 
     client.set_redirect_uri(
