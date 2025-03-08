@@ -1,18 +1,46 @@
-use email_service::{email_server::Email, EmailPayload, EmailResponse};
+use email_service::{email_service_server::EmailService, EmailResponse};
 use tonic::{Request, Response, Status};
+
+use crate::utils;
 
 pub mod email_service {
     tonic::include_proto!("email");
+}
+
+impl From<email_service::EmailUser> for lib::utils::models::EmailUser {
+    fn from(user: email_service::EmailUser) -> Self {
+        Self {
+            full_name: Some(user.full_name), // Ensuring `Option<String>`
+            email_address: user.email_address,
+        }
+    }
+}
+
+impl From<email_service::Email> for lib::utils::models::Email {
+    fn from(email: email_service::Email) -> Self {
+        Self {
+            recipient: email.recipient.map_or_else(
+                || lib::utils::models::EmailUser {
+                    full_name: None,
+                    email_address: String::new(),
+                },
+                |user| user.into(), // Convert only if Some(user)
+            ),
+            subject: email.subject,
+            title: email.title,
+            body: email.body,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
 pub struct EmailServiceImplementation;
 
 #[tonic::async_trait]
-impl Email for EmailServiceImplementation {
+impl EmailService for EmailServiceImplementation {
     async fn send_email(
         &self,
-        request: Request<EmailPayload>,
+        request: Request<email_service::Email>,
     ) -> Result<Response<EmailResponse>, Status> {
         // if token != "Bearer my-secret-token" {
         // return Err(Status::unauthenticated("Invalid token"));
@@ -27,8 +55,14 @@ impl Email for EmailServiceImplementation {
         //     Ok(())
         // }
         // }
-        Ok(Response::new(EmailResponse {
-            message: "Email sent successfully".to_string(),
-        }))
+
+        let send_email_res = utils::email::send_email(&request.into_inner().into()).await;
+
+        match send_email_res {
+            Ok(send_email_res) => Ok(Response::new(EmailResponse {
+                message: send_email_res.to_owned(),
+            })),
+            Err(e) => Err(e.into()),
+        }
     }
 }

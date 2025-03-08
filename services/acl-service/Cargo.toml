@@ -32,8 +32,5 @@ prost = "0.13.5"
 [build-dependencies]
 tonic-build = "*"
 
-[future-incompat-report]
-frequency = "always"
-
 [lints.rust]
 unsafe_code = "forbid"

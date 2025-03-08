@@ -1,8 +1,8 @@
 syntax = "proto3";
 package email;
 
-service Email {
-    rpc SendEmail(EmailPayload) returns (EmailResponse);
+service EmailService {
+    rpc SendEmail(Email) returns (EmailResponse);
 }
 
 message EmailUser {
@@ -12,7 +12,7 @@ message EmailUser {
 
 message Empty {}
 
-message EmailPayload {
+message Email {
     EmailUser recipient = 1;
     string subject = 2;
     string title = 3;

@@ -1,5 +1,5 @@
 -- Enable GraphQL
-DEFINE CONFIG GRAPHQL AUTO;
+-- DEFINE CONFIG GRAPHQL AUTO;
 
 -- A schema-full user_id table
 DEFINE TABLE user_id SCHEMAFULL;

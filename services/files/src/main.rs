@@ -88,6 +88,7 @@ async fn main() -> Result<()> {
     let file_appender = tracing_appender::rolling::daily("./logs", "files.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
+    // TODO: I need to add filters here for the gRPC protocol, there is so much noise in there
     let stdout = std::io::stdout.with_max_level(tracing::Level::DEBUG); // Log to console at DEBUG level
 
     tracing_subscriber::fmt()

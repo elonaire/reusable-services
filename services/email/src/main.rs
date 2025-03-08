@@ -1,6 +1,7 @@
 mod graphql;
 mod grpc;
 mod rest;
+mod utils;
 
 use dotenvy::dotenv;
 use std::{env, net::SocketAddr};
@@ -28,7 +29,9 @@ use hyper::{
 
 // use serde::Deserialize;
 // use surrealdb::{engine::remote::ws::Client, Result, Surreal};
-use grpc::server::{email_service::email_server::EmailServer, EmailServiceImplementation};
+use grpc::server::{
+    email_service::email_service_server::EmailServiceServer, EmailServiceImplementation,
+};
 use tower_http::cors::CorsLayer;
 
 use graphql::resolvers::mutation::Mutation;
@@ -92,6 +95,7 @@ async fn main() -> () {
     let file_appender = tracing_appender::rolling::daily("./logs", "email.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
+    // TODO: I need to add filters here for the gRPC protocol, there is so much noise in there
     let stdout = std::io::stdout.with_max_level(tracing::Level::DEBUG); // Log to console at DEBUG level
 
     tracing_subscriber::fmt()
@@ -134,7 +138,7 @@ async fn main() -> () {
     tokio::spawn(async move {
         // let the thread panic if gRPC server fails to start
         Server::builder()
-            .add_service(EmailServer::new(email_grpc))
+            .add_service(EmailServiceServer::new(email_grpc))
             .serve(grpc_address)
             .await
             .unwrap();
