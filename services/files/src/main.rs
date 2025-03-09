@@ -1,8 +1,10 @@
 mod database;
 mod graphql;
+mod grpc;
 mod rest;
+mod utils;
 
-use std::{env, sync::Arc};
+use std::{env, net::SocketAddr, sync::Arc};
 
 use async_graphql::{EmptySubscription, Schema};
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
@@ -26,7 +28,11 @@ use hyper::{
 
 use rest::handlers::{download_file, get_image, upload};
 // use serde::Deserialize;
+use grpc::server::{
+    files_service::files_service_server::FilesServiceServer, FilesServiceImplementation,
+};
 use surrealdb::{engine::remote::ws::Client, Result, Surreal};
+use tonic::transport::Server;
 use tower_http::cors::CorsLayer;
 
 use graphql::resolvers::mutation::Mutation;
@@ -76,6 +82,10 @@ async fn main() -> Result<()> {
 
     let allowed_services_cors = env::var("ALLOWED_SERVICES_CORS")
         .expect("Missing the ALLOWED_SERVICES environment variable.");
+    let files_http_port =
+        env::var("FILES_HTTP_PORT").expect("Missing the FILES_HTTP_PORT environment variable.");
+    let files_grpc_port =
+        env::var("FILES_GRPC_PORT").expect("Missing the FILES_GRPC_PORT environment variable.");
 
     let origins: Vec<HeaderValue> = allowed_services_cors
         .as_str()
@@ -99,10 +109,10 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/", post(graphql_handler))
         .route("/upload", post(upload))
-        .route("/view/:file_name", get(get_image))
-        .route("/download/:file_name", get(download_file))
+        .route("/view/{file_name}", get(get_image))
+        .route("/download/{file_name}", get(download_file))
         .layer(Extension(schema))
-        .layer(Extension(db))
+        .layer(Extension(db.clone()))
         .layer(DefaultBodyLimit::max(100 * 1024 * 1024))
         .layer(
             CorsLayer::new()
@@ -124,7 +134,25 @@ async fn main() -> Result<()> {
                 .allow_methods(vec![Method::GET, Method::POST]),
         );
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3001").await.unwrap();
+    // Set up the gRPC server
+    let files_grpc = FilesServiceImplementation::new(db.clone());
+    let grpc_address: SocketAddr = format!("[::1]:{}", files_grpc_port)
+        .as_str()
+        .parse()
+        .unwrap();
+
+    tokio::spawn(async move {
+        // let the thread panic if gRPC server fails to start
+        Server::builder()
+            .add_service(FilesServiceServer::new(files_grpc))
+            .serve(grpc_address)
+            .await
+            .unwrap();
+    });
+
+    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", files_http_port))
+        .await
+        .unwrap();
     serve(listener, app).await.unwrap();
 
     Ok(())

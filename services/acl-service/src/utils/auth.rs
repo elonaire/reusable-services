@@ -3,6 +3,7 @@ use jwt_simple::prelude::*;
 use lib::utils::{
     auth::{AuthClaim, SymKey},
     cookie_parser::parse_cookies,
+    custom_traits::AsSurrealClient,
     models::AuthStatus,
 };
 use std::{
@@ -86,25 +87,6 @@ impl OAuthClientName {
             "Github" => OAuthClientName::Github,
             _ => panic!("Invalid OAuthClientName"),
         }
-    }
-}
-
-// Define a trait to get the Surreal<Client>
-pub trait AsSurrealClient {
-    fn as_client(&self) -> &Surreal<SurrealClient>;
-}
-
-// Implement for Arc<Surreal<Client>>
-impl AsSurrealClient for Arc<Surreal<SurrealClient>> {
-    fn as_client(&self) -> &Surreal<SurrealClient> {
-        self.as_ref()
-    }
-}
-
-// Implement for Extension<Arc<Surreal<Client>>>
-impl AsSurrealClient for Extension<Arc<Surreal<SurrealClient>>> {
-    fn as_client(&self) -> &Surreal<SurrealClient> {
-        self.0.as_ref()
     }
 }
 
