@@ -43,9 +43,10 @@ impl Query {
     async fn check_auth(&self, ctx: &Context<'_>) -> Result<AuthStatus> {
         dotenv().ok();
 
-        let _headers = ctx.data_opt::<HeaderMap>().unwrap();
+        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
+        let header_map = ctx.data_opt::<HeaderMap>();
 
-        confirm_auth(ctx).await.map_err(Error::from)
+        confirm_auth(header_map, db).await.map_err(Error::from)
     }
 
     async fn get_user_email(&self, ctx: &Context<'_>, id: String) -> Result<String> {

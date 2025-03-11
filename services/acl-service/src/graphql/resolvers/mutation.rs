@@ -54,11 +54,13 @@ impl Mutation {
         ctx: &Context<'_>,
         role: SystemRole,
     ) -> Result<Vec<SystemRole>> {
-        let check_auth = confirm_auth(ctx).await;
+        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
+        let header_map = ctx.data_opt::<HeaderMap>();
+
+        let check_auth = confirm_auth(header_map, db).await;
 
         match check_auth {
             Ok(_) => {
-                let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
                 let response = db
                     .create("role")
                     .content(SystemRole { ..role })
@@ -224,7 +226,10 @@ impl Mutation {
         mut user: UserUpdate,
         user_id: String,
     ) -> Result<User> {
-        let check_auth = confirm_auth(ctx).await;
+        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
+        let header_map = ctx.data_opt::<HeaderMap>();
+
+        let check_auth = confirm_auth(header_map, db).await;
 
         match check_auth {
             Ok(_) => {

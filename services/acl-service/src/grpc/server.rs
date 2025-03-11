@@ -2,6 +2,8 @@ use std::{env, sync::Arc};
 
 use acl_service::{acl_server::Acl, AuthDetails, AuthStatus, Empty};
 use axum::http::HeaderValue;
+use hyper::header::{AUTHORIZATION, COOKIE};
+use hyper::HeaderMap;
 use jwt_simple::prelude::*;
 use lib::utils::auth::AuthClaim;
 use surrealdb::engine::remote::ws::Client;
@@ -9,7 +11,7 @@ use surrealdb::Surreal;
 use tonic::{Request, Response, Status};
 
 use crate::graphql::schemas::user::UserLogins;
-use crate::utils::auth::{decode_token, sign_jwt, verify_login_credentials};
+use crate::utils::auth::{confirm_auth, sign_jwt, verify_login_credentials};
 
 pub mod acl_service {
     tonic::include_proto!("acl");
@@ -26,6 +28,15 @@ impl AclServiceImplementation {
     }
 }
 
+impl From<lib::utils::models::AuthStatus> for acl_service::AuthStatus {
+    fn from(auth_status: lib::utils::models::AuthStatus) -> Self {
+        Self {
+            sub: auth_status.sub,
+            is_auth: auth_status.is_auth,
+        }
+    }
+}
+
 #[tonic::async_trait]
 impl Acl for AclServiceImplementation {
     async fn check_auth(&self, request: Request<Empty>) -> Result<Response<AuthStatus>, Status> {
@@ -33,23 +44,21 @@ impl Acl for AclServiceImplementation {
         let token = metadata
             .get("authorization")
             .ok_or(Status::unauthenticated("Unauthorized"))?;
-        let header_value = match HeaderValue::from_str(token.to_str().unwrap_or("")) {
-            Ok(value) => value,
-            Err(e) => {
-                eprintln!("Failed to fetch key: {}", e);
-                return Err(Status::unauthenticated("Unauthorized"));
-            }
-        };
+        let cookie = metadata
+            .get("cookie")
+            .ok_or(Status::unauthenticated("Unauthorized"))?;
 
-        match decode_token(&self.db, &header_value).await {
-            Ok(claims) => Ok(Response::new(AuthStatus {
-                is_auth: true,
-                sub: claims
-                    .subject
-                    .as_ref()
-                    .map(|t| t.to_string())
-                    .unwrap_or("".to_string()),
-            })),
+        let token_header_value = HeaderValue::from_str(token.to_str().unwrap_or(""))
+            .map_err(|_e| Status::unauthenticated("Unauthorized"))?;
+        let cookie_header_value = HeaderValue::from_str(cookie.to_str().unwrap_or(""))
+            .map_err(|_e| Status::unauthenticated("Unauthorized"))?;
+
+        let mut header_map = HeaderMap::new();
+        header_map.insert(AUTHORIZATION, token_header_value);
+        header_map.insert(COOKIE, cookie_header_value);
+
+        match confirm_auth(Some(&header_map), &self.db).await {
+            Ok(auth_status) => Ok(Response::new(auth_status.into())),
             Err(_e) => Err(Status::unauthenticated("Unauthorized")),
         }
 

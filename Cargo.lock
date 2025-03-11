@@ -2589,8 +2589,12 @@ dependencies = [
  "gql_client",
  "hyper 1.6.0",
  "jwt-simple",
+ "prost",
  "serde",
  "surrealdb",
+ "tonic",
+ "tonic-build",
+ "tracing",
 ]
 
 [[package]]

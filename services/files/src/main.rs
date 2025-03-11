@@ -11,6 +11,7 @@ use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use axum::{
     extract::{DefaultBodyLimit, Extension},
     http::{HeaderMap, HeaderValue},
+    middleware,
     routing::{get, post},
     serve, Router,
 };
@@ -26,6 +27,7 @@ use hyper::{
     Method,
 };
 
+use lib::middleware::auth::rest::handle_auth_with_refresh;
 use rest::handlers::{download_file, get_image, upload};
 // use serde::Deserialize;
 use grpc::server::{
@@ -98,8 +100,11 @@ async fn main() -> Result<()> {
     let file_appender = tracing_appender::rolling::daily("./logs", "files.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
-    // TODO: I need to add filters here for the gRPC protocol, there is so much noise in there
-    let stdout = std::io::stdout.with_max_level(tracing::Level::DEBUG); // Log to console at DEBUG level
+    let stdout = std::io::stdout
+        .with_filter(|meta| {
+            meta.target() != "h2::codec::framed_write" && meta.target() != "h2::codec::framed_read"
+        })
+        .with_max_level(tracing::Level::DEBUG); // Log to console at DEBUG level
 
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::DEBUG)
@@ -107,8 +112,9 @@ async fn main() -> Result<()> {
         .init();
 
     let app = Router::new()
-        .route("/", post(graphql_handler))
         .route("/upload", post(upload))
+        .route_layer(middleware::from_fn(handle_auth_with_refresh))
+        .route("/", post(graphql_handler))
         .route("/view/{file_name}", get(get_image))
         .route("/download/{file_name}", get(download_file))
         .layer(Extension(schema))

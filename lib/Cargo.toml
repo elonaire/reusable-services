@@ -14,3 +14,9 @@ axum = "0.8.1"
 surrealdb = "2.2.1"
 hyper = "1.6.0"
 gql_client = "1.0.7"
+tonic = "0.12.3"
+prost = "0.13.5"
+tracing = "0.1.41"
+
+[build-dependencies]
+tonic-build = "*"

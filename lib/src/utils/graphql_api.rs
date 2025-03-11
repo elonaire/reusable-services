@@ -18,25 +18,28 @@ impl<T> GraphQLResponse<T> {
     }
 }
 
+/// ```
+/// let endpoint = "http://localhost:3001";
+/// ```
+/// create query
+///
+/// ```
+///     let query = r#"
+///        query Query {
+///            getUsers {
+///                id
+///                email
+///                fullName
+///                age
+///            }
+///        }
+///    "#;
+/// ```
 pub async fn perform_query_without_vars<R: for<'de> Deserialize<'de>>(
     headers: Option<HashMap<String, String>>,
     endpoint: &str,
     query: &str,
 ) -> GraphQLResponse<R> {
-    // let endpoint = "http://localhost:3001";
-
-    // create query
-    //     let query = r#"
-    //        query Query {
-    //            getUsers {
-    //                id
-    //                email
-    //                fullName
-    //                age
-    //            }
-    //        }
-    //    "#;
-
     let client = match headers {
         Some(headers) => Client::new_with_headers(endpoint, headers),
         None => Client::new(endpoint),
@@ -50,6 +53,24 @@ pub async fn perform_query_without_vars<R: for<'de> Deserialize<'de>>(
     }
 }
 
+/// ```
+/// let endpoint = "http://localhost:3001";
+/// ```
+///
+/// create query
+///
+/// ```
+/// let query = r#"
+///     mutation Mutation($user: UserInput!) {
+///         signUp(user: $user) {
+///             id
+///             email
+///             fullName
+///             age
+///         }
+///     }
+/// "#;
+/// ```
 pub async fn perform_mutation_or_query_with_vars<
     R: for<'de> Deserialize<'de> + Serialize,
     T: for<'de> Deserialize<'de> + Serialize,
@@ -59,20 +80,6 @@ pub async fn perform_mutation_or_query_with_vars<
     query: &str,
     vars: T,
 ) -> GraphQLResponse<R> {
-    // let endpoint = "http://localhost:3001";
-
-    // create query
-    // let query = r#"
-    //     mutation Mutation($user: UserInput!) {
-    //         signUp(user: $user) {
-    //             id
-    //             email
-    //             fullName
-    //             age
-    //         }
-    //     }
-    // "#;
-
     let client = match headers {
         Some(headers) => Client::new_with_headers(endpoint, headers),
         None => Client::new(endpoint),

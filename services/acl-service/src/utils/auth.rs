@@ -245,7 +245,13 @@ pub async fn decode_token<T: Clone + AsSurrealClient>(
                     // Token verification successful
                     Ok(claims)
                 }
-                Err(e) => Err(Error::new(ErrorKind::Other, e.to_string().as_str())),
+                Err(e) => {
+                    tracing::error!("Token verification failed: {}", e);
+                    Err(Error::new(
+                        ErrorKind::PermissionDenied,
+                        "Token verification failed",
+                    ))
+                }
             }
         }
         None => Err(Error::new(ErrorKind::Other, "Invalid token format")),
@@ -272,9 +278,13 @@ pub async fn get_user_id_from_token(ctx: &Context<'_>) -> Result<String, Error> 
 }
 
 /// A utility function to confirm auth by parsing relevant headers. Useful for authenticating clients. Includes refresh token handling and OAuth
-pub async fn confirm_auth(ctx: &Context<'_>) -> Result<AuthStatus, Error> {
+pub async fn confirm_auth<T: Clone + AsSurrealClient>(
+    header_map: Option<&HeaderMap>,
+    db: &T,
+) -> Result<AuthStatus, Error> {
+    // let header_map = ctx.data_opt::<HeaderMap>();
     // Process request headers as needed
-    match ctx.data_opt::<HeaderMap>() {
+    match header_map {
         Some(headers) => {
             // Check if Authorization header is present
             match headers.get("Authorization") {
@@ -291,9 +301,9 @@ pub async fn confirm_auth(ctx: &Context<'_>) -> Result<AuthStatus, Error> {
                             match cookies.get("oauth_client") {
                                 Some(oauth_client) => {
                                     if oauth_client.is_empty() {
-                                        let db = ctx
-                                            .data::<Extension<Arc<Surreal<SurrealClient>>>>()
-                                            .unwrap();
+                                        // let db = ctx
+                                        //     .data::<Extension<Arc<Surreal<SurrealClient>>>>()
+                                        //     .unwrap();
 
                                         let token_claims = decode_token(db, token).await;
 
@@ -324,7 +334,7 @@ pub async fn confirm_auth(ctx: &Context<'_>) -> Result<AuthStatus, Error> {
                                                 handle_refresh_token(
                                                     &cookies,
                                                     &converted_jwt_secret_key,
-                                                    ctx,
+                                                    db,
                                                 )
                                                 .await
                                             }
@@ -403,25 +413,35 @@ pub async fn confirm_auth(ctx: &Context<'_>) -> Result<AuthStatus, Error> {
                                     }
                                 }
                                 None => {
+                                    tracing::error!("Missing oauth client id!");
                                     Err(Error::new(ErrorKind::PermissionDenied, "Not Authorized!"))
                                 }
                             }
                         }
-                        None => Err(Error::new(ErrorKind::PermissionDenied, "Not Authorized!")),
+                        None => {
+                            tracing::error!("Missing cookie headers!");
+                            Err(Error::new(ErrorKind::PermissionDenied, "Not Authorized!"))
+                        }
                     }
                 }
-                None => Err(Error::new(ErrorKind::PermissionDenied, "Not Authorized!")),
+                None => {
+                    tracing::error!("Missing access token!");
+                    Err(Error::new(ErrorKind::PermissionDenied, "Not Authorized!"))
+                }
             }
         }
-        None => Err(Error::new(ErrorKind::Other, "Invalid request!")),
+        None => {
+            tracing::error!("Invalid request headers!");
+            Err(Error::new(ErrorKind::Other, "Invalid request!"))
+        }
     }
 }
 
 /// A utility function to handle refresh tokens
-async fn handle_refresh_token(
+async fn handle_refresh_token<T: Clone + AsSurrealClient>(
     cookies: &HashMap<String, String>,
     converted_jwt_secret_key: &HS256Key,
-    ctx: &Context<'_>,
+    db: &T,
 ) -> Result<AuthStatus, Error> {
     match cookies.get("t") {
         Some(refresh_token) => {
@@ -430,20 +450,23 @@ async fn handle_refresh_token(
 
             match refresh_claims {
                 Ok(refresh_claims) => {
-                    let db = ctx
-                        .data::<Extension<Arc<Surreal<SurrealClient>>>>()
-                        .unwrap();
+                    // let db = ctx
+                    //     .data::<Extension<Arc<Surreal<SurrealClient>>>>()
+                    //     .unwrap();
 
                     let user: Option<User> = db
+                        .as_client()
                         .select(("user", refresh_claims.subject.unwrap().as_str()))
                         .await
                         .map_err(|_e| {
+                            tracing::error!("User deserialization failed");
                             Error::new(ErrorKind::Other, "User deserialization failed")
                         })?;
 
                     match user {
                         Some(user) => {
                             let mut user_roles_res = db
+                                .as_client()
                                 .query("
                                     SELECT ->has_role->role.* AS roles FROM ONLY type::thing($user_id)
                                     ")
@@ -452,9 +475,13 @@ async fn handle_refresh_token(
                                     user.id.as_ref().map(|t| &t.id).expect("id")
                                 )))
                                 .await
-                                .map_err(|_e| Error::new(ErrorKind::Other, "DB Query failed"))?;
+                                .map_err(|e| {
+                                    tracing::error!("DB Query failed: {}", e);
+                                    Error::new(ErrorKind::Other, "DB Query failed")
+                                })?;
                             let user_roles: Option<SurrealRelationQueryResponse<SystemRole>> =
-                                user_roles_res.take(0).map_err(|_e| {
+                                user_roles_res.take(0).map_err(|e| {
+                                    tracing::error!("User Role deserialization failed: {}", e);
                                     Error::new(ErrorKind::Other, "User Role deserialization failed")
                                 })?;
 
@@ -488,12 +515,13 @@ async fn handle_refresh_token(
                                     Error::new(ErrorKind::PermissionDenied, "Unauthorized")
                                 })?;
 
-                            ctx.insert_http_header(
-                                SET_COOKIE,
-                                format!("oauth_client=; HttpOnly; SameSite=Strict"),
-                            );
+                            // TODO: Handle these in the respective middleware for REST and GraphQL
+                            // ctx.insert_http_header(
+                            //     SET_COOKIE,
+                            //     format!("oauth_client=; HttpOnly; SameSite=Strict"),
+                            // );
 
-                            ctx.append_http_header("New-Access-Token", format!("Bearer {}", token));
+                            // ctx.append_http_header("New-Access-Token", format!("Bearer {}", token));
 
                             return Ok(AuthStatus {
                                 is_auth: true,
@@ -501,12 +529,14 @@ async fn handle_refresh_token(
                             });
                         }
                         None => {
+                            tracing::error!("User may not exist");
                             return Err(Error::new(ErrorKind::PermissionDenied, "Not Authorized!"));
                         }
                     }
                 }
-                Err(_err) => {
+                Err(err) => {
                     // Refresh token verification failed
+                    tracing::error!("{}", err);
                     return Err(Error::new(ErrorKind::PermissionDenied, "Not Authorized!"));
                 }
             }
@@ -527,11 +557,11 @@ async fn get_converted_jwt_secret_key<T: Clone + AsSurrealClient>(
         .bind(("table", "crypto_key"))
         .await
         .map_err(|e| {
-            eprintln!("Failed to fetch key: {}", e);
+            tracing::error!("{}", e);
             Error::new(ErrorKind::Other, "Database query failed")
         })?;
     let response: Option<SymKey> = result.take(0).map_err(|e| {
-        eprintln!("Failed to fetch key: {}", e);
+        tracing::error!("{}", e);
         Error::new(ErrorKind::Other, "Database query deserialization failed")
     })?;
 
@@ -547,7 +577,10 @@ async fn get_converted_jwt_secret_key<T: Clone + AsSurrealClient>(
                     name: "jwt_key".to_string(),
                 })
                 .await
-                .map_err(|_e| Error::new(ErrorKind::Other, "DB Query failed"))?;
+                .map_err(|e| {
+                    tracing::error!("{}", e);
+                    Error::new(ErrorKind::Other, "Database query failed")
+                })?;
 
             Ok(key)
         }
@@ -571,11 +604,14 @@ pub async fn verify_login_credentials<T: Clone + AsSurrealClient>(
         .bind(("table", "user"))
         .bind(("login_id", user_details.user_name.clone().unwrap()))
         .await
-        .map_err(|_e| Error::new(ErrorKind::Other, "Database query failed"))?;
+        .map_err(|e| {
+            tracing::error!("{}", e);
+            Error::new(ErrorKind::Other, "Database query failed")
+        })?;
 
     // Get the first result from the first query
     let response: Option<User> = result.take(0).map_err(|e| {
-        eprintln!("Failed to fetch key: {}", e);
+        tracing::error!("{}", e);
         Error::new(ErrorKind::Other, "Database query deserialization failed")
     })?;
 
