@@ -5,11 +5,11 @@ use serde::{Deserialize, Serialize};
 pub async fn add_foreign_key_if_not_exists<T, F>(db: &T, foreign_key: ForeignKey) -> Option<F>
 where
     T: Clone + AsSurrealClient,
-    F: for<'de> Deserialize<'de> + Serialize,
+    F: for<'de> Deserialize<'de> + Serialize + std::fmt::Debug,
 {
     let result = db
         .as_client()
-        .query("SELECT * FROM type::table($table) WHERE $column = $value LIMIT 1")
+        .query("SELECT * FROM type::table($table) WHERE type::field($column) = $value LIMIT 1")
         .bind(("column", foreign_key.column.clone()))
         .bind(("table", foreign_key.table.clone()))
         .bind(("value", foreign_key.foreign_key.clone()))
@@ -18,12 +18,15 @@ where
     match result {
         Ok(mut result) => {
             let response: Option<F> = result.take(0).unwrap();
+
             if response.is_none() {
+                let insert_query = format!(
+                    "INSERT INTO {} ({}) VALUES ($value)",
+                    &foreign_key.table, &foreign_key.column
+                );
                 let record_add_res = db
                     .as_client()
-                    .query("INSERT INTO $table ($column) VALUES ($value)")
-                    .bind(("table", foreign_key.table.clone()))
-                    .bind(("column", foreign_key.column.clone()))
+                    .query(insert_query)
                     .bind(("value", foreign_key.foreign_key.clone()))
                     .await;
 
@@ -32,13 +35,19 @@ where
                         let res: Option<F> = res.take(0).unwrap();
                         res
                     }
-                    Err(_) => None,
+                    Err(e) => {
+                        tracing::error!("Database error occured on insert query: {}", e);
+                        None
+                    }
                 }
             } else {
                 // return true;
                 response
             }
         }
-        Err(_) => None,
+        Err(e) => {
+            tracing::error!("Database error occured on select query: {}", e);
+            None
+        }
     }
 }

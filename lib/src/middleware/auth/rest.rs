@@ -16,8 +16,6 @@ pub async fn handle_auth_with_refresh(
 
     let mut request = tonic::Request::new(Empty {});
 
-    tracing::debug!("req: {:?}", req);
-
     let auth_header = req.headers().get(AUTHORIZATION);
     let cookie_header = req.headers().get(COOKIE);
 

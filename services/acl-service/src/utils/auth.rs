@@ -450,10 +450,6 @@ async fn handle_refresh_token<T: Clone + AsSurrealClient>(
 
             match refresh_claims {
                 Ok(refresh_claims) => {
-                    // let db = ctx
-                    //     .data::<Extension<Arc<Surreal<SurrealClient>>>>()
-                    //     .unwrap();
-
                     let user: Option<User> = db
                         .as_client()
                         .select(("user", refresh_claims.subject.unwrap().as_str()))

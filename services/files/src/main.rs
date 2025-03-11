@@ -113,10 +113,10 @@ async fn main() -> Result<()> {
 
     let app = Router::new()
         .route("/upload", post(upload))
+        .route("/download/{file_name}", get(download_file))
         .route_layer(middleware::from_fn(handle_auth_with_refresh))
         .route("/", post(graphql_handler))
         .route("/view/{file_name}", get(get_image))
-        .route("/download/{file_name}", get(download_file))
         .layer(Extension(schema))
         .layer(Extension(db.clone()))
         .layer(DefaultBodyLimit::max(100 * 1024 * 1024))

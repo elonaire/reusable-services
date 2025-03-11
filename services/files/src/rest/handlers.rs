@@ -24,7 +24,6 @@ use crate::graphql::schemas::general::{UploadedFile, UploadedFileResponse};
 // use crate::graphql::schemas::general::UploadedFile;
 
 pub async fn upload(
-    headers: HeaderMap,
     Extension(db): Extension<Arc<Surreal<Client>>>,
     Extension(current_user): Extension<String>,
     mut multipart: Multipart,
@@ -40,6 +39,7 @@ pub async fn upload(
 
     let user_fk =
         add_foreign_key_if_not_exists::<Arc<Surreal<Client>>, User>(&db, user_fk_body).await;
+
     let user_id_raw = user_fk
         .unwrap()
         .id
@@ -146,8 +146,6 @@ pub async fn upload(
 
     // Insert uploaded files into the database
     match db
-        // .create::<Vec<UploadedFile>>("file")
-        // .content(uploaded_file.clone())
         .query(
             "
             BEGIN TRANSACTION;
@@ -196,6 +194,7 @@ pub async fn upload(
 pub async fn download_file(
     headers: HeaderMap,
     Extension(db): Extension<Arc<Surreal<Client>>>,
+    Extension(current_user): Extension<String>,
     AxumUrlParams(file_name): AxumUrlParams<String>,
 ) -> Result<Response, StatusCode> {
     let upload_dir =
@@ -222,83 +221,79 @@ pub async fn download_file(
         match file_details {
             Some(file_details) => {
                 if !file_details.is_free {
-                    match check_auth_from_acl(headers.clone()).await {
-                        Ok(auth_status) => {
-                            // verify that they actually bought the file
-                            let mut bought_file_query = db
+                    // match check_auth_from_acl(headers.clone()).await {
+                    //     Ok(auth_status) => {
+
+                    //     }
+                    //     Err(e) => {
+                    //         eprintln!("Auth failed!: {:?}", e);
+                    //         return Ok((StatusCode::FORBIDDEN, format!("Not Allowed!! {:?}", e))
+                    //             .into_response());
+                    //     }
+                    // }
+                    // verify that they actually bought the file
+                    let mut bought_file_query = db
+                        .query(
+                            "
+                            BEGIN TRANSACTION;
+                            LET $internal_user = (SELECT VALUE id FROM ONLY user_id WHERE user_id = $user_id LIMIT 1);
+                            LET $bought_file = (SELECT * FROM (SELECT VALUE ->bought_file.out[*] FROM ONLY $internal_user LIMIT 1) WHERE system_filename = $file_name)[0];
+
+                            RETURN $bought_file;
+                            COMMIT TRANSACTION;
+                            "
+                        )
+                            .bind(("user_id", current_user.clone()))
+                            .bind(("file_name", file_name.clone()))
+                            .await
+                            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+                    let bought_file: Option<UploadedFile> = bought_file_query
+                        .take(0)
+                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+                    match bought_file {
+                        Some(_) => {
+                            // Continue to generate the response
+                        }
+                        None => {
+                            // return Err(StatusCode::FORBIDDEN);
+                            // return Ok((
+                            //     StatusCode::FORBIDDEN,
+                            //     format!("Not Allowed!"),
+                            // ).into_response())
+                            // verify that they own the file
+                            let mut owned_file_query = db
                                 .query(
                                     "
                                     BEGIN TRANSACTION;
-                                    LET $internal_user = (SELECT VALUE id FROM ONLY user_id WHERE user_id = $user_id LIMIT 1);
-                                    LET $bought_file = (SELECT * FROM (SELECT VALUE ->bought_file.out[*] FROM ONLY $internal_user LIMIT 1) WHERE system_filename = $file_name)[0];
+                                    LET $internal_user = (SELECT VALUE id FROM ONLY user_id WHERE user_id=$user_id LIMIT 1);
 
-                                    RETURN $bought_file;
+                                    LET $owned_file = (SELECT * FROM ONLY file WHERE owner=$internal_user AND system_filename=$file_name LIMIT 1);
+
+                                    RETURN $owned_file;
                                     COMMIT TRANSACTION;
                                     "
                                 )
-                                    .bind(("user_id", auth_status.sub.clone()))
+                                    .bind(("user_id", current_user))
                                     .bind(("file_name", file_name.clone()))
                                     .await
                                     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-                            println!("bought_file_query: {:?}", bought_file_query);
-
-                            let bought_file: Option<UploadedFile> = bought_file_query
+                            let file_info: Option<UploadedFile> = owned_file_query
                                 .take(0)
                                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-                            match bought_file {
+                            match file_info {
                                 Some(_) => {
                                     // Continue to generate the response
                                 }
                                 None => {
-                                    // return Err(StatusCode::FORBIDDEN);
-                                    // return Ok((
-                                    //     StatusCode::FORBIDDEN,
-                                    //     format!("Not Allowed!"),
-                                    // ).into_response())
-                                    // verify that they own the file
-                                    let mut owned_file_query = db
-                                        .query(
-                                            "
-                                            BEGIN TRANSACTION;
-                                            LET $internal_user = (SELECT VALUE id FROM ONLY user_id WHERE user_id=$user_id LIMIT 1);
-
-                                            LET $owned_file = (SELECT * FROM ONLY file WHERE owner=$internal_user AND system_filename=$file_name LIMIT 1);
-
-                                            RETURN $owned_file;
-                                            COMMIT TRANSACTION;
-                                            "
-                                        )
-                                            .bind(("user_id", auth_status.sub.clone()))
-                                            .bind(("file_name", file_name.clone()))
-                                            .await
-                                            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-                                    let file_info: Option<UploadedFile> = owned_file_query
-                                        .take(0)
-                                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-                                    match file_info {
-                                        Some(_) => {
-                                            // Continue to generate the response
-                                        }
-                                        None => {
-                                            eprintln!("Not Allowed! Not owned");
-                                            return Ok((
-                                                StatusCode::FORBIDDEN,
-                                                format!("Not Allowed!"),
-                                            )
-                                                .into_response());
-                                        }
-                                    }
+                                    eprintln!("Not Allowed! Not owned");
+                                    return Ok((StatusCode::FORBIDDEN, format!("Not Allowed!"))
+                                        .into_response());
                                 }
                             }
-                        }
-                        Err(e) => {
-                            eprintln!("Auth failed!: {:?}", e);
-                            return Ok((StatusCode::FORBIDDEN, format!("Not Allowed!! {:?}", e))
-                                .into_response());
                         }
                     }
                 }
