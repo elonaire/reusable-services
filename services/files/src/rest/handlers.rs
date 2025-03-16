@@ -58,16 +58,12 @@ pub async fn upload(
 
     // Ensure the directory exists
     if let Err(e) = std::fs::create_dir_all(&upload_dir) {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to create upload directory: {}", e),
-        )
-            .into_response();
+        tracing::error!("Failed to create upload directory: {}", e);
+        return (StatusCode::INTERNAL_SERVER_ERROR, "Upload failed").into_response();
     }
 
     while let Some(field) = multipart.next_field().await.unwrap_or_else(|_| None) {
         let mut field = field;
-        println!("field: ");
 
         // Extract field name and filename
         filename = field
@@ -99,11 +95,9 @@ pub async fn upload(
         let mut file = match File::create(&filepath) {
             Ok(file) => file,
             Err(e) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Failed to create file: {}", e),
-                )
-                    .into_response()
+                tracing::error!("Failed to create file: {}", e);
+                return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file")
+                    .into_response();
             }
         };
 
@@ -112,35 +106,28 @@ pub async fn upload(
             Ok(Some(chunk)) => Some(chunk),
             Ok(None) => None,
             Err(e) => {
+                tracing::error!("Failed to read chunk: {}", e);
                 let _ = std::fs::remove_file(&filepath);
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Failed to read chunk: {}", e),
-                )
+                return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file")
                     .into_response();
             }
         } {
             total_size += chunk.len() as u64;
             if let Err(e) = file.write_all(&chunk) {
+                tracing::error!("Failed to write chunk: {}", e);
                 // Clean up file on error
                 let _ = std::fs::remove_file(&filepath);
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Failed to write to file: {}", e),
-                )
+                return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file")
                     .into_response();
             }
         }
 
         // Ensure file is successfully flushed
         if let Err(e) = file.flush() {
+            tracing::error!("Failed to flush file: {}", e);
             // Clean up file on error
             let _ = std::fs::remove_file(&filepath);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to flush file: {}", e),
-            )
-                .into_response();
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file").into_response();
         }
     }
 
@@ -180,13 +167,10 @@ pub async fn upload(
         )
             .into_response(),
         Err(e) => {
+            tracing::error!("Failed to insert file into database: {}", e);
             let _ = std::fs::remove_file(&filepath);
 
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to insert into database: {}", e),
-            )
-                .into_response()
+            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file").into_response()
         }
     }
 }
@@ -211,11 +195,15 @@ pub async fn download_file(
             )
             .bind(("file_name", file_name.clone()))
             .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            .map_err(|e| {
+                tracing::error!("Failed database query: {}", e);
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
 
-        let file_details: Option<UploadedFile> = file_details_query
-            .take(0)
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let file_details: Option<UploadedFile> = file_details_query.take(0).map_err(|e| {
+            tracing::error!("Failed deserialization: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
         match file_details {
             Some(file_details) => {
@@ -235,11 +223,16 @@ pub async fn download_file(
                             .bind(("user_id", current_user.clone()))
                             .bind(("file_name", file_name.clone()))
                             .await
-                            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                            .map_err(|e| {
+                                tracing::error!("Failed database transaction: {}", e);
+                                StatusCode::INTERNAL_SERVER_ERROR
+                            })?;
 
-                    let bought_file: Option<UploadedFile> = bought_file_query
-                        .take(0)
-                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                    let bought_file: Option<UploadedFile> =
+                        bought_file_query.take(0).map_err(|e| {
+                            tracing::error!("Failed deserialization: {}", e);
+                            StatusCode::INTERNAL_SERVER_ERROR
+                        })?;
 
                     match bought_file {
                         Some(_) => {
@@ -262,18 +255,21 @@ pub async fn download_file(
                                     .bind(("user_id", current_user))
                                     .bind(("file_name", file_name.clone()))
                                     .await
-                                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                                    .map_err(|e| {
+                                        tracing::error!("Failed database transaction: {}", e);
+                                        StatusCode::INTERNAL_SERVER_ERROR})?;
 
-                            let file_info: Option<UploadedFile> = owned_file_query
-                                .take(0)
-                                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                            let file_info: Option<UploadedFile> =
+                                owned_file_query.take(0).map_err(|e| {
+                                    tracing::error!("Failed deserialization: {}", e);
+                                    StatusCode::INTERNAL_SERVER_ERROR
+                                })?;
 
                             match file_info {
                                 Some(_) => {
                                     // Continue to generate the response
                                 }
                                 None => {
-                                    eprintln!("Not Allowed! Not owned");
                                     return Ok((StatusCode::FORBIDDEN, format!("Not Allowed!"))
                                         .into_response());
                                 }
@@ -322,11 +318,15 @@ pub async fn get_image(
             )
             .bind(("file_name", file_name.clone()))
             .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            .map_err(|e| {
+                tracing::error!("Failed database query: {}", e);
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
 
-        let file_details: Option<UploadedFile> = file_details_query
-            .take(0)
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let file_details: Option<UploadedFile> = file_details_query.take(0).map_err(|e| {
+            tracing::error!("Failed deserialization: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
         match file_details {
             Some(file_details) => {
