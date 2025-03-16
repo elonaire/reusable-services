@@ -505,9 +505,10 @@ async fn handle_refresh_token<T: Clone + AsSurrealClient>(
                             };
 
                             let token_expiry_duration = Duration::from_secs(15 * 60);
-                            let token = sign_jwt(db, &auth_claim, token_expiry_duration, &user)
+                            let _token = sign_jwt(db, &auth_claim, token_expiry_duration, &user)
                                 .await
-                                .map_err(|_e| {
+                                .map_err(|e| {
+                                    tracing::error!("Error: {}", e);
                                     Error::new(ErrorKind::PermissionDenied, "Unauthorized")
                                 })?;
 

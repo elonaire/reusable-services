@@ -1,11 +1,11 @@
 use axum::{
     extract::{Extension, Multipart, Path as AxumUrlParams},
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
     response::{IntoResponse, Response},
     Json,
 };
 use lib::{
-    integration::{auth::check_auth_from_acl, foreign_key::add_foreign_key_if_not_exists},
+    integration::foreign_key::add_foreign_key_if_not_exists,
     utils::models::{ForeignKey, User},
 };
 use uuid::Uuid;
@@ -192,7 +192,6 @@ pub async fn upload(
 }
 
 pub async fn download_file(
-    headers: HeaderMap,
     Extension(db): Extension<Arc<Surreal<Client>>>,
     Extension(current_user): Extension<String>,
     AxumUrlParams(file_name): AxumUrlParams<String>,
@@ -221,16 +220,6 @@ pub async fn download_file(
         match file_details {
             Some(file_details) => {
                 if !file_details.is_free {
-                    // match check_auth_from_acl(headers.clone()).await {
-                    //     Ok(auth_status) => {
-
-                    //     }
-                    //     Err(e) => {
-                    //         eprintln!("Auth failed!: {:?}", e);
-                    //         return Ok((StatusCode::FORBIDDEN, format!("Not Allowed!! {:?}", e))
-                    //             .into_response());
-                    //     }
-                    // }
                     // verify that they actually bought the file
                     let mut bought_file_query = db
                         .query(
@@ -257,11 +246,6 @@ pub async fn download_file(
                             // Continue to generate the response
                         }
                         None => {
-                            // return Err(StatusCode::FORBIDDEN);
-                            // return Ok((
-                            //     StatusCode::FORBIDDEN,
-                            //     format!("Not Allowed!"),
-                            // ).into_response())
                             // verify that they own the file
                             let mut owned_file_query = db
                                 .query(

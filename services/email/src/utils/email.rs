@@ -168,6 +168,9 @@ pub async fn send_email(email: &Email) -> Result<&'static str, Error> {
     // Send the email
     match mailer.send(&message) {
         Ok(_) => Ok("Email sent successfully!"),
-        Err(e) => Err(Error::new(ErrorKind::Other, "Failed to send email")),
+        Err(e) => {
+            tracing::error!("Can't send email: {}", e);
+            Err(Error::new(ErrorKind::Other, "Failed to send email"))
+        }
     }
 }

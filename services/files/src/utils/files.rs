@@ -22,11 +22,15 @@ pub async fn get_file_id<T: Clone + AsSurrealClient>(
         )
         .bind(("file_name", file_name))
         .await
-        .map_err(|e| Error::new(ErrorKind::Other, "DB Query failed"))?;
+        .map_err(|e| {
+            tracing::error!("Error: {}", e);
+            Error::new(ErrorKind::Other, "DB Query failed")
+        })?;
 
-    let response: Option<UploadedFile> = file_query
-        .take(0)
-        .map_err(|_e| Error::new(ErrorKind::Other, "UploadedFile deserialization failed"))?;
+    let response: Option<UploadedFile> = file_query.take(0).map_err(|e| {
+        tracing::error!("Error: {}", e);
+        Error::new(ErrorKind::Other, "UploadedFile deserialization failed")
+    })?;
 
     match response {
         Some(file) => Ok(file.id.as_ref().map(|t| &t.id).expect("id").to_raw()),
@@ -52,11 +56,15 @@ pub async fn get_system_filename<T: Clone + AsSurrealClient>(
         )
         .bind(("file_id", format!("file:{}", file_id)))
         .await
-        .map_err(|e| Error::new(ErrorKind::Other, "DB Query failed"))?;
+        .map_err(|e| {
+            tracing::error!("Error: {}", e);
+            Error::new(ErrorKind::Other, "DB Query failed")
+        })?;
 
-    let response: Option<UploadedFile> = file_query
-        .take(0)
-        .map_err(|_e| Error::new(ErrorKind::Other, "UploadedFile deserialization failed"))?;
+    let response: Option<UploadedFile> = file_query.take(0).map_err(|e| {
+        tracing::error!("Error: {}", e);
+        Error::new(ErrorKind::Other, "UploadedFile deserialization failed")
+    })?;
 
     match response {
         Some(file) => Ok(file.system_filename),

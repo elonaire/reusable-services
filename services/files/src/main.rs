@@ -80,7 +80,9 @@ async fn main() -> Result<()> {
     dotenv().ok();
     let db = Arc::new(database::connection::create_db_connection().await.unwrap());
 
-    let schema = Schema::build(Query::default(), Mutation::default(), EmptySubscription).finish();
+    let schema = Schema::build(Query::default(), Mutation::default(), EmptySubscription)
+        .limit_depth(5)
+        .finish();
 
     let allowed_services_cors = env::var("ALLOWED_SERVICES_CORS")
         .expect("Missing the ALLOWED_SERVICES environment variable.");

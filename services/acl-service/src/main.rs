@@ -49,8 +49,17 @@ async fn graphql_handler(
     req: GraphQLRequest,
 ) -> GraphQLResponse {
     let mut request = req.0;
-    request = request.data(db.clone());
-    request = request.data(headers.clone());
+
+    // let mut data = async_graphql::Data::default();
+    // data.insert(db.clone());
+    // data.insert(headers.clone());
+    // request = request.data(data);
+    let db = db.clone();
+    let headers = headers.clone();
+
+    request = request.data(db);
+    request = request.data(headers);
+    tracing::debug!("Request data set!");
     let operation_name = request.operation_name.clone();
 
     // Log request info
@@ -138,7 +147,9 @@ async fn main() -> Result<()> {
     // let the thread panic if database connection fails
     let db = Arc::new(database::connection::create_db_connection().await.unwrap());
 
-    let schema = Schema::build(Query, Mutation, EmptySubscription).finish();
+    let schema = Schema::build(Query, Mutation, EmptySubscription)
+        .limit_depth(5)
+        .finish();
 
     // Bring in some needed env vars
     let allowed_services_cors = env::var("ALLOWED_SERVICES_CORS")
