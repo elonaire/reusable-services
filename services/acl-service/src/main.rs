@@ -147,17 +147,25 @@ async fn main() -> Result<()> {
     // let the thread panic if database connection fails
     let db = Arc::new(database::connection::create_db_connection().await.unwrap());
 
-    let schema = Schema::build(Query, Mutation, EmptySubscription)
-        .limit_depth(5)
-        .finish();
-
     // Bring in some needed env vars
+    let deployment_env = env::var("ENVIRONMENT").unwrap_or_else(|_| "prod".to_string()); // default to production because it's the most secure
     let allowed_services_cors = env::var("ALLOWED_SERVICES_CORS")
         .expect("Missing the ALLOWED_SERVICES environment variable.");
     let acl_http_port =
         env::var("ACL_HTTP_PORT").expect("Missing the ACL_HTTP_PORT environment variable.");
     let acl_grpc_port =
         env::var("ACL_GRPC_PORT").expect("Missing the ACL_GRPC_PORT environment variable.");
+
+    // Initialize the schema builder
+    let mut schema_builder = Schema::build(Query, Mutation, EmptySubscription);
+
+    // Disable introspection & limit query depth in production
+    schema_builder = match deployment_env.as_str() {
+        "prod" => schema_builder.disable_introspection().limit_depth(5),
+        _ => schema_builder,
+    };
+
+    let schema = schema_builder.finish();
 
     let origins: Vec<HeaderValue> = allowed_services_cors
         .as_str()

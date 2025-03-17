@@ -24,19 +24,6 @@ impl FilesServiceImplementation {
 #[tonic::async_trait]
 impl FilesService for FilesServiceImplementation {
     async fn get_file_id(&self, request: Request<FileName>) -> Result<Response<FileId>, Status> {
-        // if token != "Bearer my-secret-token" {
-        // return Err(Status::unauthenticated("Invalid token"));
-        // Sample client request
-        // async fn send_authenticated_request(mut client: EmailClient<Channel>) -> Result<(), Box<dyn std::error::Error>> {
-        //     let mut request = Request::new(SomeRequest {});
-        //     let token: MetadataValue<_> = "Bearer my-secret-token".parse()?;
-
-        //     request.metadata_mut().insert("authorization", token);
-        //     let _response = client.some_method(request).await?;
-
-        //     Ok(())
-        // }
-        // }
         match utils::files::get_file_id(&self.db, request.into_inner().file_name).await {
             Ok(file_id) => Ok(Response::new(FileId { file_id })),
             Err(_e) => Err(Status::internal("Failed")),

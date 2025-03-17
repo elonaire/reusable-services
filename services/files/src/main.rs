@@ -80,16 +80,26 @@ async fn main() -> Result<()> {
     dotenv().ok();
     let db = Arc::new(database::connection::create_db_connection().await.unwrap());
 
-    let schema = Schema::build(Query::default(), Mutation::default(), EmptySubscription)
-        .limit_depth(5)
-        .finish();
-
+    // Bring in some needed env vars
+    let deployment_env = env::var("ENVIRONMENT").unwrap_or_else(|_| "prod".to_string()); // default to production because it's the most secure
     let allowed_services_cors = env::var("ALLOWED_SERVICES_CORS")
         .expect("Missing the ALLOWED_SERVICES environment variable.");
     let files_http_port =
         env::var("FILES_HTTP_PORT").expect("Missing the FILES_HTTP_PORT environment variable.");
     let files_grpc_port =
         env::var("FILES_GRPC_PORT").expect("Missing the FILES_GRPC_PORT environment variable.");
+
+    // Initialize the schema builder
+    let mut schema_builder =
+        Schema::build(Query::default(), Mutation::default(), EmptySubscription);
+
+    // Disable introspection & limit query depth in production
+    schema_builder = match deployment_env.as_str() {
+        "prod" => schema_builder.disable_introspection().limit_depth(5),
+        _ => schema_builder,
+    };
+
+    let schema = schema_builder.finish();
 
     let origins: Vec<HeaderValue> = allowed_services_cors
         .as_str()
