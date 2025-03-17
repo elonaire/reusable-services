@@ -14,7 +14,7 @@ RUN apk update && apk add --no-cache \
     musl-dev \
     openssl-dev \
     cmake \
-    ninja
+    samurai
 
 RUN rustup default stable
 
@@ -24,7 +24,7 @@ WORKDIR /app
 COPY . .
 
 # Build for release
-RUN cargo build --release --package ${SERVICE_NAME}
+RUN cargo build --release --target x86_64-unknown-linux-musl --package ${SERVICE_NAME}
 
 # Final stage: use a lightweight image
 FROM alpine:latest
@@ -49,7 +49,7 @@ RUN adduser -D myuser
 USER myuser
 
 # Copy the binary from the builder stage
-COPY --from=0 /app/target/release/${SERVICE_NAME} .
+COPY --from=0 /app/target/x86_64-unknown-linux-musl/release/${SERVICE_NAME} .
 
 # Expose the port
 EXPOSE ${PORT}
