@@ -12,7 +12,9 @@ ENV SERVICE_NAME=${SERVICE_NAME}
 RUN apk update && apk add --no-cache \
     perl    \
     musl-dev \
-    openssl-dev
+    openssl-dev \
+    cmake \
+    ninja-build
 
 RUN rustup default stable
 
