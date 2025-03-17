@@ -16,6 +16,10 @@ RUN apk update && apk add --no-cache \
     cmake \
     samurai
 
+
+# Install target
+RUN rustup target add x86_64-unknown-linux-musl
+
 RUN rustup default stable
 
 WORKDIR /app
