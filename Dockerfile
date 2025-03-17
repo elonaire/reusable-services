@@ -14,7 +14,7 @@ RUN apk update && apk add --no-cache \
     musl-dev \
     openssl-dev \
     cmake \
-    samurai
+    ninja
 
 RUN rustup default stable
 
