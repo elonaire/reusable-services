@@ -27,7 +27,7 @@ WORKDIR /app
 COPY . .
 
 # Build for release
-RUN cargo build --release --target x86_64-unknown-linux-musl --package ${SERVICE_NAME}
+RUN RUST_BACKTRACE=1 cargo build --release --target x86_64-unknown-linux-musl --package ${SERVICE_NAME}
 
 # Final stage: use a lightweight image
 FROM alpine:latest
