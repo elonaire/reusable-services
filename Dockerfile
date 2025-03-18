@@ -1,7 +1,7 @@
 FROM rust:alpine
 
 ARG DEBIAN_FRONTEND=noninteractive
-ARG RUSTFLAGS='-C target-feature=-crt-static'
+# ARG RUSTFLAGS='-C target-feature=-crt-static'
 
 # Set the working directory to the service specified in the build argument
 ARG SERVICE_NAME
@@ -19,7 +19,7 @@ RUN apk update && apk add --no-cache \
 
 RUN rustup default stable
 # Install target
-RUN rustup target add x86_64-unknown-linux-musl
+# RUN rustup target add x86_64-unknown-linux-musl
 
 WORKDIR /app
 
@@ -27,7 +27,7 @@ WORKDIR /app
 COPY . .
 
 # Build for release
-RUN RUST_BACKTRACE=1 cargo build --release --target x86_64-unknown-linux-musl --package ${SERVICE_NAME}
+RUN RUST_BACKTRACE=1 cargo build --release --package ${SERVICE_NAME}
 
 # Final stage: use a lightweight image
 FROM alpine:latest
@@ -52,7 +52,7 @@ RUN adduser -D myuser
 USER myuser
 
 # Copy the binary from the builder stage
-COPY --from=0 /app/target/x86_64-unknown-linux-musl/release/${SERVICE_NAME} .
+COPY --from=0 /app/target/release/${SERVICE_NAME} .
 
 # Expose the port
 EXPOSE ${PORT}
