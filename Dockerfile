@@ -13,8 +13,7 @@ RUN apk update && apk add --no-cache \
     perl    \
     musl-dev \
     openssl-dev \
-    cmake \
-    samurai
+    protobuf-dev
 
 
 RUN rustup default stable
