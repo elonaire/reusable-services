@@ -25,7 +25,7 @@ WORKDIR /app
 COPY . .
 
 # Build for release
-RUN cargo build --release --package ${SERVICE_NAME}
+RUN RUST_BACKTRACE=full cargo build --release --package ${SERVICE_NAME}
 
 # Final stage: use a lightweight image
 FROM alpine:latest
