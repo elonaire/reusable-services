@@ -5,7 +5,7 @@ use chrono::{DateTime, Datelike, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use surrealdb::sql::Thing;
 
-use crate::middleware::oauth::OAuthClientName;
+use crate::utils::auth::OAuthClientName;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
 pub enum Gender {
@@ -262,4 +262,4 @@ pub struct UserUpdate {
     pub address: Option<String>,
 }
 
-pub type SurrealRelationQueryResponse<T> = HashMap<String, HashMap<String, Vec<T>>>;
+pub type SurrealRelationQueryResponse<T> = HashMap<String, Vec<T>>;

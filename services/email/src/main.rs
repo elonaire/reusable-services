@@ -1,9 +1,11 @@
 mod graphql;
-// mod database;
+mod grpc;
 mod rest;
+mod utils;
 
 use dotenvy::dotenv;
-use std::env;
+use std::{env, net::SocketAddr};
+use tonic::transport::Server;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 
 use async_graphql::{EmptySubscription, Schema};
@@ -27,6 +29,9 @@ use hyper::{
 
 // use serde::Deserialize;
 // use surrealdb::{engine::remote::ws::Client, Result, Surreal};
+use grpc::server::{
+    email_service::email_service_server::EmailServiceServer, EmailServiceImplementation,
+};
 use tower_http::cors::CorsLayer;
 
 use graphql::resolvers::mutation::Mutation;
@@ -70,10 +75,26 @@ async fn main() -> () {
     dotenv().ok();
     // let db = Arc::new(database::connection::create_db_connection().await.unwrap());
 
-    let schema = Schema::build(Query::default(), Mutation::default(), EmptySubscription).finish();
-
+    // Bring in some needed env vars
+    let deployment_env = env::var("ENVIRONMENT").unwrap_or_else(|_| "prod".to_string()); // default to production because it's the most secure
     let allowed_services_cors = env::var("ALLOWED_SERVICES_CORS")
         .expect("Missing the ALLOWED_SERVICES environment variable.");
+    let email_http_port =
+        env::var("EMAIL_HTTP_PORT").expect("Missing the EMAIL_HTTP_PORT environment variable.");
+    let email_grpc_port =
+        env::var("EMAIL_GRPC_PORT").expect("Missing the EMAIL_GRPC_PORT environment variable.");
+
+    // Initialize the schema builder
+    let mut schema_builder =
+        Schema::build(Query::default(), Mutation::default(), EmptySubscription);
+
+    // Disable introspection & limit query depth in production
+    schema_builder = match deployment_env.as_str() {
+        "prod" => schema_builder.disable_introspection().limit_depth(5),
+        _ => schema_builder,
+    };
+
+    let schema = schema_builder.finish();
 
     let origins: Vec<HeaderValue> = allowed_services_cors
         .as_str()
@@ -86,7 +107,11 @@ async fn main() -> () {
     let file_appender = tracing_appender::rolling::daily("./logs", "email.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
-    let stdout = std::io::stdout.with_max_level(tracing::Level::DEBUG); // Log to console at DEBUG level
+    let stdout = std::io::stdout
+        .with_filter(|meta| {
+            meta.target() != "h2::codec::framed_write" && meta.target() != "h2::codec::framed_read"
+        })
+        .with_max_level(tracing::Level::DEBUG); // Log to console at DEBUG level
 
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::DEBUG)
@@ -118,7 +143,25 @@ async fn main() -> () {
                 .allow_methods(vec![Method::GET, Method::POST]),
         );
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3019").await.unwrap();
+    // Set up the gRPC server
+    let email_grpc = EmailServiceImplementation::default();
+    let grpc_address: SocketAddr = format!("[::1]:{}", email_grpc_port)
+        .as_str()
+        .parse()
+        .unwrap();
+
+    tokio::spawn(async move {
+        // let the thread panic if gRPC server fails to start
+        Server::builder()
+            .add_service(EmailServiceServer::new(email_grpc))
+            .serve(grpc_address)
+            .await
+            .unwrap();
+    });
+
+    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", email_http_port))
+        .await
+        .unwrap();
     serve(listener, app).await.unwrap();
 
     // Ok(())

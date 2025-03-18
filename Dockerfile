@@ -1,4 +1,4 @@
-FROM rust:1.83-alpine3.20
+FROM rust:alpine
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG RUSTFLAGS='-C target-feature=-crt-static'
@@ -12,9 +12,12 @@ ENV SERVICE_NAME=${SERVICE_NAME}
 RUN apk update && apk add --no-cache \
     perl    \
     musl-dev \
-    openssl-dev
+    openssl-dev \
+    cmake \
+    samurai
 
-RUN rustup default nightly-2024-08-08
+
+RUN rustup default stable
 
 WORKDIR /app
 

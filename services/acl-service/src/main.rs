@@ -1,9 +1,10 @@
 mod database;
 mod graphql;
-mod middleware;
+mod grpc;
+mod utils;
 
 use core::panic;
-use std::{env, sync::Arc, vec};
+use std::{env, net::SocketAddr, sync::Arc, vec};
 
 use async_graphql::{EmptySubscription, Schema};
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
@@ -15,6 +16,7 @@ use axum::{
 };
 
 use graphql::resolvers::query::Query;
+use grpc::server::{acl_service::acl_server::AclServer, AclServiceImplementation};
 use hyper::{
     header::{
         ACCEPT, ACCESS_CONTROL_ALLOW_CREDENTIALS, ACCESS_CONTROL_ALLOW_HEADERS,
@@ -24,17 +26,18 @@ use hyper::{
     Method,
 };
 use oauth2::{
-    basic::BasicTokenType, reqwest::async_http_client, AuthorizationCode, EmptyExtraTokenFields,
-    PkceCodeVerifier, StandardTokenResponse,
+    basic::BasicTokenType, AuthorizationCode, EmptyExtraTokenFields, PkceCodeVerifier,
+    StandardTokenResponse,
 };
 use serde::Deserialize;
 use surrealdb::{engine::remote::ws::Client, Result, Surreal};
+use tonic::transport::Server;
 use tower_http::cors::CorsLayer;
 
 use graphql::resolvers::mutation::Mutation;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 
-use crate::middleware::oauth::{initiate_auth_code_grant_flow, OAuthClientName};
+use crate::utils::auth::{initiate_auth_code_grant_flow, OAuthClientName};
 use lib::utils::cookie_parser::parse_cookies;
 
 type MySchema = Schema<Query, Mutation, EmptySubscription>;
@@ -46,8 +49,17 @@ async fn graphql_handler(
     req: GraphQLRequest,
 ) -> GraphQLResponse {
     let mut request = req.0;
-    request = request.data(db.clone());
-    request = request.data(headers.clone());
+
+    // let mut data = async_graphql::Data::default();
+    // data.insert(db.clone());
+    // data.insert(headers.clone());
+    // request = request.data(data);
+    let db = db.clone();
+    let headers = headers.clone();
+
+    request = request.data(db);
+    request = request.data(headers);
+    tracing::debug!("Request data set!");
     let operation_name = request.operation_name.clone();
 
     // Log request info
@@ -112,12 +124,18 @@ async fn oauth_handler(
     let pkce_verifier = PkceCodeVerifier::new(pcke_verifier_secret.to_string());
     let auth_code = AuthorizationCode::new(params.0.code.clone().unwrap());
 
+    let http_client = reqwest::ClientBuilder::new()
+        // Following redirects opens the client up to SSRF vulnerabilities.
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("Client should build");
+
     // Now you can trade it for an access token.
     let token_result = oauth_client
         .exchange_code(auth_code)
         // Set the PKCE code verifier.
         .set_pkce_verifier(pkce_verifier)
-        .request_async(async_http_client)
+        .request_async(&http_client)
         .await
         .unwrap();
 
@@ -126,12 +144,28 @@ async fn oauth_handler(
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // let the thread panic if database connection fails
     let db = Arc::new(database::connection::create_db_connection().await.unwrap());
 
-    let schema = Schema::build(Query, Mutation, EmptySubscription).finish();
-
+    // Bring in some needed env vars
+    let deployment_env = env::var("ENVIRONMENT").unwrap_or_else(|_| "prod".to_string()); // default to production because it's the most secure
     let allowed_services_cors = env::var("ALLOWED_SERVICES_CORS")
         .expect("Missing the ALLOWED_SERVICES environment variable.");
+    let acl_http_port =
+        env::var("ACL_HTTP_PORT").expect("Missing the ACL_HTTP_PORT environment variable.");
+    let acl_grpc_port =
+        env::var("ACL_GRPC_PORT").expect("Missing the ACL_GRPC_PORT environment variable.");
+
+    // Initialize the schema builder
+    let mut schema_builder = Schema::build(Query, Mutation, EmptySubscription);
+
+    // Disable introspection & limit query depth in production
+    schema_builder = match deployment_env.as_str() {
+        "prod" => schema_builder.disable_introspection().limit_depth(5),
+        _ => schema_builder,
+    };
+
+    let schema = schema_builder.finish();
 
     let origins: Vec<HeaderValue> = allowed_services_cors
         .as_str()
@@ -144,7 +178,11 @@ async fn main() -> Result<()> {
     let file_appender = tracing_appender::rolling::daily("./logs", "acl.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
-    let stdout = std::io::stdout.with_max_level(tracing::Level::DEBUG); // Log to console at DEBUG level
+    let stdout = std::io::stdout
+        .with_filter(|meta| {
+            meta.target() != "h2::codec::framed_write" && meta.target() != "h2::codec::framed_read"
+        })
+        .with_max_level(tracing::Level::DEBUG); // Log to console at DEBUG level
 
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::DEBUG)
@@ -155,7 +193,7 @@ async fn main() -> Result<()> {
         .route("/", post(graphql_handler))
         .route("/oauth/callback", get(oauth_handler))
         .layer(Extension(schema))
-        .layer(Extension(db))
+        .layer(Extension(db.clone()))
         .layer(
             CorsLayer::new()
                 .allow_origin(origins)
@@ -176,8 +214,24 @@ async fn main() -> Result<()> {
                 .allow_methods(vec![Method::GET, Method::POST]),
         );
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3007").await.unwrap();
-    serve(listener, app).await.unwrap();
+    // Set up the gRPC server
+    let acl_grpc = AclServiceImplementation::new(db.clone());
+    let grpc_address: SocketAddr = format!("[::1]:{}", acl_grpc_port).as_str().parse().unwrap();
+
+    tokio::spawn(async move {
+        // let the thread panic if gRPC server fails to start
+        Server::builder()
+            .add_service(AclServer::new(acl_grpc))
+            .serve(grpc_address)
+            .await
+            .unwrap();
+    });
+
+    // Set up the http server and start it; let the thread panic if http server fails to start
+    let http_listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", acl_http_port))
+        .await
+        .unwrap();
+    let _http_server = serve(http_listener, app).await.unwrap();
 
     Ok(())
 }

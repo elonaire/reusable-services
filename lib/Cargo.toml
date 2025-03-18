@@ -6,11 +6,19 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-cookie = "0.18.0"
-async-graphql = "7.0.7"
-serde = "1.0.204"
-jwt-simple = "0.11.9"
-axum = "0.7.5"
-surrealdb = "2.1.4"
-hyper = "1.4.1"
+cookie = "0.18.1"
+async-graphql = "7.0.15"
+async-graphql-axum = "7.0.15"
+serde = "1.0.218"
+jwt-simple = "0.12.12"
+axum = "0.8.1"
+surrealdb = "2.2.1"
+hyper = "1.6.0"
 gql_client = "1.0.7"
+tonic = "0.12.3"
+prost = "0.13.5"
+tracing = "0.1.41"
+async-trait = "0.1.87"
+
+[build-dependencies]
+tonic-build = "*"

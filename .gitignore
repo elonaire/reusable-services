@@ -5,3 +5,4 @@ history.txt
 prod.env
 /services/files/src/uploads
 /services/**/logs
+/services/**/src/database/schemas/users.surql

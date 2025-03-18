@@ -27,8 +27,8 @@ pub async fn create_db_connection() -> Result<Surreal<Client>> {
 
     // Authenticate as root
     db.signin(Root {
-        username: db_user.clone().as_str(),
-        password: db_password.clone().as_str(),
+        username: db_user.as_str(),
+        password: db_password.as_str(),
     })
     .await?;
 
