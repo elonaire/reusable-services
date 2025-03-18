@@ -1,7 +1,7 @@
 FROM rust:alpine
 
 ARG DEBIAN_FRONTEND=noninteractive
-# ARG RUSTFLAGS='-C target-feature=-crt-static'
+ARG RUSTFLAGS='-C target-feature=-crt-static'
 
 # Set the working directory to the service specified in the build argument
 ARG SERVICE_NAME
@@ -18,8 +18,6 @@ RUN apk update && apk add --no-cache \
 
 
 RUN rustup default stable
-# Install target
-# RUN rustup target add x86_64-unknown-linux-musl
 
 WORKDIR /app
 
@@ -27,7 +25,7 @@ WORKDIR /app
 COPY . .
 
 # Build for release
-RUN RUST_BACKTRACE=1 cargo build --release --package ${SERVICE_NAME}
+RUN cargo build --release --package ${SERVICE_NAME}
 
 # Final stage: use a lightweight image
 FROM alpine:latest

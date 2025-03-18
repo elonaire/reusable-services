@@ -9,7 +9,6 @@ use lib::utils::{
 use std::{
     collections::HashMap,
     io::{Error, ErrorKind},
-    // time::Duration,
 };
 use std::{env, sync::Arc};
 use surrealdb::{engine::remote::ws::Client as SurrealClient, Surreal};
