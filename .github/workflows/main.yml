@@ -103,16 +103,29 @@ jobs:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
 
-      - name: Set up Docker Buildx
+      - name: Set up Docker Buildx(amd64)
         uses: docker/setup-buildx-action@v3
-        # with:
-        #   version: "lab:latest"
-        #   driver: cloud
-        #   endpoint: "elonaire/elonaire-builder"
+        with:
+          #   version: "lab:latest"
+          #   driver: cloud
+          #   endpoint: "elonaire/elonaire-builder"
+          platforms: linux/amd64
 
       - name: Build the Docker image
         run: |
-          docker buildx build --platform linux/amd64,linux/arm64 --build-arg SERVICE_NAME=acl-service --build-arg PORT=3007 -t elonaire/acl-service:latest --provenance=mode=max --sbom=true --push .
+          docker buildx build --platform linux/amd64 --build-arg SERVICE_NAME=acl-service --build-arg PORT=3007 -t elonaire/acl-service:latest --provenance=mode=max --sbom=true --push .
+
+      - name: Set up Docker Buildx(arm64)
+        uses: docker/setup-buildx-action@v3
+        with:
+          #   version: "lab:latest"
+          #   driver: cloud
+          #   endpoint: "elonaire/elonaire-builder"
+          platforms: linux/arm64
+
+      - name: Build the Docker image
+        run: |
+          docker buildx build --platform linux/arm64 --build-arg SERVICE_NAME=acl-service --build-arg PORT=3007 -t elonaire/acl-service:latest --provenance=mode=max --sbom=true --push .
 
   build_and_deploy_email_service:
     runs-on: ubuntu-latest
