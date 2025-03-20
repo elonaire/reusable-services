@@ -94,7 +94,6 @@ async fn oauth_handler(
     params: AxumQuery<Params>,
     headers: HeaderMap,
 ) -> Json<StandardTokenResponse<EmptyExtraTokenFields, BasicTokenType>> {
-    // println!("params: {:?}", params.0);
     // get the csrf state from the cookie
     // Extract the csrf_state, oauth_client, pkce_verifier cookies
     // Extract cookies from the headers
