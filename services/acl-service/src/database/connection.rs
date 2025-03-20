@@ -6,7 +6,7 @@ use dotenvy::dotenv;
 use surrealdb::{
     engine::remote::ws::{Client, Ws},
     opt::auth::Root,
-    Result, Surreal,
+    Error, Result, Surreal,
 };
 
 pub async fn create_db_connection() -> Result<Surreal<Client>> {
@@ -23,7 +23,10 @@ pub async fn create_db_connection() -> Result<Surreal<Client>> {
     let db_url = format!("{}:{}", db_host, db_port);
     // format!("{}:{}", db_host, db_port).as_str()
     println!("DB URL: {}", db_url);
-    let db = Surreal::new::<Ws>(db_url).await?;
+    let db = Surreal::new::<Ws>(db_url).await.map_err(|e| {
+        tracing::error!("{}", e);
+        Error::from(e)
+    })?;
 
     // Authenticate as root
     db.signin(Root {
@@ -43,7 +46,10 @@ pub async fn create_db_connection() -> Result<Surreal<Client>> {
         std::env::var("DATABASE_SCHEMA_FILE_PATH").expect("DATABASE_SCHEMA_FILE_PATH not set");
 
     let schema = read_file_to_string(file_name.as_str());
-    db.query(schema.as_str()).await?;
+    db.query(schema.as_str()).await.map_err(|e| {
+        tracing::error!("{}", e);
+        Error::from(e)
+    })?;
 
     Ok(db)
 }
