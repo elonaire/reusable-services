@@ -4,8 +4,10 @@ mod rest;
 mod utils;
 
 use dotenvy::dotenv;
+use lib::middleware::auth::grpc::AuthMiddleware;
 use std::{env, net::SocketAddr};
 use tonic::transport::Server;
+use tonic_middleware::MiddlewareLayer;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 
 use async_graphql::{EmptySubscription, Schema};
@@ -149,10 +151,12 @@ async fn main() -> () {
         .as_str()
         .parse()
         .unwrap();
+    let tonic_auth_middleware = AuthMiddleware::default();
 
     tokio::spawn(async move {
         // let the thread panic if gRPC server fails to start
         Server::builder()
+            .layer(MiddlewareLayer::new(tonic_auth_middleware))
             .add_service(EmailServiceServer::new(email_grpc))
             .serve(grpc_address)
             .await

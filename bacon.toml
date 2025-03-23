@@ -83,7 +83,7 @@ allow_warnings = true
 background = false
 on_change_strategy = "kill_then_restart"
 default_watch = false
-watch = ["services/acl-service"]
+watch = ["services/acl-service", "lib"]
 
 [jobs.run-email]
 command = [
@@ -95,7 +95,7 @@ allow_warnings = true
 background = false
 on_change_strategy = "kill_then_restart"
 default_watch = false
-watch = ["services/email"]
+watch = ["services/email", "lib"]
 
 [jobs.run-files]
 command = [
@@ -107,7 +107,7 @@ allow_warnings = true
 background = false
 on_change_strategy = "kill_then_restart"
 default_watch = false
-watch = ["services/files"]
+watch = ["services/files", "lib"]
 
 # This parameterized job runs the example of your choice, as soon
 # as the code compiles.

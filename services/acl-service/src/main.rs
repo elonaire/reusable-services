@@ -32,13 +32,14 @@ use oauth2::{
 use serde::Deserialize;
 use surrealdb::{engine::remote::ws::Client, Result, Surreal};
 use tonic::transport::Server;
+use tonic_middleware::MiddlewareLayer;
 use tower_http::cors::CorsLayer;
 
 use graphql::resolvers::mutation::Mutation;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 
 use crate::utils::auth::{initiate_auth_code_grant_flow, OAuthClientName};
-use lib::utils::cookie_parser::parse_cookies;
+use lib::{middleware::auth::grpc::AuthMiddleware, utils::cookie_parser::parse_cookies};
 
 type MySchema = Schema<Query, Mutation, EmptySubscription>;
 
@@ -216,10 +217,12 @@ async fn main() -> Result<()> {
     // Set up the gRPC server
     let acl_grpc = AclServiceImplementation::new(db.clone());
     let grpc_address: SocketAddr = format!("[::1]:{}", acl_grpc_port).as_str().parse().unwrap();
+    // let tonic_auth_middleware = AuthMiddleware::default();
 
     tokio::spawn(async move {
         // let the thread panic if gRPC server fails to start
         Server::builder()
+            // .layer(MiddlewareLayer::new(tonic_auth_middleware))
             .add_service(AclServer::new(acl_grpc))
             .serve(grpc_address)
             .await

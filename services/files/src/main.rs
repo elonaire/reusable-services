@@ -27,7 +27,7 @@ use hyper::{
     Method,
 };
 
-use lib::middleware::auth::rest::handle_auth_with_refresh;
+use lib::middleware::auth::{grpc::AuthMiddleware, rest::handle_auth_with_refresh};
 use rest::handlers::{download_file, get_image, upload};
 // use serde::Deserialize;
 use grpc::server::{
@@ -35,6 +35,7 @@ use grpc::server::{
 };
 use surrealdb::{engine::remote::ws::Client, Result, Surreal};
 use tonic::transport::Server;
+use tonic_middleware::MiddlewareLayer;
 use tower_http::cors::CorsLayer;
 
 use graphql::resolvers::mutation::Mutation;
@@ -158,10 +159,12 @@ async fn main() -> Result<()> {
         .as_str()
         .parse()
         .unwrap();
+    let tonic_auth_middleware = AuthMiddleware::default();
 
     tokio::spawn(async move {
         // let the thread panic if gRPC server fails to start
         Server::builder()
+            .layer(MiddlewareLayer::new(tonic_auth_middleware))
             .add_service(FilesServiceServer::new(files_grpc))
             .serve(grpc_address)
             .await
