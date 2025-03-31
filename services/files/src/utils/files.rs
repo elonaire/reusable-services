@@ -1,6 +1,6 @@
 use std::io::{Error, ErrorKind};
 
-use lib::utils::custom_traits::AsSurrealClient;
+use lib::utils::{custom_traits::AsSurrealClient, models::PurchaseFileDetails};
 
 use crate::graphql::schemas::general::UploadedFile;
 
@@ -70,4 +70,41 @@ pub async fn get_system_filename<T: Clone + AsSurrealClient>(
         Some(file) => Ok(file.system_filename),
         None => Err(Error::new(ErrorKind::InvalidData, "Invalid parameters!")),
     }
+}
+
+pub async fn purchase_file<T: Clone + AsSurrealClient>(
+    db: &T,
+    purchase_details: PurchaseFileDetails,
+) -> Result<bool, Error> {
+    let _purchase_file_query = db
+        .as_client()
+        .query(
+            "
+        BEGIN TRANSACTION;
+        LET $file_thing = type::thing($file_id);
+        LET $user = (SELECT * FROM ONLY user_id WHERE user_id = $user_id LIMIT 1);
+
+        LET $purchased_file = (RELATE $user -> bought_file -> $file_thing RETURN AFTER);
+
+        RETURN $purchased_file;
+        COMMIT TRANSACTION;
+        ",
+        )
+        .bind((
+            "file_id",
+            format!("file:{}", purchase_details.file_id.clone()),
+        ))
+        .bind(("user_id", purchase_details.buyer_id.clone()))
+        .await
+        .map_err(|e| {
+            tracing::error!("Error: {}", e);
+            Error::new(ErrorKind::Other, "DB Query failed")
+        })?;
+
+    // let response: Option<_> = purchase_file_query.take(0).map_err(|e| {
+    //     tracing::error!("Error: {}", e);
+    //     Error::new(ErrorKind::Other, "UploadedFile deserialization failed")
+    // })?;
+
+    Ok(true)
 }

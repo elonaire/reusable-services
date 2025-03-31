@@ -77,3 +77,9 @@ pub struct SendEmailResponse {
     #[serde(rename = "sendEmail")]
     pub send_email: String,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
+pub struct PurchaseFileDetails {
+    pub file_id: String,
+    pub buyer_id: String,
+}

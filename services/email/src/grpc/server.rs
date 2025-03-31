@@ -16,6 +16,15 @@ impl From<email_service::EmailUser> for lib::utils::models::EmailUser {
     }
 }
 
+// impl From<lib::utils::models::EmailUser> for email_service::EmailUser {
+//     fn from(user: lib::utils::models::EmailUser) -> Self {
+//         Self {
+//             full_name: user.full_name.unwrap_or_default(), // Convert Option<String> to String
+//             email_address: user.email_address,
+//         }
+//     }
+// }
+
 impl From<email_service::Email> for lib::utils::models::Email {
     fn from(email: email_service::Email) -> Self {
         Self {
@@ -32,6 +41,17 @@ impl From<email_service::Email> for lib::utils::models::Email {
         }
     }
 }
+
+// impl From<lib::utils::models::Email> for email_service::Email {
+//     fn from(email: lib::utils::models::Email) -> Self {
+//         Self {
+//             recipient: Some(email.recipient.into()), // Convert EmailUser back to email_service type
+//             subject: email.subject,
+//             title: email.title,
+//             body: email.body,
+//         }
+//     }
+// }
 
 #[derive(Debug, Default)]
 pub struct EmailServiceImplementation;

@@ -4,6 +4,7 @@ package files;
 service FilesService {
     rpc GetFileId(FileName) returns (FileId);
     rpc GetFileName(FileId) returns (FileName);
+    rpc PurchaseFile(PurchaseFileDetails) returns (PurchaseFileResponse);
 }
 
 message FileName {
@@ -14,4 +15,13 @@ message Empty {}
 
 message FileId {
     string file_id = 1;
+}
+
+message PurchaseFileDetails {
+    string file_id = 1;
+    string buyer_id = 2;
+}
+
+message PurchaseFileResponse {
+    bool success = 1;
 }

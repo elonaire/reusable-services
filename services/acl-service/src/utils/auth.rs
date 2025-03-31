@@ -36,7 +36,7 @@ use crate::graphql::schemas::{
     role::SystemRole,
     user::{
         AccountStatus, DecodedGithubOAuthToken, DecodedGoogleOAuthToken,
-        SurrealRelationQueryResponse, User, UserLogins,
+        SurrealRelationQueryResponse, User, UserLogins, UserOutput,
     },
 };
 
@@ -646,4 +646,26 @@ pub async fn sign_jwt<T: Clone + AsSurrealClient>(
     token_claims.subject = Some(user.id.as_ref().map(|t| &t.id).expect("id").to_raw());
 
     Ok(converted_key.authenticate(token_claims).unwrap())
+}
+
+pub async fn get_user_email<T: Clone + AsSurrealClient>(
+    db: &T,
+    user_id: &str,
+) -> Result<String, Error> {
+    let result: Option<UserOutput> =
+        db.as_client()
+            .select(("user", user_id))
+            .await
+            .map_err(|e| {
+                tracing::error!("{}", e);
+                Error::new(ErrorKind::Other, "Database query failed")
+            })?;
+
+    match result {
+        Some(user) => Ok(user.email),
+        None => Err(Error::new(
+            ErrorKind::PermissionDenied,
+            "Invalid username or password",
+        )),
+    }
 }
