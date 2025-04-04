@@ -64,14 +64,16 @@ pub async fn create_grpc_client<'a, R, T: GrpcClient>(
     auth_metadata: Option<AuthMetaData<'_, R>>,
 ) -> Result<T, StdError> {
     if is_authenticated {
-        authenticate::<R>(auth_metadata.unwrap()).await?;
+        add_auth_headers_to_request::<R>(auth_metadata.unwrap()).await?;
     }
     T::connect(endpoint)
         .await
         .map_err(|_e| StdError::new(ErrorKind::InvalidData, "Invalid header"))
 }
 
-async fn authenticate<R>(mut auth_metadata: AuthMetaData<'_, R>) -> Result<(), StdError> {
+async fn add_auth_headers_to_request<R>(
+    mut auth_metadata: AuthMetaData<'_, R>,
+) -> Result<(), StdError> {
     let token: MetadataValue<_> = auth_metadata
         .auth_header
         .unwrap()
