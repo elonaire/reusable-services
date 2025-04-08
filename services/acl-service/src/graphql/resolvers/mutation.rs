@@ -229,36 +229,38 @@ impl Mutation {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
         let header_map = ctx.data_opt::<HeaderMap>();
 
-        let check_auth = confirm_auth(header_map, db).await;
+        let check_auth = confirm_auth(header_map, db).await?;
 
-        match check_auth {
-            Ok(_) => {
-                let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
+        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
 
-                let user_id_from_token = get_user_id_from_token(ctx).await.unwrap();
+        // let user_id_from_token = get_user_id_from_token(ctx).await.unwrap();
 
-                if user_id_from_token != user_id {
-                    return Err(Error::new("Unauthorized"));
-                }
-
-                if user.password.is_some() {
-                    user.password =
-                        Some(bcrypt::hash(user.password.unwrap(), bcrypt::DEFAULT_COST).unwrap());
-                }
-
-                let response: Option<User> = db
-                    .update(("user", user_id.clone()))
-                    .merge(user)
-                    .await
-                    .map_err(|e| Error::new(e.to_string()))?;
-
-                match response {
-                    Some(user) => Ok(user),
-                    None => Err(Error::new("User not found")),
-                }
-            }
-            _ => return Err(Error::new("Unauthorized")),
+        if check_auth.sub != user_id {
+            return Err(Error::new("Unauthorized"));
         }
+
+        if user.password.is_some() {
+            user.password =
+                Some(bcrypt::hash(user.password.unwrap(), bcrypt::DEFAULT_COST).unwrap());
+        }
+
+        let response: Option<User> = db
+            .update(("user", user_id.clone()))
+            .merge(user)
+            .await
+            .map_err(|e| Error::new(e.to_string()))?;
+
+        match response {
+            Some(user) => Ok(user),
+            None => Err(Error::new("User not found")),
+        }
+
+        // match check_auth {
+        //     Ok(_) => {
+
+        //     }
+        //     _ => return Err(Error::new("Unauthorized")),
+        // }
     }
 
     pub async fn update_user_password(

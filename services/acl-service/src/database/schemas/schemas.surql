@@ -28,7 +28,7 @@ DEFINE EVENT user_created ON TABLE user WHEN $event = "CREATE" THEN (
     fn::assign_default_role($after.id)
 );
 DEFINE FIELD status ON TABLE user TYPE string
-  DEFAULT "Active"
+  DEFAULT "Inactive"
 -- Allow only these values in the array
   ASSERT $value INSIDE ["Active", "Inactive", "Suspended", "Deleted"];
 DEFINE FIELD oauth_client ON TABLE user TYPE option<string>
@@ -37,13 +37,15 @@ DEFINE FIELD oauth_client ON TABLE user TYPE option<string>
 DEFINE FIELD address ON TABLE user TYPE option<string>
   DEFAULT None;
 DEFINE FIELD profile_picture ON TABLE user TYPE option<string>
+  ASSERT string::is::url($value)
   DEFAULT None;
 DEFINE FIELD bio ON TABLE user TYPE option<string>
   DEFAULT None;
 DEFINE FIELD website ON TABLE user TYPE option<string>
+  ASSERT string::is::url($value)
   DEFAULT None;
 DEFINE FIELD created_at ON TABLE user TYPE datetime
-  DEFAULT time::now();
+  DEFAULT time::now() READONLY;
 DEFINE FIELD updated_at ON TABLE user TYPE datetime
   VALUE time::now();
 
@@ -55,7 +57,7 @@ DEFINE FIELD role_name ON TABLE role TYPE string
   ASSERT $value INSIDE ["Admin", "User", "Guest"];
 DEFINE INDEX roleNameIndex ON TABLE role COLUMNS role_name UNIQUE;
 DEFINE FIELD created_at ON TABLE role TYPE datetime
-  DEFAULT time::now();
+  DEFAULT time::now() READONLY;
 DEFINE FIELD updated_at ON TABLE role TYPE datetime
   VALUE time::now();
 

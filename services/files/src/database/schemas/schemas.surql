@@ -16,7 +16,7 @@ DEFINE FIELD is_free ON TABLE file TYPE bool DEFAULT true;
 DEFINE FIELD mime_type ON TABLE file TYPE string;
 DEFINE FIELD owner ON TABLE file TYPE record<user_id>;
 DEFINE FIELD created_at ON TABLE file TYPE datetime
-  DEFAULT time::now();
+  DEFAULT time::now() READONLY;
 
 -- Relationship between product and file
 DEFINE TABLE bought_file SCHEMAFULL TYPE RELATION IN user_id OUT file;
@@ -27,7 +27,7 @@ DEFINE FIELD out ON TABLE bought_file TYPE record<file>;
 
 /* Migrations */
 -- Migration for file table
-UPDATE file SET system_filename = "" WHERE system_filename IS NONE;
+-- UPDATE file SET system_filename = "" WHERE system_filename IS NONE;
 
 -- Migration for file table
-UPDATE file SET is_free = true WHERE is_free IS NONE;
+-- UPDATE file SET is_free = true WHERE is_free IS NONE;
