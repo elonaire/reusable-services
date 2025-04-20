@@ -80,12 +80,12 @@ pub async fn send_email(email: &Email) -> Result<&'static str, Error> {
                     background-color: #FFB161;
                     padding: 10px;
                     text-align: center;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
                 }}
                 .header img {{
                     width: 200px;
+                }}
+                .title {{
+                    text-align: center;
                 }}
                 .content {{
                     padding: 20px;
@@ -109,7 +109,7 @@ pub async fn send_email(email: &Email) -> Result<&'static str, Error> {
                 <!-- Main content -->
                 <div class="content">
                     <!-- Replace the content below with your email-specific content -->
-                    <h1>{email_title}</h1>
+                    <h1 class="title">{email_title}</h1>
                     {email_content}
                     <!-- End of email-specific content -->
                 </div>
