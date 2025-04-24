@@ -27,12 +27,13 @@ use hyper::{
     Method,
 };
 
-use lib::middleware::auth::{grpc::AuthMiddleware, rest::handle_auth_with_refresh};
+use lib::{
+    integration::grpc::clients::files_service::files_service_server::FilesServiceServer,
+    middleware::auth::{grpc::AuthMiddleware, rest::handle_auth_with_refresh},
+};
 use rest::handlers::{download_file, get_image, upload};
 // use serde::Deserialize;
-use grpc::server::{
-    files_service::files_service_server::FilesServiceServer, FilesServiceImplementation,
-};
+use grpc::server::FilesServiceImplementation;
 use surrealdb::{engine::remote::ws::Client, Result, Surreal};
 use tonic::transport::Server;
 use tonic_middleware::MiddlewareLayer;

@@ -16,7 +16,7 @@ use axum::{
 };
 
 use graphql::resolvers::query::Query;
-use grpc::server::{acl_service::acl_server::AclServer, AclServiceImplementation};
+use grpc::server::AclServiceImplementation;
 use hyper::{
     header::{
         ACCEPT, ACCESS_CONTROL_ALLOW_CREDENTIALS, ACCESS_CONTROL_ALLOW_HEADERS,
@@ -32,14 +32,16 @@ use oauth2::{
 use serde::Deserialize;
 use surrealdb::{engine::remote::ws::Client, Result, Surreal};
 use tonic::transport::Server;
-use tonic_middleware::MiddlewareLayer;
 use tower_http::cors::CorsLayer;
 
 use graphql::resolvers::mutation::Mutation;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 
 use crate::utils::auth::{initiate_auth_code_grant_flow, OAuthClientName};
-use lib::{middleware::auth::grpc::AuthMiddleware, utils::cookie_parser::parse_cookies};
+use lib::{
+    integration::grpc::clients::acl_service::acl_server::AclServer,
+    utils::cookie_parser::parse_cookies,
+};
 
 type MySchema = Schema<Query, Mutation, EmptySubscription>;
 

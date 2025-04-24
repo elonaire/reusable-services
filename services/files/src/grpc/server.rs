@@ -1,16 +1,12 @@
 use std::sync::Arc;
 
-use files_service::{
+use lib::integration::grpc::clients::files_service::{
     files_service_server::FilesService, FileId, FileName, PurchaseFileDetails, PurchaseFileResponse,
 };
 use surrealdb::{engine::remote::ws::Client, Surreal};
 use tonic::{Request, Response, Status};
 
 use crate::utils;
-
-pub mod files_service {
-    tonic::include_proto!("files");
-}
 
 // #[derive(Debug, Default)]
 pub struct FilesServiceImplementation {
@@ -20,15 +16,6 @@ pub struct FilesServiceImplementation {
 impl FilesServiceImplementation {
     pub fn new(db: Arc<Surreal<Client>>) -> Self {
         Self { db }
-    }
-}
-
-impl From<files_service::PurchaseFileDetails> for lib::utils::models::PurchaseFileDetails {
-    fn from(file_details: files_service::PurchaseFileDetails) -> Self {
-        Self {
-            file_id: file_details.file_id, // Ensuring `Option<String>`
-            buyer_id: file_details.buyer_id,
-        }
     }
 }
 

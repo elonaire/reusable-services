@@ -4,7 +4,10 @@ mod rest;
 mod utils;
 
 use dotenvy::dotenv;
-use lib::middleware::auth::grpc::AuthMiddleware;
+use lib::{
+    integration::grpc::clients::email_service::email_service_server::EmailServiceServer,
+    middleware::auth::grpc::AuthMiddleware,
+};
 use std::{env, net::SocketAddr};
 use tonic::transport::Server;
 use tonic_middleware::MiddlewareLayer;
@@ -31,9 +34,7 @@ use hyper::{
 
 // use serde::Deserialize;
 // use surrealdb::{engine::remote::ws::Client, Result, Surreal};
-use grpc::server::{
-    email_service::email_service_server::EmailServiceServer, EmailServiceImplementation,
-};
+use grpc::server::EmailServiceImplementation;
 use tower_http::cors::CorsLayer;
 
 use graphql::resolvers::mutation::Mutation;

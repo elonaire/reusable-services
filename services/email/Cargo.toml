@@ -24,8 +24,5 @@ tonic = "0.12.3"
 prost = "0.13.5"
 tonic-middleware = "0.2.3"
 
-[build-dependencies]
-tonic-build = "0.12.3"
-
 [lints.rust]
 unsafe_code = "forbid"

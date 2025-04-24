@@ -1,8 +1,5 @@
 use std::{env, sync::Arc};
 
-use acl_service::{
-    acl_server::Acl, AuthDetails, AuthStatus, Empty, GetUserEmailRequest, GetUserEmailResponse,
-};
 use axum::http::HeaderValue;
 use hyper::header::{AUTHORIZATION, COOKIE};
 use hyper::HeaderMap;
@@ -15,9 +12,9 @@ use tonic::{Request, Response, Status};
 use crate::graphql::schemas::user::UserLogins;
 use crate::utils::auth::{confirm_auth, get_user_email, sign_jwt, verify_login_credentials};
 
-pub mod acl_service {
-    tonic::include_proto!("acl");
-}
+use lib::integration::grpc::clients::acl_service::{
+    acl_server::Acl, AuthDetails, AuthStatus, Empty, GetUserEmailRequest, GetUserEmailResponse,
+};
 
 // #[derive(Default)]
 pub struct AclServiceImplementation {
@@ -27,15 +24,6 @@ pub struct AclServiceImplementation {
 impl AclServiceImplementation {
     pub fn new(db: Arc<Surreal<Client>>) -> Self {
         Self { db }
-    }
-}
-
-impl From<lib::utils::models::AuthStatus> for acl_service::AuthStatus {
-    fn from(auth_status: lib::utils::models::AuthStatus) -> Self {
-        Self {
-            sub: auth_status.sub,
-            is_auth: auth_status.is_auth,
-        }
     }
 }
 
