@@ -8,7 +8,11 @@ use lib::{
     integration::grpc::clients::email_service::email_service_server::EmailServiceServer,
     middleware::auth::grpc::AuthMiddleware,
 };
-use std::{env, net::SocketAddr};
+use std::{
+    env,
+    io::{Error, ErrorKind},
+    net::SocketAddr,
+};
 use tonic::transport::Server;
 use tonic_middleware::MiddlewareLayer;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
@@ -74,7 +78,7 @@ async fn graphql_handler(
 }
 
 #[tokio::main]
-async fn main() -> () {
+async fn main() -> Result<(), Error> {
     dotenv().ok();
     // let db = Arc::new(database::connection::create_db_connection().await.unwrap());
 
@@ -161,13 +165,31 @@ async fn main() -> () {
             .add_service(EmailServiceServer::new(email_grpc))
             .serve(grpc_address)
             .await
-            .unwrap();
+            .map_err(|e| {
+                tracing::debug!("Failed to start gRPC server: {}", e);
+                Error::new(ErrorKind::ConnectionAborted, "Failed to start gRPC server")
+            })
+            .ok();
     });
 
-    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", email_http_port))
-        .await
-        .unwrap();
-    serve(listener, app).await.unwrap();
+    match tokio::net::TcpListener::bind(format!("0.0.0.0:{}", email_http_port)).await {
+        Ok(http_listener) => {
+            let _http_server = serve(http_listener, app)
+                .await
+                .map_err(|e| {
+                    tracing::debug!("Failed to create HTTP server: {}", e);
+                    Error::new(ErrorKind::ConnectionAborted, "Failed to create HTTP server")
+                })
+                .ok();
+        }
+        Err(e) => {
+            tracing::debug!("Failed to create TCP listener: {}", e);
+            return Err(Error::new(
+                ErrorKind::ConnectionAborted,
+                "Failed to create TCP listener",
+            ));
+        }
+    };
 
-    // Ok(())
+    Ok(())
 }
