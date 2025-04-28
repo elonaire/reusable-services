@@ -54,7 +54,7 @@ DEFINE TABLE role SCHEMAFULL;
 -- define some fields.
 DEFINE FIELD role_name ON TABLE role TYPE string
 -- Allow only these values in the array
-  ASSERT $value INSIDE ["Admin", "User", "Guest"];
+  ASSERT $value INSIDE ["SuperAdmin", "Admin", "User", "Guest"];
 DEFINE INDEX roleNameIndex ON TABLE role COLUMNS role_name UNIQUE;
 DEFINE FIELD created_at ON TABLE role TYPE datetime
   DEFAULT time::now() READONLY;
