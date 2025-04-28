@@ -181,29 +181,22 @@ async fn main() -> Result<(), Error> {
             .serve(grpc_address)
             .await
             .map_err(|e| {
-                tracing::debug!("Failed to start gRPC server: {}", e);
-                Error::new(ErrorKind::ConnectionAborted, "Failed to start gRPC server")
+                tracing::error!("Failed to start gRPC server: {}", e);
             })
             .ok();
     });
-
-    // let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", files_http_port))
-    //     .await
-    //     .unwrap();
-    // serve(listener, app).await.unwrap();
 
     match tokio::net::TcpListener::bind(format!("0.0.0.0:{}", files_http_port)).await {
         Ok(http_listener) => {
             let _http_server = serve(http_listener, app)
                 .await
                 .map_err(|e| {
-                    tracing::debug!("Failed to create HTTP server: {}", e);
-                    Error::new(ErrorKind::ConnectionAborted, "Failed to create HTTP server")
+                    tracing::error!("Failed to create HTTP server: {}", e);
                 })
                 .ok();
         }
         Err(e) => {
-            tracing::debug!("Failed to create TCP listener: {}", e);
+            tracing::error!("Failed to create TCP listener: {}", e);
             return Err(Error::new(
                 ErrorKind::ConnectionAborted,
                 "Failed to create TCP listener",
