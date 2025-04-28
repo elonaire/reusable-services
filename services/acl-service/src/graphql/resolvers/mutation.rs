@@ -13,8 +13,8 @@ use crate::{
         user::{AuthDetails, SurrealRelationQueryResponse, User, UserLogins, UserUpdate},
     },
     utils::auth::{
-        confirm_auth, decode_token, get_user_id_from_token, initiate_auth_code_grant_flow,
-        navigate_to_redirect_url, sign_jwt, verify_login_credentials,
+        confirm_auth, initiate_auth_code_grant_flow, navigate_to_redirect_url, sign_jwt,
+        verify_login_credentials,
     },
 };
 
@@ -204,22 +204,6 @@ impl Mutation {
         Ok(true)
     }
 
-    async fn decode_token(&self, ctx: &Context<'_>) -> Result<String> {
-        match ctx.data_opt::<HeaderMap>() {
-            Some(headers) => {
-                let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
-
-                let token_claims = decode_token(db, headers.get("Authorization").unwrap()).await;
-
-                match token_claims {
-                    Ok(token_claims) => Ok(token_claims.subject.unwrap()),
-                    Err(e) => Err(e.into()),
-                }
-            }
-            None => Err(Error::new("No headers found")),
-        }
-    }
-
     async fn update_user(
         &self,
         ctx: &Context<'_>,
@@ -232,8 +216,6 @@ impl Mutation {
         let check_auth = confirm_auth(header_map, db).await?;
 
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
-
-        // let user_id_from_token = get_user_id_from_token(ctx).await.unwrap();
 
         if check_auth.sub != user_id {
             return Err(Error::new("Unauthorized"));
@@ -254,13 +236,6 @@ impl Mutation {
             Some(user) => Ok(user),
             None => Err(Error::new("User not found")),
         }
-
-        // match check_auth {
-        //     Ok(_) => {
-
-        //     }
-        //     _ => return Err(Error::new("Unauthorized")),
-        // }
     }
 
     pub async fn update_user_password(

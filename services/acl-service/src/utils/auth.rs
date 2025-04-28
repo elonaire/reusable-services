@@ -1,4 +1,4 @@
-use axum::{http::HeaderValue, Extension};
+use axum::http::HeaderValue;
 use jwt_simple::prelude::*;
 use lib::utils::{
     auth::{AuthClaim, SymKey},
@@ -6,12 +6,11 @@ use lib::utils::{
     custom_traits::AsSurrealClient,
     models::AuthStatus,
 };
+use std::env;
 use std::{
     collections::HashMap,
     io::{Error, ErrorKind},
 };
-use std::{env, sync::Arc};
-use surrealdb::{engine::remote::ws::Client as SurrealClient, Surreal};
 
 use async_graphql::{Context, Enum};
 use dotenvy::dotenv;
@@ -39,8 +38,6 @@ use crate::graphql::schemas::{
         SurrealRelationQueryResponse, User, UserLogins, UserOutput,
     },
 };
-
-// use crate::SharedState;
 
 pub type OAuthClientInstance = Client<
     StandardErrorResponse<BasicErrorResponseType>,
@@ -254,25 +251,6 @@ pub async fn decode_token<T: Clone + AsSurrealClient>(
             }
         }
         None => Err(Error::new(ErrorKind::Other, "Invalid token format")),
-    }
-}
-
-/// A utility function to decode JWT tokens. Returns only the user id
-pub async fn get_user_id_from_token(ctx: &Context<'_>) -> Result<String, Error> {
-    match ctx.data_opt::<HeaderMap>() {
-        Some(headers) => {
-            let db = ctx
-                .data::<Extension<Arc<Surreal<SurrealClient>>>>()
-                .unwrap();
-
-            let token_claims = decode_token(db, headers.get("Authorization").unwrap()).await;
-
-            match token_claims {
-                Ok(token_claims) => Ok(token_claims.subject.unwrap()),
-                Err(e) => Err(e),
-            }
-        }
-        None => Err(Error::new(ErrorKind::Other, "No headers found")),
     }
 }
 

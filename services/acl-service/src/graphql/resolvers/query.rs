@@ -9,8 +9,6 @@ use surrealdb::{engine::remote::ws::Client, Surreal};
 
 use crate::{graphql::schemas::user::UserOutput, utils::auth::confirm_auth};
 
-// use super::mutation::AuthClaim;
-
 pub struct Query;
 
 #[Object]
@@ -47,21 +45,5 @@ impl Query {
         let header_map = ctx.data_opt::<HeaderMap>();
 
         confirm_auth(header_map, db).await.map_err(Error::from)
-    }
-
-    async fn get_user_email(&self, ctx: &Context<'_>, id: String) -> Result<String> {
-        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
-
-        let user: Option<UserOutput> = db
-            .select(("user", id.as_str()))
-            .await
-            .map_err(|e| Error::new(e.to_string()))?;
-
-        println!("user: {:?}", user);
-
-        match user {
-            Some(user) => Ok(user.email),
-            None => Err(Error::new("User not found")),
-        }
     }
 }
