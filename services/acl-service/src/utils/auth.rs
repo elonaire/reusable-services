@@ -255,6 +255,7 @@ pub async fn decode_token<T: Clone + AsSurrealClient>(
 }
 
 /// A utility function to confirm auth by parsing relevant headers. Useful for authenticating clients. Includes refresh token handling and OAuth
+// TODO: Pass an optional generic context parameter to support both REST and GraphQL refresh token handling - to attach new access token to context headers.
 pub async fn confirm_auth<T: Clone + AsSurrealClient>(
     header_map: Option<&HeaderMap>,
     db: &T,
