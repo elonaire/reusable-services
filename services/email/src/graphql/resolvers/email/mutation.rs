@@ -1,5 +1,6 @@
 use async_graphql::{Context, Object, Result};
-use lib::utils::models::Email;
+use hyper::StatusCode;
+use lib::utils::{custom_error::ExtendedError, models::Email};
 
 use crate::utils;
 
@@ -13,7 +14,14 @@ impl EmailMutation {
 
         match send_email_res {
             Ok(send_email_res) => Ok(send_email_res),
-            Err(e) => Err(e.into()),
+            Err(e) => {
+                tracing::error!("Error sending email: {}", e);
+                Err(ExtendedError::new(
+                    "Error sending email",
+                    Some(StatusCode::BAD_REQUEST.as_u16()),
+                )
+                .build())
+            }
         }
     }
 }

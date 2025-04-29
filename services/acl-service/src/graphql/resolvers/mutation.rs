@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use async_graphql::{Context, Error, Object, Result};
 use axum::Extension;
-use hyper::{header::SET_COOKIE, HeaderMap};
+use hyper::{header::SET_COOKIE, HeaderMap, StatusCode};
 use jwt_simple::prelude::*;
-use lib::utils::auth::AuthClaim;
+use lib::utils::{auth::AuthClaim, custom_error::ExtendedError};
 use surrealdb::{engine::remote::ws::Client, Surreal};
 
 use crate::{
@@ -13,8 +13,8 @@ use crate::{
         user::{AuthDetails, SurrealRelationQueryResponse, User, UserLogins, UserUpdate},
     },
     utils::auth::{
-        confirm_auth, decode_token, get_user_id_from_token, initiate_auth_code_grant_flow,
-        navigate_to_redirect_url, sign_jwt, verify_login_credentials,
+        confirm_auth, initiate_auth_code_grant_flow, navigate_to_redirect_url, sign_jwt,
+        verify_login_credentials,
     },
 };
 
@@ -36,41 +36,64 @@ impl Mutation {
         // User signup
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
 
-        let response: User = db
+        let response: Option<User> = db
             .create("user")
             .content(User {
                 oauth_client: None,
                 ..user
             })
             .await
-            .map_err(|e| Error::new(e.to_string()))?
-            .expect("Error creating user");
+            .map_err(|e| {
+                tracing::error!("Error creating user: {}", e);
+                ExtendedError::new("Failed to sign up", Some(StatusCode::BAD_REQUEST.as_u16()))
+                    .build()
+            })?;
 
-        Ok(response)
+        match response {
+            Some(user) => Ok(user),
+            None => Err(ExtendedError::new(
+                "Failed to sign up",
+                Some(StatusCode::BAD_REQUEST.as_u16()),
+            )
+            .build()),
+        }
     }
 
-    async fn create_user_role(
-        &self,
-        ctx: &Context<'_>,
-        role: SystemRole,
-    ) -> Result<Vec<SystemRole>> {
+    async fn create_user_role(&self, ctx: &Context<'_>, role: SystemRole) -> Result<SystemRole> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
         let header_map = ctx.data_opt::<HeaderMap>();
 
         let check_auth = confirm_auth(header_map, db).await;
 
-        match check_auth {
-            Ok(_) => {
-                let response = db
-                    .create("role")
-                    .content(SystemRole { ..role })
-                    .await
-                    .map_err(|e| Error::new(e.to_string()))?
-                    .expect("Error creating role");
+        if let Err(e) = check_auth {
+            tracing::error!("Unauthorized: {}", e);
+            return Err(ExtendedError::new(
+                "Unauthorized",
+                Some(StatusCode::UNAUTHORIZED.as_u16()),
+            )
+            .build());
+        }
 
-                Ok(response)
-            }
-            _ => return Err(Error::new("Unauthorized")),
+        let response: Option<SystemRole> = db
+            .create("role")
+            .content(SystemRole { ..role })
+            .await
+            .map_err(|e| {
+            tracing::error!("Error creating role: {}", e);
+            ExtendedError::new(
+                "Failed to create role",
+                Some(StatusCode::BAD_REQUEST.as_u16()),
+            )
+            .build()
+        })?;
+
+        match response {
+            Some(user) => Ok(user),
+            None => Err(ExtendedError::new(
+                "Failed to create role",
+                Some(StatusCode::BAD_REQUEST.as_u16()),
+            )
+            .build()),
         }
     }
 
@@ -115,9 +138,14 @@ impl Mutation {
                             .await
                             .map_err(|_e| Error::new("DB Query failed: Get Roles"))?;
                         let user_roles: Option<SurrealRelationQueryResponse<SystemRole>> =
-                            user_roles_res
-                                .take(0)
-                                .map_err(|e| Error::new(e.to_string()))?;
+                            user_roles_res.take(0).map_err(|e| {
+                                tracing::error!("Failed to get roles: {}", e);
+                                ExtendedError::new(
+                                    "Failed to get roles",
+                                    Some(StatusCode::BAD_REQUEST.as_u16()),
+                                )
+                                .build()
+                            })?;
 
                         let auth_claim = AuthClaim {
                             roles: match user_roles {
@@ -139,12 +167,26 @@ impl Mutation {
                         let token_str =
                             sign_jwt(db, &auth_claim, access_token_expiry_duration, user)
                                 .await
-                                .map_err(|_e| Error::new("DB Query failed"))?;
+                                .map_err(|e| {
+                                    tracing::error!("Failed to sign Access Token: {}", e);
+                                    ExtendedError::new(
+                                        "Internal Server Error",
+                                        Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
+                                    )
+                                    .build()
+                                })?;
 
                         let refresh_token_str =
                             sign_jwt(db, &auth_claim, refresh_token_expiry_duration, user)
                                 .await
-                                .map_err(|_e| Error::new("DB Query failed"))?;
+                                .map_err(|e| {
+                                    tracing::error!("Failed to sign Refresh Token: {}", e);
+                                    ExtendedError::new(
+                                        "Internal Server Error",
+                                        Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
+                                    )
+                                    .build()
+                                })?;
 
                         match ctx.data_opt::<HeaderMap>() {
                             Some(headers) => {
@@ -192,7 +234,11 @@ impl Mutation {
                             url: None,
                         })
                     }
-                    Err(_e) => Err(Error::new("Invalid username or password")),
+                    Err(_e) => Err(ExtendedError::new(
+                        "Invalid credentials",
+                        Some(StatusCode::UNAUTHORIZED.as_u16()),
+                    )
+                    .build()),
                 }
             }
         }
@@ -202,22 +248,6 @@ impl Mutation {
         // Clear the refresh token cookie
         ctx.insert_http_header(SET_COOKIE, format!("t=; Max-Age=0"));
         Ok(true)
-    }
-
-    async fn decode_token(&self, ctx: &Context<'_>) -> Result<String> {
-        match ctx.data_opt::<HeaderMap>() {
-            Some(headers) => {
-                let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
-
-                let token_claims = decode_token(db, headers.get("Authorization").unwrap()).await;
-
-                match token_claims {
-                    Ok(token_claims) => Ok(token_claims.subject.unwrap()),
-                    Err(e) => Err(e.into()),
-                }
-            }
-            None => Err(Error::new("No headers found")),
-        }
     }
 
     async fn update_user(
@@ -233,10 +263,12 @@ impl Mutation {
 
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
 
-        // let user_id_from_token = get_user_id_from_token(ctx).await.unwrap();
-
         if check_auth.sub != user_id {
-            return Err(Error::new("Unauthorized"));
+            return Err(ExtendedError::new(
+                "Unauthorized",
+                Some(StatusCode::UNAUTHORIZED.as_u16()),
+            )
+            .build());
         }
 
         if user.password.is_some() {
@@ -248,69 +280,20 @@ impl Mutation {
             .update(("user", user_id.clone()))
             .merge(user)
             .await
-            .map_err(|e| Error::new(e.to_string()))?;
+            .map_err(|e| {
+                tracing::debug!("Failed to update user: {}", e);
+                ExtendedError::new(
+                    "Failed to update user",
+                    Some(StatusCode::BAD_REQUEST.as_u16()),
+                )
+                .build()
+            })?;
 
         match response {
             Some(user) => Ok(user),
-            None => Err(Error::new("User not found")),
-        }
-
-        // match check_auth {
-        //     Ok(_) => {
-
-        //     }
-        //     _ => return Err(Error::new("Unauthorized")),
-        // }
-    }
-
-    pub async fn update_user_password(
-        &self,
-        ctx: &Context<'_>,
-        user_id: String,
-        new_password: String,
-        mut user_info: UserUpdate,
-    ) -> Result<User> {
-        // no auth check just check old password against password entered by user
-        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
-
-        let mut found_user_result = db
-            .query("SELECT * FROM type::table($table) WHERE id = type::thing($user) LIMIT 1")
-            .bind(("table", "user"))
-            .bind(("user", format!("user:{}", user_id)))
-            .await
-            .map_err(|e| Error::new(e.to_string()))?;
-
-        let found_user: Option<User> = found_user_result
-            .take(0)
-            .map_err(|_e| Error::new("Deserialization failed"))?;
-
-        match found_user {
-            Some(user) => {
-                let password_match = bcrypt::verify(
-                    &user_info.password.unwrap().as_str(),
-                    user.password.as_str(),
-                )
-                .unwrap();
-
-                if password_match {
-                    let new_password_hash =
-                        bcrypt::hash(new_password, bcrypt::DEFAULT_COST).unwrap();
-                    user_info.password = Some(new_password_hash);
-                    let response: Option<User> = db
-                        .update(("user", user_id.clone()))
-                        .merge(user_info)
-                        .await
-                        .map_err(|e| Error::new(e.to_string()))?;
-
-                    match response {
-                        Some(user) => Ok(user),
-                        None => Err(Error::new("User not found")),
-                    }
-                } else {
-                    Err(Error::new("Verification failed"))
-                }
-            }
-            None => Err(Error::new("User not found")),
+            None => Err(
+                ExtendedError::new("User not found", Some(StatusCode::NOT_FOUND.as_u16())).build(),
+            ),
         }
     }
 }
