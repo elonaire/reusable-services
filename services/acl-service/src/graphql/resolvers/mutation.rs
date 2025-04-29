@@ -291,7 +291,9 @@ impl Mutation {
 
         match response {
             Some(user) => Ok(user),
-            None => Err(Error::new("User not found")),
+            None => Err(
+                ExtendedError::new("User not found", Some(StatusCode::NOT_FOUND.as_u16())).build(),
+            ),
         }
     }
 }
