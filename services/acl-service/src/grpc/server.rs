@@ -1,6 +1,5 @@
 use std::{env, sync::Arc};
 
-use acl_service::{acl_server::Acl, AuthDetails, AuthStatus, Empty};
 use axum::http::HeaderValue;
 use hyper::header::{AUTHORIZATION, COOKIE};
 use hyper::HeaderMap;
@@ -11,11 +10,11 @@ use surrealdb::Surreal;
 use tonic::{Request, Response, Status};
 
 use crate::graphql::schemas::user::UserLogins;
-use crate::utils::auth::{confirm_auth, sign_jwt, verify_login_credentials};
+use crate::utils::auth::{confirm_auth, get_user_email, sign_jwt, verify_login_credentials};
 
-pub mod acl_service {
-    tonic::include_proto!("acl");
-}
+use lib::integration::grpc::clients::acl_service::{
+    acl_server::Acl, AuthDetails, AuthStatus, Empty, GetUserEmailRequest, GetUserEmailResponse,
+};
 
 // #[derive(Default)]
 pub struct AclServiceImplementation {
@@ -25,15 +24,6 @@ pub struct AclServiceImplementation {
 impl AclServiceImplementation {
     pub fn new(db: Arc<Surreal<Client>>) -> Self {
         Self { db }
-    }
-}
-
-impl From<lib::utils::models::AuthStatus> for acl_service::AuthStatus {
-    fn from(auth_status: lib::utils::models::AuthStatus) -> Self {
-        Self {
-            sub: auth_status.sub,
-            is_auth: auth_status.is_auth,
-        }
     }
 }
 
@@ -61,20 +51,6 @@ impl Acl for AclServiceImplementation {
             Ok(auth_status) => Ok(Response::new(auth_status.into())),
             Err(_e) => Err(Status::unauthenticated("Unauthorized")),
         }
-
-        // if token != "Bearer my-secret-token" {
-        // return Err(Status::unauthenticated("Invalid token"));
-        // Sample client request
-        // async fn send_authenticated_request(mut client: AclClient<Channel>) -> Result<(), Box<dyn std::error::Error>> {
-        //     let mut request = Request::new(SomeRequest {});
-        //     let token: MetadataValue<_> = "Bearer my-secret-token".parse()?;
-
-        //     request.metadata_mut().insert("authorization", token);
-        //     let _response = client.some_method(request).await?;
-
-        //     Ok(())
-        // }
-        // }
     }
 
     async fn sign_in_as_service(
@@ -105,6 +81,18 @@ impl Acl for AclServiceImplementation {
                 Ok(Response::new(AuthDetails { token: signed_jwt }))
             }
             Err(_e) => Err(Status::unauthenticated("Unauthorized")),
+        }
+    }
+
+    async fn get_user_email(
+        &self,
+        request: Request<GetUserEmailRequest>,
+    ) -> Result<Response<GetUserEmailResponse>, Status> {
+        let user_id = request.into_inner().user_id;
+
+        match get_user_email(&self.db, user_id.as_str()).await {
+            Ok(email) => Ok(Response::new(GetUserEmailResponse { email })),
+            Err(_e) => Err(Status::not_found("User not found")),
         }
     }
 }

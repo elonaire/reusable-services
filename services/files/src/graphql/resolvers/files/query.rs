@@ -2,6 +2,8 @@ use std::{env, sync::Arc};
 
 use async_graphql::{Context, Object, Result};
 use axum::Extension;
+use hyper::StatusCode;
+use lib::utils::custom_error::ExtendedError;
 use surrealdb::{engine::remote::ws::Client, Surreal};
 
 use crate::utils::files::{get_file_id, get_system_filename};
@@ -11,25 +13,39 @@ pub struct FileQuery;
 
 #[Object]
 impl FileQuery {
-    pub async fn get_file_id(&self, ctx: &Context<'_>, file_name: String) -> Result<String> {
+    pub async fn fetch_file_id(&self, ctx: &Context<'_>, file_name: String) -> Result<String> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
 
         let file_id_res = get_file_id(db, file_name).await;
 
         match file_id_res {
             Ok(file_id) => Ok(file_id),
-            Err(e) => Err(e.into()),
+            Err(e) => {
+                tracing::error!("Error fetching file ID: {}", e);
+                Err(ExtendedError::new(
+                    "Error fetching file ID",
+                    Some(StatusCode::BAD_REQUEST.as_u16()),
+                )
+                .build())
+            }
         }
     }
 
-    pub async fn get_file_name(&self, ctx: &Context<'_>, file_id: String) -> Result<String> {
+    pub async fn fetch_file_name(&self, ctx: &Context<'_>, file_id: String) -> Result<String> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
 
         let file_name_res = get_system_filename(db, file_id).await;
 
         match file_name_res {
             Ok(file_name) => Ok(file_name),
-            Err(e) => Err(e.into()),
+            Err(e) => {
+                tracing::error!("Error fetching file name: {}", e);
+                Err(ExtendedError::new(
+                    "Error fetching file name",
+                    Some(StatusCode::BAD_REQUEST.as_u16()),
+                )
+                .build())
+            }
         }
     }
 

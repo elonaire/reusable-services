@@ -4,6 +4,7 @@ package acl;
 service Acl {
     rpc CheckAuth(Empty) returns (AuthStatus);
     rpc SignInAsService(Empty) returns (AuthDetails);
+    rpc GetUserEmail(GetUserEmailRequest) returns (GetUserEmailResponse);
 }
 
 message AuthStatus {
@@ -15,4 +16,12 @@ message Empty {}
 
 message AuthDetails {
     string token = 1;
+}
+
+message GetUserEmailRequest {
+    string user_id = 1;
+}
+
+message GetUserEmailResponse {
+    string email = 1;
 }

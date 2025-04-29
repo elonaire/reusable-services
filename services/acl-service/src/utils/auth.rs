@@ -1,4 +1,4 @@
-use axum::{http::HeaderValue, Extension};
+use axum::http::HeaderValue;
 use jwt_simple::prelude::*;
 use lib::utils::{
     auth::{AuthClaim, SymKey},
@@ -6,12 +6,11 @@ use lib::utils::{
     custom_traits::AsSurrealClient,
     models::AuthStatus,
 };
+use std::env;
 use std::{
     collections::HashMap,
     io::{Error, ErrorKind},
 };
-use std::{env, sync::Arc};
-use surrealdb::{engine::remote::ws::Client as SurrealClient, Surreal};
 
 use async_graphql::{Context, Enum};
 use dotenvy::dotenv;
@@ -36,11 +35,9 @@ use crate::graphql::schemas::{
     role::SystemRole,
     user::{
         AccountStatus, DecodedGithubOAuthToken, DecodedGoogleOAuthToken,
-        SurrealRelationQueryResponse, User, UserLogins,
+        SurrealRelationQueryResponse, User, UserLogins, UserOutput,
     },
 };
-
-// use crate::SharedState;
 
 pub type OAuthClientInstance = Client<
     StandardErrorResponse<BasicErrorResponseType>,
@@ -254,25 +251,6 @@ pub async fn decode_token<T: Clone + AsSurrealClient>(
             }
         }
         None => Err(Error::new(ErrorKind::Other, "Invalid token format")),
-    }
-}
-
-/// A utility function to decode JWT tokens. Returns only the user id
-pub async fn get_user_id_from_token(ctx: &Context<'_>) -> Result<String, Error> {
-    match ctx.data_opt::<HeaderMap>() {
-        Some(headers) => {
-            let db = ctx
-                .data::<Extension<Arc<Surreal<SurrealClient>>>>()
-                .unwrap();
-
-            let token_claims = decode_token(db, headers.get("Authorization").unwrap()).await;
-
-            match token_claims {
-                Ok(token_claims) => Ok(token_claims.subject.unwrap()),
-                Err(e) => Err(e),
-            }
-        }
-        None => Err(Error::new(ErrorKind::Other, "No headers found")),
     }
 }
 
@@ -646,4 +624,26 @@ pub async fn sign_jwt<T: Clone + AsSurrealClient>(
     token_claims.subject = Some(user.id.as_ref().map(|t| &t.id).expect("id").to_raw());
 
     Ok(converted_key.authenticate(token_claims).unwrap())
+}
+
+pub async fn get_user_email<T: Clone + AsSurrealClient>(
+    db: &T,
+    user_id: &str,
+) -> Result<String, Error> {
+    let result: Option<UserOutput> =
+        db.as_client()
+            .select(("user", user_id))
+            .await
+            .map_err(|e| {
+                tracing::error!("{}", e);
+                Error::new(ErrorKind::Other, "Database query failed")
+            })?;
+
+    match result {
+        Some(user) => Ok(user.email),
+        None => Err(Error::new(
+            ErrorKind::PermissionDenied,
+            "Invalid username or password",
+        )),
+    }
 }
