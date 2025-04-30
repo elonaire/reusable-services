@@ -15,6 +15,7 @@ pub mod files_service {
     tonic::include_proto!("files");
 }
 
+/// For easy conversion to protobuf
 impl From<utils::models::AuthStatus> for acl_service::AuthStatus {
     fn from(auth_status: utils::models::AuthStatus) -> Self {
         Self {
@@ -24,6 +25,7 @@ impl From<utils::models::AuthStatus> for acl_service::AuthStatus {
     }
 }
 
+/// For easy conversion to protobuf
 impl From<email_service::EmailUser> for utils::models::EmailUser {
     fn from(user: email_service::EmailUser) -> Self {
         Self {
@@ -33,6 +35,7 @@ impl From<email_service::EmailUser> for utils::models::EmailUser {
     }
 }
 
+/// For easy conversion to protobuf
 impl From<email_service::Email> for utils::models::Email {
     fn from(email: email_service::Email) -> Self {
         Self {
