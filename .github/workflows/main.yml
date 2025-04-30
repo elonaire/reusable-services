@@ -181,6 +181,10 @@ jobs:
   automerge:
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: write
+      pull-requests: write
+
     needs:
       [
         build_and_deploy_acl,
