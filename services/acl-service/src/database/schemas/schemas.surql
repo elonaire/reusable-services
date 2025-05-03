@@ -13,8 +13,9 @@ DEFINE FIELD last_name ON TABLE user TYPE option<string>;
 DEFINE FIELD gender ON TABLE user TYPE option<string>
 -- Allow only these values in the array
   ASSERT $value INSIDE ["Male", "Female", "Other", None];
--- DEFINE FIELD dob ON TABLE user TYPE option<datetime> VALUE <datetime>$value;
-DEFINE FIELD dob ON TABLE user TYPE option<datetime> VALUE time::now();
+DEFINE FIELD OVERWRITE dob ON TABLE user TYPE option<datetime> VALUE
+  IF $value IS NOT NONE { <datetime>$value }ELSE { NONE };
+-- DEFINE FIELD dob ON TABLE user TYPE option<datetime> VALUE time::now();
 DEFINE FIELD email ON TABLE user TYPE string
   ASSERT string::is::email($value);
 DEFINE INDEX userEmailIndex ON TABLE user COLUMNS email UNIQUE;
@@ -52,7 +53,16 @@ DEFINE FIELD updated_at ON TABLE user TYPE datetime
 -- A schema-full role table.
 DEFINE TABLE role SCHEMAFULL;
 -- define some fields.
-DEFINE FIELD role_name ON TABLE role TYPE string;
+DEFINE FIELD role_name ON TABLE role TYPE string VALUE string::uppercase($value);
+DEFINE FIELD is_default ON TABLE role TYPE bool DEFAULT false;
+DEFINE EVENT enforce_one_default_role ON TABLE role WHEN $event = 'CREATE' OR $event = 'UPDATE' THEN {
+    IF $after.is_default {
+        LET $existing_default = (SELECT * FROM role WHERE is_default = true);
+        IF array::len($existing_default) > 1 {
+            THROW 'A default role already exists. Please deactivate it first.';
+        };
+    };
+};
 DEFINE INDEX roleNameIndex ON TABLE role COLUMNS role_name UNIQUE;
 DEFINE FIELD created_at ON TABLE role TYPE datetime
   DEFAULT time::now() READONLY;
@@ -63,11 +73,11 @@ DEFINE FIELD updated_at ON TABLE role TYPE datetime
 -- Relationship between user and roles
 DEFINE TABLE has_role SCHEMAFULL TYPE RELATION IN user OUT role;
 DEFINE FIELD is_default ON TABLE has_role TYPE bool DEFAULT false;
-DEFINE EVENT enforce_single_true ON has_role WHEN $event = 'CREATE' OR $event = 'UPDATE' THEN {
-    IF $before.is_default == true {
-        LET $existing_true = SELECT * FROM has_role WHERE is_default = true;
-        IF array::len($existing_true) > 0 {
-            THROW 'You have a default role already. Please deactivate it first.';
+DEFINE EVENT OVERWRITE enforce_one_default_role ON TABLE has_role WHEN $event = 'CREATE' OR $event = 'UPDATE' THEN {
+    IF $after.is_default {
+        LET $existing_default = (SELECT * FROM has_role WHERE is_default = true AND in = $after.in);
+        IF array::len($existing_default) > 1 {
+            THROW 'You already have a default role. Please deactivate it first.';
         };
     };
 };
@@ -89,3 +99,4 @@ DEFINE FUNCTION fn::assign_default_role($user_id: record) {
 
 -- Migrations
 -- UPDATE has_role SET is_default = false WHERE is_default IS NONE;
+-- UPDATE role SET is_default = false WHERE is_default IS NONE;

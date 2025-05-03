@@ -429,7 +429,7 @@ async fn handle_refresh_token<T: Clone + AsSurrealClient>(
                                     Error::new(ErrorKind::PermissionDenied, "Unauthorized")
                                 })?;
 
-                            // TODO: Handle these in the respective middleware for REST and GraphQL
+                            // TODO: Handle these with the respective functionality for REST and GraphQL contexts(Hint: Might use a Trait for this)
                             // ctx.insert_http_header(
                             //     SET_COOKIE,
                             //     format!("oauth_client=; HttpOnly; SameSite=Strict"),
