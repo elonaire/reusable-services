@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use async_graphql::{Context, Error, Object, Result};
 use axum::Extension;
-use dotenvy::dotenv;
 use hyper::{HeaderMap, StatusCode};
 use lib::utils::{custom_error::ExtendedError, models::AuthStatus};
 use surrealdb::{engine::remote::ws::Client, Surreal};
