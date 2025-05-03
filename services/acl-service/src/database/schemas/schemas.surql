@@ -52,9 +52,7 @@ DEFINE FIELD updated_at ON TABLE user TYPE datetime
 -- A schema-full role table.
 DEFINE TABLE role SCHEMAFULL;
 -- define some fields.
-DEFINE FIELD role_name ON TABLE role TYPE string
--- Allow only these values in the array
-  ASSERT $value INSIDE ["SuperAdmin", "Admin", "User", "Guest"];
+DEFINE FIELD role_name ON TABLE role TYPE string;
 DEFINE INDEX roleNameIndex ON TABLE role COLUMNS role_name UNIQUE;
 DEFINE FIELD created_at ON TABLE role TYPE datetime
   DEFAULT time::now() READONLY;
@@ -75,8 +73,6 @@ DEFINE EVENT enforce_single_true ON has_role WHEN $event = 'CREATE' OR $event = 
 };
 DEFINE INDEX userRoleIndex ON TABLE has_role
 COLUMNS in, out UNIQUE;
-DEFINE FIELD in ON TABLE has_role TYPE record<user>;
-DEFINE FIELD out ON TABLE has_role TYPE record<role>;
 
 -- Function to check if user has a role, if not, assign a default role using edge relationship
 DEFINE FUNCTION fn::assign_default_role($user_id: record) {
@@ -92,4 +88,4 @@ DEFINE FUNCTION fn::assign_default_role($user_id: record) {
 };
 
 -- Migrations
-UPDATE has_role SET is_default = false WHERE is_default IS NONE;
+-- UPDATE has_role SET is_default = false WHERE is_default IS NONE;

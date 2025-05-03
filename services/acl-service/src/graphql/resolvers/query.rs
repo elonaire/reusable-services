@@ -49,8 +49,6 @@ impl Query {
     }
 
     async fn check_auth(&self, ctx: &Context<'_>) -> Result<AuthStatus> {
-        dotenv().ok();
-
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
         let header_map = ctx.data_opt::<HeaderMap>();
 

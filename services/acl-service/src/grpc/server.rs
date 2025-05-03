@@ -73,10 +73,9 @@ impl Acl for AclServiceImplementation {
                 let auth_claim = AuthClaim { roles: vec![] };
                 let service_token_expiry_duration = Duration::from_secs(30);
 
-                let signed_jwt =
-                    sign_jwt(&self.db, &auth_claim, service_token_expiry_duration, &user)
-                        .await
-                        .map_err(|_e| Status::unauthenticated("Unauthorized"))?;
+                let signed_jwt = sign_jwt(&auth_claim, service_token_expiry_duration, &user)
+                    .await
+                    .map_err(|_e| Status::unauthenticated("Unauthorized"))?;
 
                 Ok(Response::new(AuthDetails { token: signed_jwt }))
             }

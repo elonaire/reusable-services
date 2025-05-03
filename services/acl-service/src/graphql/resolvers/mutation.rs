@@ -128,13 +128,10 @@ impl Mutation {
                         let mut user_roles_res = db
                             .query(
                                 "
-                            SELECT ->has_role->role.* AS roles FROM ONLY type::thing($user_id)
+                                SELECT ->(has_role WHERE is_default=true)->role.* AS roles FROM ONLY type::thing($user_id)
                             ",
                             )
-                            .bind((
-                                "user_id",
-                                format!("user:{}", user.id.as_ref().map(|t| &t.id).expect("id")),
-                            ))
+                            .bind(("user_id", user.id.clone()))
                             .await
                             .map_err(|_e| Error::new("DB Query failed: Get Roles"))?;
                         let user_roles: Option<SurrealRelationQueryResponse<SystemRole>> =
@@ -156,28 +153,35 @@ impl Mutation {
                                         .unwrap()
                                         .into_iter()
                                         .map(|role| {
-                                            role.id.as_ref().map(|t| &t.id).expect("id").to_raw()
+                                            let name_str = format!("{:?}", role.role_name);
+                                            tracing::debug!("name_str: {}", name_str);
+                                            name_str
                                         })
                                         .collect()
                                 }
-                                None => vec![],
+                                None => {
+                                    return Err(ExtendedError::new(
+                                        "Forbidden!",
+                                        Some(StatusCode::FORBIDDEN.as_u16()),
+                                    )
+                                    .build())
+                                }
                             },
                         };
 
-                        let token_str =
-                            sign_jwt(db, &auth_claim, access_token_expiry_duration, user)
-                                .await
-                                .map_err(|e| {
-                                    tracing::error!("Failed to sign Access Token: {}", e);
-                                    ExtendedError::new(
-                                        "Internal Server Error",
-                                        Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
-                                    )
-                                    .build()
-                                })?;
+                        let token_str = sign_jwt(&auth_claim, access_token_expiry_duration, user)
+                            .await
+                            .map_err(|e| {
+                                tracing::error!("Failed to sign Access Token: {}", e);
+                                ExtendedError::new(
+                                    "Internal Server Error",
+                                    Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
+                                )
+                                .build()
+                            })?;
 
                         let refresh_token_str =
-                            sign_jwt(db, &auth_claim, refresh_token_expiry_duration, user)
+                            sign_jwt(&auth_claim, refresh_token_expiry_duration, user)
                                 .await
                                 .map_err(|e| {
                                     tracing::error!("Failed to sign Refresh Token: {}", e);

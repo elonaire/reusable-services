@@ -143,7 +143,7 @@ pub async fn initiate_auth_code_grant_flow(oauth_client: OAuthClientName) -> OAu
             )
             .unwrap(),
         )
-        .set_revocation_url(RevocationUrl::new("".to_string()).unwrap()),
+        .set_revocation_url(RevocationUrl::new("http://localhost:3007".to_string()).unwrap()),
     };
 
     client.set_redirect_uri(
@@ -222,17 +222,12 @@ pub async fn navigate_to_redirect_url(
 }
 
 /// A utility function to decode JWT tokens. Returns full claims
-pub async fn decode_token<T: Clone + AsSurrealClient>(
-    db: &T,
-    token_header: &HeaderValue,
-) -> Result<JWTClaims<AuthClaim>, Error> {
+pub async fn decode_token(token_header: &HeaderValue) -> Result<JWTClaims<AuthClaim>, Error> {
     let token = token_header.to_str().unwrap().strip_prefix("Bearer ");
 
     match token {
         Some(token) => {
-            let converted_jwt_secret_key = get_converted_jwt_secret_key(db)
-                .await
-                .map_err(|_e| Error::new(ErrorKind::PermissionDenied, "Jwt Key failed"))?;
+            let converted_jwt_secret_key = get_converted_jwt_secret_key().await?;
 
             let claims_result = converted_jwt_secret_key.verify_token::<AuthClaim>(&token, None);
 
@@ -259,6 +254,7 @@ pub async fn decode_token<T: Clone + AsSurrealClient>(
 pub async fn confirm_auth<T: Clone + AsSurrealClient>(
     header_map: Option<&HeaderMap>,
     db: &T,
+    // role: &String,
 ) -> Result<AuthStatus, Error> {
     // let header_map = ctx.data_opt::<HeaderMap>();
     // Process request headers as needed
@@ -283,7 +279,7 @@ pub async fn confirm_auth<T: Clone + AsSurrealClient>(
                                         //     .data::<Extension<Arc<Surreal<SurrealClient>>>>()
                                         //     .unwrap();
 
-                                        let token_claims = decode_token(db, token).await;
+                                        let token_claims = decode_token(token).await;
 
                                         match &token_claims {
                                             Ok(claims) => {
@@ -297,25 +293,7 @@ pub async fn confirm_auth<T: Clone + AsSurrealClient>(
                                                         .unwrap_or("".to_string()),
                                                 })
                                             }
-                                            Err(_err) => {
-                                                // Token verification failed, check if refresh token is present
-                                                let converted_jwt_secret_key =
-                                                    get_converted_jwt_secret_key(db)
-                                                        .await
-                                                        .map_err(|_e| {
-                                                            Error::new(
-                                                                ErrorKind::PermissionDenied,
-                                                                "Jwt Key failed",
-                                                            )
-                                                        })?;
-
-                                                handle_refresh_token(
-                                                    &cookies,
-                                                    &converted_jwt_secret_key,
-                                                    db,
-                                                )
-                                                .await
-                                            }
+                                            Err(_err) => handle_refresh_token(&cookies, db).await,
                                         }
                                     } else {
                                         let oauth_client_name =
@@ -418,9 +396,9 @@ pub async fn confirm_auth<T: Clone + AsSurrealClient>(
 /// A utility function to handle refresh tokens
 async fn handle_refresh_token<T: Clone + AsSurrealClient>(
     cookies: &HashMap<String, String>,
-    converted_jwt_secret_key: &HS256Key,
     db: &T,
 ) -> Result<AuthStatus, Error> {
+    let converted_jwt_secret_key = get_converted_jwt_secret_key().await?;
     match cookies.get("t") {
         Some(refresh_token) => {
             let refresh_claims =
@@ -439,51 +417,12 @@ async fn handle_refresh_token<T: Clone + AsSurrealClient>(
 
                     match user {
                         Some(user) => {
-                            let mut user_roles_res = db
-                                .as_client()
-                                .query("
-                                    SELECT ->has_role->role.* AS roles FROM ONLY type::thing($user_id)
-                                    ")
-                                .bind(("user_id", format!(
-                                    "user:{}",
-                                    user.id.as_ref().map(|t| &t.id).expect("id")
-                                )))
-                                .await
-                                .map_err(|e| {
-                                    tracing::error!("DB Query failed: {}", e);
-                                    Error::new(ErrorKind::Other, "DB Query failed")
-                                })?;
-                            let user_roles: Option<SurrealRelationQueryResponse<SystemRole>> =
-                                user_roles_res.take(0).map_err(|e| {
-                                    tracing::error!("User Role deserialization failed: {}", e);
-                                    Error::new(ErrorKind::Other, "User Role deserialization failed")
-                                })?;
-
                             let auth_claim = AuthClaim {
-                                roles: match user_roles {
-                                    Some(existing_roles) => {
-                                        // use id instead of Thing
-                                        existing_roles
-                                            .get("roles")
-                                            .unwrap()
-                                            .into_iter()
-                                            .map(|role| {
-                                                role.id
-                                                    .as_ref()
-                                                    .map(|t| &t.id)
-                                                    .expect("id")
-                                                    .to_raw()
-                                            })
-                                            .collect()
-                                    }
-                                    None => {
-                                        vec![]
-                                    }
-                                },
+                                roles: refresh_claims.custom.roles,
                             };
 
                             let token_expiry_duration = Duration::from_secs(15 * 60);
-                            let _token = sign_jwt(db, &auth_claim, token_expiry_duration, &user)
+                            let _token = sign_jwt(&auth_claim, token_expiry_duration, &user)
                                 .await
                                 .map_err(|e| {
                                     tracing::error!("Error: {}", e);
@@ -520,44 +459,15 @@ async fn handle_refresh_token<T: Clone + AsSurrealClient>(
     }
 }
 
-/// A utility function to get a converted JWT secret key
-async fn get_converted_jwt_secret_key<T: Clone + AsSurrealClient>(
-    db: &T,
-) -> Result<HS256Key, Error> {
-    // TODO: Might have to switch to having secret keys in .env
-    let mut result = db
-        .clone()
-        .as_client()
-        .query("SELECT * FROM type::table($table) WHERE name = 'jwt_key' LIMIT 1")
-        .bind(("table", "crypto_key"))
-        .await
-        .map_err(|e| {
+/// A utility function to get a converted JWT secret key.
+///
+/// Make sure that the env vars are set before this function runs.
+async fn get_converted_jwt_secret_key() -> Result<HS256Key, Error> {
+    match env::var("JWT_SECRET_KEY") {
+        Ok(secret_key) => Ok(HS256Key::from_bytes(secret_key.as_str().as_bytes())),
+        Err(e) => {
             tracing::error!("{}", e);
-            Error::new(ErrorKind::Other, "Database query failed")
-        })?;
-    let response: Option<SymKey> = result.take(0).map_err(|e| {
-        tracing::error!("{}", e);
-        Error::new(ErrorKind::Other, "Database query deserialization failed")
-    })?;
-
-    match &response {
-        Some(key_container) => Ok(HS256Key::from_bytes(&key_container.key.clone())),
-        None => {
-            let key = HS256Key::generate();
-            let _reslt: Option<SymKey> = db
-                .as_client()
-                .create("crypto_key")
-                .content(SymKey {
-                    key: key.clone().to_bytes(),
-                    name: "jwt_key".to_string(),
-                })
-                .await
-                .map_err(|e| {
-                    tracing::error!("{}", e);
-                    Error::new(ErrorKind::Other, "Database query failed")
-                })?;
-
-            Ok(key)
+            Err(Error::new(ErrorKind::Other, "Cannot proceed with request!"))
         }
     }
 }
@@ -611,15 +521,12 @@ pub async fn verify_login_credentials<T: Clone + AsSurrealClient>(
 }
 
 /// A utility function to sign JWTs
-pub async fn sign_jwt<T: Clone + AsSurrealClient>(
-    db: &T,
+pub async fn sign_jwt(
     auth_claim: &AuthClaim,
     duration: Duration,
     user: &User,
 ) -> Result<String, Error> {
-    let converted_key = get_converted_jwt_secret_key(db)
-        .await
-        .map_err(|_e| Error::new(ErrorKind::Other, "Database query failed"))?;
+    let converted_key = get_converted_jwt_secret_key().await?;
 
     let mut token_claims = Claims::with_custom_claims(auth_claim.clone(), duration);
     token_claims.subject = Some(user.id.as_ref().map(|t| &t.id).expect("id").to_raw());

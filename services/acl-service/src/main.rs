@@ -29,7 +29,7 @@ use hyper::{
         ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS,
         AUTHORIZATION, CONTENT_TYPE, COOKIE, SET_COOKIE,
     },
-    Method,
+    Method, StatusCode,
 };
 use oauth2::{
     basic::BasicTokenType, AuthorizationCode, EmptyExtraTokenFields, PkceCodeVerifier,
@@ -59,10 +59,6 @@ async fn graphql_handler(
 ) -> GraphQLResponse {
     let mut request = req.0;
 
-    // let mut data = async_graphql::Data::default();
-    // data.insert(db.clone());
-    // data.insert(headers.clone());
-    // request = request.data(data);
     let db = db.clone();
     let headers = headers.clone();
 
@@ -102,7 +98,7 @@ struct Params {
 async fn oauth_handler(
     params: AxumQuery<Params>,
     headers: HeaderMap,
-) -> Json<StandardTokenResponse<EmptyExtraTokenFields, BasicTokenType>> {
+) -> Result<Json<StandardTokenResponse<EmptyExtraTokenFields, BasicTokenType>>, StatusCode> {
     // get the csrf state from the cookie
     // Extract the csrf_state, oauth_client, pkce_verifier cookies
     // Extract cookies from the headers
@@ -147,7 +143,7 @@ async fn oauth_handler(
         .await
         .unwrap();
 
-    Json(token_result)
+    Ok(Json(token_result))
 }
 
 #[tokio::main]
