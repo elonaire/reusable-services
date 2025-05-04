@@ -238,11 +238,14 @@ impl Mutation {
                             url: None,
                         })
                     }
-                    Err(_e) => Err(ExtendedError::new(
-                        "Invalid credentials",
-                        Some(StatusCode::UNAUTHORIZED.as_u16()),
-                    )
-                    .build()),
+                    Err(e) => {
+                        tracing::error!("Error signing in: {}", e);
+                        Err(ExtendedError::new(
+                            "Invalid credentials",
+                            Some(StatusCode::UNAUTHORIZED.as_u16()),
+                        )
+                        .build())
+                    }
                 }
             }
         }

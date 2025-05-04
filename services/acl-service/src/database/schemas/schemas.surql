@@ -3,7 +3,6 @@
 
 -- A schema-full user table.
 DEFINE TABLE user SCHEMAFULL;
-
 -- define some fields.
 DEFINE FIELD user_name ON TABLE user TYPE option<string>;
 DEFINE INDEX userNameIndex ON TABLE user COLUMNS user_name UNIQUE;
@@ -13,7 +12,7 @@ DEFINE FIELD last_name ON TABLE user TYPE option<string>;
 DEFINE FIELD gender ON TABLE user TYPE option<string>
 -- Allow only these values in the array
   ASSERT $value INSIDE ["Male", "Female", "Other", None];
-DEFINE FIELD OVERWRITE dob ON TABLE user TYPE option<datetime> VALUE
+DEFINE FIELD dob ON TABLE user VALUE
   IF $value IS NOT NONE { <datetime>$value }ELSE { NONE };
 -- DEFINE FIELD dob ON TABLE user TYPE option<datetime> VALUE time::now();
 DEFINE FIELD email ON TABLE user TYPE string
@@ -59,7 +58,17 @@ DEFINE EVENT enforce_one_default_role ON TABLE role WHEN $event = 'CREATE' OR $e
     IF $after.is_default {
         LET $existing_default = (SELECT * FROM role WHERE is_default = true);
         IF array::len($existing_default) > 1 {
-            THROW 'A default role already exists. Please deactivate it first.';
+            THROW 'A default role already exists. Deactivate it first.';
+        };
+    };
+};
+DEFINE FIELD is_admin ON TABLE role TYPE bool DEFAULT false;
+DEFINE FIELD is_super_admin ON TABLE role TYPE bool DEFAULT false;
+DEFINE EVENT enforce_one_super_admin_role ON TABLE role WHEN $event = 'CREATE' OR $event = 'UPDATE' THEN {
+    IF $after.is_super_admin {
+        LET $existing_default = (SELECT * FROM role WHERE is_super_admin = true);
+        IF array::len($existing_default) > 1 {
+            THROW 'A super admin role already exists.';
         };
     };
 };
@@ -73,12 +82,18 @@ DEFINE FIELD updated_at ON TABLE role TYPE datetime
 -- Relationship between user and roles
 DEFINE TABLE has_role SCHEMAFULL TYPE RELATION IN user OUT role;
 DEFINE FIELD is_default ON TABLE has_role TYPE bool DEFAULT false;
-DEFINE EVENT OVERWRITE enforce_one_default_role ON TABLE has_role WHEN $event = 'CREATE' OR $event = 'UPDATE' THEN {
+DEFINE EVENT enforce_one_default_role ON TABLE has_role WHEN $event = 'CREATE' OR $event = 'UPDATE' THEN {
     IF $after.is_default {
         LET $existing_default = (SELECT * FROM has_role WHERE is_default = true AND in = $after.in);
         IF array::len($existing_default) > 1 {
-            THROW 'You already have a default role. Please deactivate it first.';
+            THROW 'You already have a default role. Deactivate it first.';
         };
+    };
+};
+DEFINE EVENT enforce_one_super_admin_role ON TABLE has_role WHEN $event = 'CREATE' OR $event = 'UPDATE' THEN {
+    LET $existing_default = (SELECT <-has_role as super_admin_roles FROM role WHERE is_super_admin = true)[0]["super_admin_roles"];
+    IF array::len($existing_default) > 1 {
+        THROW 'Super admin role already assigned. Unauthorized unless delegated by an existing super admin.';
     };
 };
 DEFINE INDEX userRoleIndex ON TABLE has_role
@@ -89,7 +104,7 @@ DEFINE FUNCTION fn::assign_default_role($user_id: record) {
   LET $results = SELECT ->has_role AS roles FROM ONLY $user_id;
 
   IF array::len($results.roles) == 0 {
-    LET $default_role = SELECT id FROM ONLY role WHERE role_name = "User" LIMIT 1;
+    LET $default_role = (SELECT VALUE id FROM ONLY role WHERE is_default = true LIMIT 1);
 
     RELATE $user_id->has_role->$default_role CONTENT {
       is_default: true
@@ -100,3 +115,4 @@ DEFINE FUNCTION fn::assign_default_role($user_id: record) {
 -- Migrations
 -- UPDATE has_role SET is_default = false WHERE is_default IS NONE;
 -- UPDATE role SET is_default = false WHERE is_default IS NONE;
+-- UPDATE role SET is_admin = false, is_super_admin = false WHERE is_admin IS NONE OR is_super_admin IS NONE;
