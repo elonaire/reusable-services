@@ -9,12 +9,12 @@ use surrealdb::{engine::remote::ws::Client, Surreal};
 
 use crate::{
     graphql::schemas::{
-        role::SystemRole,
+        role::{AdminPrivilege, AuthorizationConstraint, SystemRole},
         user::{AuthDetails, SurrealRelationQueryResponse, User, UserLogins, UserUpdate},
     },
     utils::auth::{
-        confirm_auth, initiate_auth_code_grant_flow, navigate_to_redirect_url, sign_jwt,
-        verify_login_credentials,
+        check_auth_privileges, confirm_auth, initiate_auth_code_grant_flow,
+        navigate_to_redirect_url, sign_jwt, verify_login_credentials,
     },
 };
 
@@ -63,10 +63,17 @@ impl Mutation {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
         let header_map = ctx.data_opt::<HeaderMap>();
 
-        let check_auth = confirm_auth(header_map, db).await;
+        let authenticated = confirm_auth(header_map, db).await?;
 
-        if let Err(e) = check_auth {
-            tracing::error!("Unauthorized: {}", e);
+        let authorization_constraint = AuthorizationConstraint {
+            roles: vec![],
+            privilege: Some(AdminPrivilege::SuperAdmin),
+        };
+
+        let authorized =
+            check_auth_privileges(db, &authenticated, authorization_constraint).await?;
+
+        if !authorized {
             return Err(ExtendedError::new(
                 "Unauthorized",
                 Some(StatusCode::UNAUTHORIZED.as_u16()),
@@ -153,7 +160,7 @@ impl Mutation {
                                         .unwrap()
                                         .into_iter()
                                         .map(|role| {
-                                            let name_str = format!("{:?}", role.role_name);
+                                            let name_str = format!("{}", role.role_name);
                                             tracing::debug!("name_str: {}", name_str);
                                             name_str
                                         })

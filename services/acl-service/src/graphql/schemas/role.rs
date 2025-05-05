@@ -9,3 +9,15 @@ pub struct SystemRole {
     pub id: Option<Thing>,
     pub role_name: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AdminPrivilege {
+    Admin,
+    SuperAdmin,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AuthorizationConstraint {
+    pub roles: Vec<String>,
+    pub privilege: Option<AdminPrivilege>,
+}

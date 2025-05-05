@@ -21,6 +21,7 @@ pub struct AuthStatus {
     #[serde(rename = "isAuth")]
     pub is_auth: bool,
     pub sub: String,
+    pub current_role: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]

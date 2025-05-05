@@ -82,15 +82,15 @@ DEFINE FIELD updated_at ON TABLE role TYPE datetime
 -- Relationship between user and roles
 DEFINE TABLE has_role SCHEMAFULL TYPE RELATION IN user OUT role;
 DEFINE FIELD is_default ON TABLE has_role TYPE bool DEFAULT false;
-DEFINE EVENT enforce_one_default_role ON TABLE has_role WHEN $event = 'CREATE' OR $event = 'UPDATE' THEN {
+DEFINE EVENT OVERWRITE enforce_one_default_assigned_role ON TABLE has_role WHEN $event = 'CREATE' OR $event = 'UPDATE' THEN {
     IF $after.is_default {
-        LET $existing_default = (SELECT * FROM has_role WHERE is_default = true AND in = $after.in);
+    LET $existing_default = (SELECT * FROM has_role WHERE is_default = true AND in = $after.in);
         IF array::len($existing_default) > 1 {
             THROW 'You already have a default role. Deactivate it first.';
         };
     };
 };
-DEFINE EVENT enforce_one_super_admin_role ON TABLE has_role WHEN $event = 'CREATE' OR $event = 'UPDATE' THEN {
+DEFINE EVENT OVERWRITE enforce_one_super_admin_role ON TABLE has_role WHEN $event = 'CREATE' OR $event = 'UPDATE' THEN {
     LET $existing_default = (SELECT <-has_role as super_admin_roles FROM role WHERE is_super_admin = true)[0]["super_admin_roles"];
     IF array::len($existing_default) > 1 {
         THROW 'Super admin role already assigned. Unauthorized unless delegated by an existing super admin.';

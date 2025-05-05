@@ -11,6 +11,7 @@ use std::{
     collections::HashMap,
     io::{Error, ErrorKind},
 };
+use surrealdb::sql::Thing;
 
 use async_graphql::{Context, Enum};
 use dotenvy::dotenv;
@@ -32,7 +33,7 @@ use oauth2::{
 use serde::{Deserialize, Serialize};
 
 use crate::graphql::schemas::{
-    role::SystemRole,
+    role::{AdminPrivilege, AuthorizationConstraint, SystemRole},
     user::{
         AccountStatus, DecodedGithubOAuthToken, DecodedGoogleOAuthToken,
         SurrealRelationQueryResponse, User, UserLogins, UserOutput,
@@ -291,6 +292,7 @@ pub async fn confirm_auth<T: Clone + AsSurrealClient>(
                                                         .as_ref()
                                                         .map(|t| t.to_string())
                                                         .unwrap_or("".to_string()),
+                                                    current_role: claims.custom.roles[0].clone(),
                                                 })
                                             }
                                             Err(_err) => handle_refresh_token(&cookies, db).await,
@@ -317,6 +319,7 @@ pub async fn confirm_auth<T: Clone + AsSurrealClient>(
                                                 return Ok(AuthStatus {
                                                     is_auth: true,
                                                     sub: response.sub,
+                                                    current_role: "".to_string(),
                                                 });
                                             }
                                             OAuthClientName::Github => {
@@ -363,6 +366,7 @@ pub async fn confirm_auth<T: Clone + AsSurrealClient>(
                                                 return Ok(AuthStatus {
                                                     is_auth: true,
                                                     sub: response.id.to_string(),
+                                                    current_role: "".to_string(),
                                                 });
                                             }
                                         }
@@ -418,7 +422,7 @@ async fn handle_refresh_token<T: Clone + AsSurrealClient>(
                     match user {
                         Some(user) => {
                             let auth_claim = AuthClaim {
-                                roles: refresh_claims.custom.roles,
+                                roles: refresh_claims.custom.roles.clone(),
                             };
 
                             let token_expiry_duration = Duration::from_secs(15 * 60);
@@ -440,6 +444,7 @@ async fn handle_refresh_token<T: Clone + AsSurrealClient>(
                             return Ok(AuthStatus {
                                 is_auth: true,
                                 sub: user.id.as_ref().map(|t| &t.id).expect("id").to_raw(),
+                                current_role: refresh_claims.custom.roles[0].clone(),
                             });
                         }
                         None => {
@@ -528,6 +533,8 @@ pub async fn sign_jwt(
 ) -> Result<String, Error> {
     let converted_key = get_converted_jwt_secret_key().await?;
 
+    tracing::debug!("Auth Claim: {:?}", auth_claim);
+
     let mut token_claims = Claims::with_custom_claims(auth_claim.clone(), duration);
     token_claims.subject = Some(user.id.as_ref().map(|t| &t.id).expect("id").to_raw());
 
@@ -554,4 +561,112 @@ pub async fn get_user_email<T: Clone + AsSurrealClient>(
             "Invalid username or password",
         )),
     }
+}
+
+/// A utility function to check a users' admin previleges
+pub async fn check_auth_privileges<T: Clone + AsSurrealClient>(
+    db: &T,
+    auth_status: &AuthStatus,
+    auth_constraint: AuthorizationConstraint,
+) -> Result<bool, Error> {
+    let mut is_admin_privileged = false;
+    let mut is_role_privileged = false;
+
+    match &auth_constraint.privilege {
+        Some(privilege) => {
+            let formated_query = match privilege {
+                AdminPrivilege::Admin => format!(
+                    "
+                    BEGIN TRANSACTION;
+                    LET $user = type::thing('user', $user_id);
+                    LET $existing_roles = (SELECT <-(has_role WHERE in = $user) as admin_roles FROM role WHERE (role_name = $current_role_name AND is_admin = true) OR is_super_admin = true)[0]['admin_roles'];
+                    IF $existing_roles IS NOT NONE AND array::len($existing_roles) > 0 {{
+                        RETURN $existing_roles.map(|$existing_role: any| record::id($existing_role));
+                    }} ELSE {{
+                        RETURN [];
+                    }};
+                    COMMIT TRANSACTION;
+                    "
+                ),
+                AdminPrivilege::SuperAdmin => format!(
+                    "
+                    BEGIN TRANSACTION;
+                    LET $user = type::thing('user', $user_id);
+                    LET $existing_roles = (SELECT <-(has_role WHERE in = $user) AS super_admin_roles FROM role WHERE is_super_admin = true AND role_name = $current_role_name)[0]['super_admin_roles'];
+                    IF $existing_roles IS NOT NONE AND array::len($existing_roles) > 0 {{
+                        RETURN $existing_roles.map(|$existing_role: any| record::id($existing_role));
+                    }} ELSE {{
+                        RETURN [];
+                    }};
+                    COMMIT TRANSACTION;
+                    "
+                ),
+            };
+
+            let mut admin_privilege_check_query = db
+                .as_client()
+                .query(formated_query.as_str())
+                .bind(("user_id", auth_status.sub.clone()))
+                .bind(("current_role_name", auth_status.current_role.clone()))
+                .await
+                .map_err(|e| {
+                    tracing::error!("{}", e);
+                    Error::new(ErrorKind::Other, "Database query failed")
+                })?;
+
+            // Get the first result from the first query
+            let response: Vec<String> = admin_privilege_check_query.take(0).map_err(|e| {
+                tracing::error!("admin_privilege_check_query: {}", e);
+                Error::new(ErrorKind::Other, "Database query deserialization failed")
+            })?;
+
+            is_admin_privileged = response.len() > 0;
+        }
+        None => {}
+    };
+
+    if auth_constraint.roles.len() > 0 {
+        let mut role_privilege_check_query = db
+            .as_client()
+            .query(
+                "
+                BEGIN TRANSACTION;
+                LET $user = type::thing('user', $user_id);
+                LET $existing_roles = (SELECT <-(has_role WHERE in = $user) AS user_roles FROM role WHERE role_name IN $role_constraints AND $current_role_name IN $role_constraints)[0]['user_roles'];
+                IF $existing_roles IS NOT NONE AND array::len($existing_roles) > 0 {{
+                    RETURN $existing_roles.map(|$existing_role: any| record::id($existing_role));
+                }} ELSE {{
+                    RETURN [];
+                }};
+                COMMIT TRANSACTION;
+                "
+            )
+            .bind(("user_id", auth_status.sub.clone()))
+            .bind(("role_constraints", auth_constraint.roles.iter().map(|role| role.to_uppercase()).collect::<Vec<String>>()))
+            .bind(("current_role_name", auth_status.current_role.clone()))
+            .await
+            .map_err(|e| {
+                tracing::error!("{}", e);
+                Error::new(ErrorKind::Other, "Database query failed")
+            })?;
+
+        // Get the first result from the first query
+        let response: Vec<String> = role_privilege_check_query.take(0).map_err(|e| {
+            tracing::error!("role_privilege_check_query: {}", e);
+            Error::new(ErrorKind::Other, "Database query deserialization failed")
+        })?;
+
+        is_role_privileged = response.len() > 0;
+    };
+
+    Ok((auth_constraint.roles.len() > 0
+        && is_role_privileged
+        && auth_constraint.privilege.is_some()
+        && is_admin_privileged)
+        || (auth_constraint.roles.len() > 0
+            && is_role_privileged
+            && auth_constraint.privilege.is_none())
+        || (auth_constraint.roles.len() == 0
+            && auth_constraint.privilege.is_some()
+            && is_admin_privileged))
 }
