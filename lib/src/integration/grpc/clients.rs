@@ -2,17 +2,17 @@ use crate::utils;
 
 // should match the package name in the .proto file
 pub mod acl_service {
-    tonic::include_proto!("acl");
+    include!("out/acl.rs");
 }
 
 // should match the package name in the .proto file
 pub mod email_service {
-    tonic::include_proto!("email");
+    include!("out/email.rs");
 }
 
 // should match the package name in the .proto file
 pub mod files_service {
-    tonic::include_proto!("files");
+    include!("out/files.rs");
 }
 
 /// For easy conversion to protobuf
