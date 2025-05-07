@@ -152,10 +152,7 @@ async fn main() -> Result<(), Error> {
         .await
         .map_err(|e| {
             tracing::error!("Failed to connect to the database: {}", e);
-            Error::new(
-                ErrorKind::ConnectionAborted,
-                "Failed to connect to the database",
-            )
+            Error::new(ErrorKind::ConnectionAborted, format!("{}", e))
         })?;
     let db = Arc::new(connection_pool);
 

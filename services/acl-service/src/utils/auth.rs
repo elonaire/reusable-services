@@ -1,9 +1,7 @@
 use axum::http::HeaderValue;
 use jwt_simple::prelude::*;
 use lib::utils::{
-    auth::{AuthClaim, SymKey},
-    cookie_parser::parse_cookies,
-    custom_traits::AsSurrealClient,
+    auth::AuthClaim, cookie_parser::parse_cookies, custom_traits::AsSurrealClient,
     models::AuthStatus,
 };
 use std::env;
@@ -11,7 +9,6 @@ use std::{
     collections::HashMap,
     io::{Error, ErrorKind},
 };
-use surrealdb::sql::Thing;
 
 use async_graphql::{Context, Enum};
 use dotenvy::dotenv;
@@ -33,10 +30,10 @@ use oauth2::{
 use serde::{Deserialize, Serialize};
 
 use crate::graphql::schemas::{
-    role::{AdminPrivilege, AuthorizationConstraint, SystemRole},
+    role::{AdminPrivilege, AuthorizationConstraint},
     user::{
-        AccountStatus, DecodedGithubOAuthToken, DecodedGoogleOAuthToken,
-        SurrealRelationQueryResponse, User, UserLogins, UserOutput,
+        AccountStatus, DecodedGithubOAuthToken, DecodedGoogleOAuthToken, User, UserLogins,
+        UserOutput,
     },
 };
 
@@ -252,7 +249,7 @@ pub async fn decode_token(token_header: &HeaderValue) -> Result<JWTClaims<AuthCl
 
 /// A utility function to confirm auth by parsing relevant headers. Useful for authenticating clients. Includes refresh token handling and OAuth
 // TODO: Pass an optional generic context parameter to support both REST and GraphQL refresh token handling - to attach new access token to context headers.
-pub async fn confirm_auth<T: Clone + AsSurrealClient>(
+pub async fn confirm_authentication<T: Clone + AsSurrealClient>(
     header_map: Option<&HeaderMap>,
     db: &T,
     // role: &String,
@@ -564,7 +561,7 @@ pub async fn get_user_email<T: Clone + AsSurrealClient>(
 }
 
 /// A utility function to check a users' admin previleges
-pub async fn check_auth_privileges<T: Clone + AsSurrealClient>(
+pub async fn confirm_authorization<T: Clone + AsSurrealClient>(
     db: &T,
     auth_status: &AuthStatus,
     auth_constraint: AuthorizationConstraint,
@@ -579,7 +576,10 @@ pub async fn check_auth_privileges<T: Clone + AsSurrealClient>(
                     "
                     BEGIN TRANSACTION;
                     LET $user = type::thing('user', $user_id);
-                    LET $existing_roles = (SELECT <-(has_role WHERE in = $user) as admin_roles FROM role WHERE (role_name = $current_role_name AND is_admin = true) OR is_super_admin = true)[0]['admin_roles'];
+                    IF !$user.exists() {{
+                        THROW 'Invalid Input';
+                    }};
+                    LET $existing_roles = (SELECT <-(assigned WHERE in = $user) as admin_roles FROM role WHERE (role_name = $current_role_name AND is_admin = true) OR is_super_admin = true)[0]['admin_roles'];
                     IF $existing_roles IS NOT NONE AND array::len($existing_roles) > 0 {{
                         RETURN $existing_roles.map(|$existing_role: any| record::id($existing_role));
                     }} ELSE {{
@@ -592,7 +592,10 @@ pub async fn check_auth_privileges<T: Clone + AsSurrealClient>(
                     "
                     BEGIN TRANSACTION;
                     LET $user = type::thing('user', $user_id);
-                    LET $existing_roles = (SELECT <-(has_role WHERE in = $user) AS super_admin_roles FROM role WHERE is_super_admin = true AND role_name = $current_role_name)[0]['super_admin_roles'];
+                    IF !$user.exists() {{
+                        THROW 'Invalid Input';
+                    }};
+                    LET $existing_roles = (SELECT <-(assigned WHERE in = $user) AS super_admin_roles FROM role WHERE is_super_admin = true AND role_name = $current_role_name)[0]['super_admin_roles'];
                     IF $existing_roles IS NOT NONE AND array::len($existing_roles) > 0 {{
                         RETURN $existing_roles.map(|$existing_role: any| record::id($existing_role));
                     }} ELSE {{
@@ -632,7 +635,10 @@ pub async fn check_auth_privileges<T: Clone + AsSurrealClient>(
                 "
                 BEGIN TRANSACTION;
                 LET $user = type::thing('user', $user_id);
-                LET $existing_roles = (SELECT <-(has_role WHERE in = $user) AS user_roles FROM role WHERE role_name IN $role_constraints AND $current_role_name IN $role_constraints)[0]['user_roles'];
+                IF !$user.exists() {
+                    THROW 'Invalid Input';
+                };
+                LET $existing_roles = (SELECT <-(assigned WHERE in = $user) AS user_roles FROM role WHERE role_name IN $role_constraints AND $current_role_name IN $role_constraints)[0]['user_roles'];
                 IF $existing_roles IS NOT NONE AND array::len($existing_roles) > 0 {{
                     RETURN $existing_roles.map(|$existing_role: any| record::id($existing_role));
                 }} ELSE {{

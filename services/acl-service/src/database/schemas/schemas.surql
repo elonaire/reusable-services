@@ -11,9 +11,9 @@ DEFINE FIELD middle_name ON TABLE user TYPE option<string>;
 DEFINE FIELD last_name ON TABLE user TYPE option<string>;
 DEFINE FIELD gender ON TABLE user TYPE option<string>
 -- Allow only these values in the array
-  ASSERT $value INSIDE ["Male", "Female", "Other", None];
+  ASSERT $value INSIDE ['Male', 'Female', 'Other', None];
 DEFINE FIELD dob ON TABLE user VALUE
-  IF $value IS NOT NONE { <datetime>$value }ELSE { NONE };
+  IF $value IS NOT NONE { <datetime>$value } ELSE { NONE };
 -- DEFINE FIELD dob ON TABLE user TYPE option<datetime> VALUE time::now();
 DEFINE FIELD email ON TABLE user TYPE string
   ASSERT string::is::email($value);
@@ -23,17 +23,17 @@ DEFINE FIELD phone ON TABLE user TYPE option<string>;
   -- ASSERT string::len($value) == 10;
 DEFINE INDEX userPhoneIndex ON TABLE user COLUMNS phone UNIQUE;
 DEFINE FIELD password ON TABLE user TYPE string;
-DEFINE EVENT user_created ON TABLE user WHEN $event = "CREATE" THEN (
+DEFINE EVENT user_created ON TABLE user WHEN $event = 'CREATE' THEN (
     -- add default role to user
     fn::assign_default_role($after.id)
 );
 DEFINE FIELD status ON TABLE user TYPE string
-  DEFAULT "Inactive"
+  DEFAULT 'Inactive'
 -- Allow only these values in the array
-  ASSERT $value INSIDE ["Active", "Inactive", "Suspended", "Deleted"];
+  ASSERT $value INSIDE ['Active', 'Inactive', 'Suspended', 'Deleted'];
 DEFINE FIELD oauth_client ON TABLE user TYPE option<string>
 -- Allow only these values in the array
-  ASSERT $value INSIDE ["Google", "Github", None];
+  ASSERT $value INSIDE ['Google', 'Github', None];
 DEFINE FIELD address ON TABLE user TYPE option<string>
   DEFAULT None;
 DEFINE FIELD profile_picture ON TABLE user TYPE option<string>
@@ -54,6 +54,11 @@ DEFINE TABLE role SCHEMAFULL;
 -- define some fields.
 DEFINE FIELD role_name ON TABLE role TYPE string VALUE string::uppercase($value);
 DEFINE FIELD is_default ON TABLE role TYPE bool DEFAULT false;
+DEFINE EVENT restrict_setting_default_role ON TABLE role WHEN $event  = 'CREATE' OR $event = 'UPDATE' THEN {
+    IF ($after.is_super_admin OR $after.is_admin) AND $after.is_default {
+        THROW 'Forbidden.';
+    };
+};
 DEFINE EVENT enforce_one_default_role ON TABLE role WHEN $event = 'CREATE' OR $event = 'UPDATE' THEN {
     IF $after.is_default {
         LET $existing_default = (SELECT * FROM role WHERE is_default = true);
@@ -73,6 +78,15 @@ DEFINE EVENT enforce_one_super_admin_role ON TABLE role WHEN $event = 'CREATE' O
     };
 };
 DEFINE INDEX roleNameIndex ON TABLE role COLUMNS role_name UNIQUE;
+DEFINE FIELD OVERWRITE created_by ON TABLE role TYPE record<user>;
+DEFINE FIELD admin_permissions ON TABLE role TYPE option<array<string>>
+  ASSERT $value ALLINSIDE ['CreateOrganization', 'CreateDepartment', 'CreateRole', 'AssignRole'];
+DEFINE EVENT OVERWRITE evaluate_admin_permissions ON TABLE role WHEN $event = 'CREATE' OR $event = 'UPDATE' THEN {
+  IF (!$after.is_super_admin AND $after.admin_permissions IS NOT NONE AND $after.admin_permissions CONTAINS "CreateOrganization") OR (!$after.is_super_admin AND !$after.is_admin AND $after.admin_permissions IS NOT NONE AND $after.admin_permissions CONTAINSANY ['CreateDepartment', 'CreateRole', 'AssignRole']) {
+    THROW 'Not enough permissions.';
+  };
+};
+
 DEFINE FIELD created_at ON TABLE role TYPE datetime
   DEFAULT time::now() READONLY;
 DEFINE FIELD updated_at ON TABLE role TYPE datetime
@@ -80,39 +94,62 @@ DEFINE FIELD updated_at ON TABLE role TYPE datetime
 
 
 -- Relationship between user and roles
-DEFINE TABLE has_role SCHEMAFULL TYPE RELATION IN user OUT role;
-DEFINE FIELD is_default ON TABLE has_role TYPE bool DEFAULT false;
-DEFINE EVENT OVERWRITE enforce_one_default_assigned_role ON TABLE has_role WHEN $event = 'CREATE' OR $event = 'UPDATE' THEN {
+DEFINE TABLE assigned SCHEMAFULL TYPE RELATION IN user OUT role;
+DEFINE FIELD is_default ON TABLE assigned TYPE bool DEFAULT false;
+DEFINE EVENT enforce_one_default_assigned_role ON TABLE assigned WHEN $event = 'CREATE' OR $event = 'UPDATE' THEN {
     IF $after.is_default {
-    LET $existing_default = (SELECT * FROM has_role WHERE is_default = true AND in = $after.in);
+    LET $existing_default = (SELECT * FROM assigned WHERE is_default = true AND in = $after.in);
         IF array::len($existing_default) > 1 {
             THROW 'You already have a default role. Deactivate it first.';
         };
     };
 };
-DEFINE EVENT OVERWRITE enforce_one_super_admin_role ON TABLE has_role WHEN $event = 'CREATE' OR $event = 'UPDATE' THEN {
-    LET $existing_default = (SELECT <-has_role as super_admin_roles FROM role WHERE is_super_admin = true)[0]["super_admin_roles"];
-    IF array::len($existing_default) > 1 {
+DEFINE EVENT enforce_one_super_admin_role ON TABLE assigned WHEN $event = 'CREATE' OR $event = 'UPDATE' THEN {
+    LET $existing_superadmin = (SELECT <-assigned as super_admin_roles FROM role WHERE is_super_admin = true)[0]["super_admin_roles"];
+    IF array::len($existing_superadmin) > 1 {
         THROW 'Super admin role already assigned. Unauthorized unless delegated by an existing super admin.';
     };
 };
-DEFINE INDEX userRoleIndex ON TABLE has_role
+DEFINE INDEX userRoleIndex ON TABLE assigned
 COLUMNS in, out UNIQUE;
+
+-- A schema-full organization table
+DEFINE TABLE organization SCHEMAFULL TYPE RELATION IN role OUT role;
+DEFINE FIELD org_name ON TABLE organization TYPE string;
+DEFINE INDEX orgNameIndex ON TABLE organization COLUMNS org_name UNIQUE;
+DEFINE FIELD created_at ON TABLE organization TYPE datetime
+  DEFAULT time::now() READONLY;
+DEFINE FIELD updated_at ON TABLE organization TYPE datetime
+  VALUE time::now();
+
+-- A schema-full department table
+DEFINE TABLE department SCHEMAFULL TYPE NORMAL;
+DEFINE FIELD dep_name ON TABLE department TYPE string;
+DEFINE INDEX depNameIndex ON TABLE department COLUMNS org_name UNIQUE;
+DEFINE FIELD created_at ON TABLE department TYPE datetime
+  DEFAULT time::now() READONLY;
+DEFINE FIELD updated_at ON TABLE department TYPE datetime
+  VALUE time::now();
+
+
+-- A schema-full relation table for departments
+DEFINE TABLE OVERWRITE is_under SCHEMAFULL TYPE RELATION IN department OUT department | organization;
+
 
 -- Function to check if user has a role, if not, assign a default role using edge relationship
 DEFINE FUNCTION fn::assign_default_role($user_id: record) {
-  LET $results = SELECT ->has_role AS roles FROM ONLY $user_id;
+  LET $results = (SELECT ->assigned AS roles FROM ONLY $user_id);
 
   IF array::len($results.roles) == 0 {
     LET $default_role = (SELECT VALUE id FROM ONLY role WHERE is_default = true LIMIT 1);
 
-    RELATE $user_id->has_role->$default_role CONTENT {
+    RELATE $user_id->assigned->$default_role CONTENT {
       is_default: true
     };
   };
 };
 
 -- Migrations
--- UPDATE has_role SET is_default = false WHERE is_default IS NONE;
+-- UPDATE assigned SET is_default = false WHERE is_default IS NONE;
 -- UPDATE role SET is_default = false WHERE is_default IS NONE;
 -- UPDATE role SET is_admin = false, is_super_admin = false WHERE is_admin IS NONE OR is_super_admin IS NONE;
