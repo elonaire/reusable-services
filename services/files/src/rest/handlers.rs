@@ -138,6 +138,10 @@ pub async fn upload(
             BEGIN TRANSACTION;
             LET $user = type::thing($user_id);
 
+            IF !$user.exists() {
+                THROW 'Invalid Input';
+            };
+
             LET $new_file = (CREATE file CONTENT {
                	owner: type::thing($user),
                	name: $name,
