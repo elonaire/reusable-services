@@ -17,9 +17,9 @@ pub enum Gender {
 
 #[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq, Default)]
 pub enum AccountStatus {
-    #[default]
     #[graphql(name = "Active")]
     Active,
+    #[default]
     #[graphql(name = "Inactive")]
     Inactive,
     #[graphql(name = "Suspended")]

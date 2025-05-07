@@ -2,12 +2,11 @@ use std::sync::Arc;
 
 use async_graphql::{Context, Error, Object, Result};
 use axum::Extension;
-use dotenvy::dotenv;
 use hyper::{HeaderMap, StatusCode};
 use lib::utils::{custom_error::ExtendedError, models::AuthStatus};
 use surrealdb::{engine::remote::ws::Client, Surreal};
 
-use crate::{graphql::schemas::user::UserOutput, utils::auth::confirm_auth};
+use crate::{graphql::schemas::user::UserOutput, utils::auth::confirm_authentication};
 
 pub struct Query;
 
@@ -49,11 +48,11 @@ impl Query {
     }
 
     async fn check_auth(&self, ctx: &Context<'_>) -> Result<AuthStatus> {
-        dotenv().ok();
-
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
         let header_map = ctx.data_opt::<HeaderMap>();
 
-        confirm_auth(header_map, db).await.map_err(Error::from)
+        confirm_authentication(header_map, db)
+            .await
+            .map_err(Error::from)
     }
 }

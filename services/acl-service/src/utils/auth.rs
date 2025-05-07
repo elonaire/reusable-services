@@ -1,9 +1,7 @@
 use axum::http::HeaderValue;
 use jwt_simple::prelude::*;
 use lib::utils::{
-    auth::{AuthClaim, SymKey},
-    cookie_parser::parse_cookies,
-    custom_traits::AsSurrealClient,
+    auth::AuthClaim, cookie_parser::parse_cookies, custom_traits::AsSurrealClient,
     models::AuthStatus,
 };
 use std::env;
@@ -32,10 +30,10 @@ use oauth2::{
 use serde::{Deserialize, Serialize};
 
 use crate::graphql::schemas::{
-    role::SystemRole,
+    role::{AdminPrivilege, AuthorizationConstraint},
     user::{
-        AccountStatus, DecodedGithubOAuthToken, DecodedGoogleOAuthToken,
-        SurrealRelationQueryResponse, User, UserLogins, UserOutput,
+        AccountStatus, DecodedGithubOAuthToken, DecodedGoogleOAuthToken, User, UserLogins,
+        UserOutput,
     },
 };
 
@@ -143,7 +141,7 @@ pub async fn initiate_auth_code_grant_flow(oauth_client: OAuthClientName) -> OAu
             )
             .unwrap(),
         )
-        .set_revocation_url(RevocationUrl::new("".to_string()).unwrap()),
+        .set_revocation_url(RevocationUrl::new("http://localhost:3007".to_string()).unwrap()),
     };
 
     client.set_redirect_uri(
@@ -222,17 +220,12 @@ pub async fn navigate_to_redirect_url(
 }
 
 /// A utility function to decode JWT tokens. Returns full claims
-pub async fn decode_token<T: Clone + AsSurrealClient>(
-    db: &T,
-    token_header: &HeaderValue,
-) -> Result<JWTClaims<AuthClaim>, Error> {
+pub async fn decode_token(token_header: &HeaderValue) -> Result<JWTClaims<AuthClaim>, Error> {
     let token = token_header.to_str().unwrap().strip_prefix("Bearer ");
 
     match token {
         Some(token) => {
-            let converted_jwt_secret_key = get_converted_jwt_secret_key(db)
-                .await
-                .map_err(|_e| Error::new(ErrorKind::PermissionDenied, "Jwt Key failed"))?;
+            let converted_jwt_secret_key = get_converted_jwt_secret_key().await?;
 
             let claims_result = converted_jwt_secret_key.verify_token::<AuthClaim>(&token, None);
 
@@ -256,9 +249,10 @@ pub async fn decode_token<T: Clone + AsSurrealClient>(
 
 /// A utility function to confirm auth by parsing relevant headers. Useful for authenticating clients. Includes refresh token handling and OAuth
 // TODO: Pass an optional generic context parameter to support both REST and GraphQL refresh token handling - to attach new access token to context headers.
-pub async fn confirm_auth<T: Clone + AsSurrealClient>(
+pub async fn confirm_authentication<T: Clone + AsSurrealClient>(
     header_map: Option<&HeaderMap>,
     db: &T,
+    // role: &String,
 ) -> Result<AuthStatus, Error> {
     // let header_map = ctx.data_opt::<HeaderMap>();
     // Process request headers as needed
@@ -283,7 +277,7 @@ pub async fn confirm_auth<T: Clone + AsSurrealClient>(
                                         //     .data::<Extension<Arc<Surreal<SurrealClient>>>>()
                                         //     .unwrap();
 
-                                        let token_claims = decode_token(db, token).await;
+                                        let token_claims = decode_token(token).await;
 
                                         match &token_claims {
                                             Ok(claims) => {
@@ -295,27 +289,10 @@ pub async fn confirm_auth<T: Clone + AsSurrealClient>(
                                                         .as_ref()
                                                         .map(|t| t.to_string())
                                                         .unwrap_or("".to_string()),
+                                                    current_role: claims.custom.roles[0].clone(),
                                                 })
                                             }
-                                            Err(_err) => {
-                                                // Token verification failed, check if refresh token is present
-                                                let converted_jwt_secret_key =
-                                                    get_converted_jwt_secret_key(db)
-                                                        .await
-                                                        .map_err(|_e| {
-                                                            Error::new(
-                                                                ErrorKind::PermissionDenied,
-                                                                "Jwt Key failed",
-                                                            )
-                                                        })?;
-
-                                                handle_refresh_token(
-                                                    &cookies,
-                                                    &converted_jwt_secret_key,
-                                                    db,
-                                                )
-                                                .await
-                                            }
+                                            Err(_err) => handle_refresh_token(&cookies, db).await,
                                         }
                                     } else {
                                         let oauth_client_name =
@@ -339,6 +316,7 @@ pub async fn confirm_auth<T: Clone + AsSurrealClient>(
                                                 return Ok(AuthStatus {
                                                     is_auth: true,
                                                     sub: response.sub,
+                                                    current_role: "".to_string(),
                                                 });
                                             }
                                             OAuthClientName::Github => {
@@ -385,6 +363,7 @@ pub async fn confirm_auth<T: Clone + AsSurrealClient>(
                                                 return Ok(AuthStatus {
                                                     is_auth: true,
                                                     sub: response.id.to_string(),
+                                                    current_role: "".to_string(),
                                                 });
                                             }
                                         }
@@ -418,9 +397,9 @@ pub async fn confirm_auth<T: Clone + AsSurrealClient>(
 /// A utility function to handle refresh tokens
 async fn handle_refresh_token<T: Clone + AsSurrealClient>(
     cookies: &HashMap<String, String>,
-    converted_jwt_secret_key: &HS256Key,
     db: &T,
 ) -> Result<AuthStatus, Error> {
+    let converted_jwt_secret_key = get_converted_jwt_secret_key().await?;
     match cookies.get("t") {
         Some(refresh_token) => {
             let refresh_claims =
@@ -439,58 +418,19 @@ async fn handle_refresh_token<T: Clone + AsSurrealClient>(
 
                     match user {
                         Some(user) => {
-                            let mut user_roles_res = db
-                                .as_client()
-                                .query("
-                                    SELECT ->has_role->role.* AS roles FROM ONLY type::thing($user_id)
-                                    ")
-                                .bind(("user_id", format!(
-                                    "user:{}",
-                                    user.id.as_ref().map(|t| &t.id).expect("id")
-                                )))
-                                .await
-                                .map_err(|e| {
-                                    tracing::error!("DB Query failed: {}", e);
-                                    Error::new(ErrorKind::Other, "DB Query failed")
-                                })?;
-                            let user_roles: Option<SurrealRelationQueryResponse<SystemRole>> =
-                                user_roles_res.take(0).map_err(|e| {
-                                    tracing::error!("User Role deserialization failed: {}", e);
-                                    Error::new(ErrorKind::Other, "User Role deserialization failed")
-                                })?;
-
                             let auth_claim = AuthClaim {
-                                roles: match user_roles {
-                                    Some(existing_roles) => {
-                                        // use id instead of Thing
-                                        existing_roles
-                                            .get("roles")
-                                            .unwrap()
-                                            .into_iter()
-                                            .map(|role| {
-                                                role.id
-                                                    .as_ref()
-                                                    .map(|t| &t.id)
-                                                    .expect("id")
-                                                    .to_raw()
-                                            })
-                                            .collect()
-                                    }
-                                    None => {
-                                        vec![]
-                                    }
-                                },
+                                roles: refresh_claims.custom.roles.clone(),
                             };
 
                             let token_expiry_duration = Duration::from_secs(15 * 60);
-                            let _token = sign_jwt(db, &auth_claim, token_expiry_duration, &user)
+                            let _token = sign_jwt(&auth_claim, token_expiry_duration, &user)
                                 .await
                                 .map_err(|e| {
                                     tracing::error!("Error: {}", e);
                                     Error::new(ErrorKind::PermissionDenied, "Unauthorized")
                                 })?;
 
-                            // TODO: Handle these in the respective middleware for REST and GraphQL
+                            // TODO: Handle these with the respective functionality for REST and GraphQL contexts(Hint: Might use a Trait for this)
                             // ctx.insert_http_header(
                             //     SET_COOKIE,
                             //     format!("oauth_client=; HttpOnly; SameSite=Strict"),
@@ -501,6 +441,7 @@ async fn handle_refresh_token<T: Clone + AsSurrealClient>(
                             return Ok(AuthStatus {
                                 is_auth: true,
                                 sub: user.id.as_ref().map(|t| &t.id).expect("id").to_raw(),
+                                current_role: refresh_claims.custom.roles[0].clone(),
                             });
                         }
                         None => {
@@ -520,44 +461,15 @@ async fn handle_refresh_token<T: Clone + AsSurrealClient>(
     }
 }
 
-/// A utility function to get a converted JWT secret key
-async fn get_converted_jwt_secret_key<T: Clone + AsSurrealClient>(
-    db: &T,
-) -> Result<HS256Key, Error> {
-    // TODO: Might have to switch to having secret keys in .env
-    let mut result = db
-        .clone()
-        .as_client()
-        .query("SELECT * FROM type::table($table) WHERE name = 'jwt_key' LIMIT 1")
-        .bind(("table", "crypto_key"))
-        .await
-        .map_err(|e| {
+/// A utility function to get a converted JWT secret key.
+///
+/// Make sure that the env vars are set before this function runs.
+async fn get_converted_jwt_secret_key() -> Result<HS256Key, Error> {
+    match env::var("JWT_SECRET_KEY") {
+        Ok(secret_key) => Ok(HS256Key::from_bytes(secret_key.as_str().as_bytes())),
+        Err(e) => {
             tracing::error!("{}", e);
-            Error::new(ErrorKind::Other, "Database query failed")
-        })?;
-    let response: Option<SymKey> = result.take(0).map_err(|e| {
-        tracing::error!("{}", e);
-        Error::new(ErrorKind::Other, "Database query deserialization failed")
-    })?;
-
-    match &response {
-        Some(key_container) => Ok(HS256Key::from_bytes(&key_container.key.clone())),
-        None => {
-            let key = HS256Key::generate();
-            let _reslt: Option<SymKey> = db
-                .as_client()
-                .create("crypto_key")
-                .content(SymKey {
-                    key: key.clone().to_bytes(),
-                    name: "jwt_key".to_string(),
-                })
-                .await
-                .map_err(|e| {
-                    tracing::error!("{}", e);
-                    Error::new(ErrorKind::Other, "Database query failed")
-                })?;
-
-            Ok(key)
+            Err(Error::new(ErrorKind::Other, "Cannot proceed with request!"))
         }
     }
 }
@@ -611,15 +523,14 @@ pub async fn verify_login_credentials<T: Clone + AsSurrealClient>(
 }
 
 /// A utility function to sign JWTs
-pub async fn sign_jwt<T: Clone + AsSurrealClient>(
-    db: &T,
+pub async fn sign_jwt(
     auth_claim: &AuthClaim,
     duration: Duration,
     user: &User,
 ) -> Result<String, Error> {
-    let converted_key = get_converted_jwt_secret_key(db)
-        .await
-        .map_err(|_e| Error::new(ErrorKind::Other, "Database query failed"))?;
+    let converted_key = get_converted_jwt_secret_key().await?;
+
+    tracing::debug!("Auth Claim: {:?}", auth_claim);
 
     let mut token_claims = Claims::with_custom_claims(auth_claim.clone(), duration);
     token_claims.subject = Some(user.id.as_ref().map(|t| &t.id).expect("id").to_raw());
@@ -647,4 +558,121 @@ pub async fn get_user_email<T: Clone + AsSurrealClient>(
             "Invalid username or password",
         )),
     }
+}
+
+/// A utility function to check a users' admin previleges
+pub async fn confirm_authorization<T: Clone + AsSurrealClient>(
+    db: &T,
+    auth_status: &AuthStatus,
+    auth_constraint: AuthorizationConstraint,
+) -> Result<bool, Error> {
+    let mut is_admin_privileged = false;
+    let mut is_role_privileged = false;
+
+    match &auth_constraint.privilege {
+        Some(privilege) => {
+            let formated_query = match privilege {
+                AdminPrivilege::Admin => format!(
+                    "
+                    BEGIN TRANSACTION;
+                    LET $user = type::thing('user', $user_id);
+                    IF !$user.exists() {{
+                        THROW 'Invalid Input';
+                    }};
+                    LET $existing_roles = (SELECT <-(assigned WHERE in = $user) as admin_roles FROM role WHERE (role_name = $current_role_name AND is_admin = true) OR is_super_admin = true)[0]['admin_roles'];
+                    IF $existing_roles IS NOT NONE AND array::len($existing_roles) > 0 {{
+                        RETURN $existing_roles.map(|$existing_role: any| record::id($existing_role));
+                    }} ELSE {{
+                        RETURN [];
+                    }};
+                    COMMIT TRANSACTION;
+                    "
+                ),
+                AdminPrivilege::SuperAdmin => format!(
+                    "
+                    BEGIN TRANSACTION;
+                    LET $user = type::thing('user', $user_id);
+                    IF !$user.exists() {{
+                        THROW 'Invalid Input';
+                    }};
+                    LET $existing_roles = (SELECT <-(assigned WHERE in = $user) AS super_admin_roles FROM role WHERE is_super_admin = true AND role_name = $current_role_name)[0]['super_admin_roles'];
+                    IF $existing_roles IS NOT NONE AND array::len($existing_roles) > 0 {{
+                        RETURN $existing_roles.map(|$existing_role: any| record::id($existing_role));
+                    }} ELSE {{
+                        RETURN [];
+                    }};
+                    COMMIT TRANSACTION;
+                    "
+                ),
+            };
+
+            let mut admin_privilege_check_query = db
+                .as_client()
+                .query(formated_query.as_str())
+                .bind(("user_id", auth_status.sub.clone()))
+                .bind(("current_role_name", auth_status.current_role.clone()))
+                .await
+                .map_err(|e| {
+                    tracing::error!("{}", e);
+                    Error::new(ErrorKind::Other, "Database query failed")
+                })?;
+
+            // Get the first result from the first query
+            let response: Vec<String> = admin_privilege_check_query.take(0).map_err(|e| {
+                tracing::error!("admin_privilege_check_query: {}", e);
+                Error::new(ErrorKind::Other, "Database query deserialization failed")
+            })?;
+
+            is_admin_privileged = response.len() > 0;
+        }
+        None => {}
+    };
+
+    if auth_constraint.roles.len() > 0 {
+        let mut role_privilege_check_query = db
+            .as_client()
+            .query(
+                "
+                BEGIN TRANSACTION;
+                LET $user = type::thing('user', $user_id);
+                IF !$user.exists() {
+                    THROW 'Invalid Input';
+                };
+                LET $existing_roles = (SELECT <-(assigned WHERE in = $user) AS user_roles FROM role WHERE role_name IN $role_constraints AND $current_role_name IN $role_constraints)[0]['user_roles'];
+                IF $existing_roles IS NOT NONE AND array::len($existing_roles) > 0 {{
+                    RETURN $existing_roles.map(|$existing_role: any| record::id($existing_role));
+                }} ELSE {{
+                    RETURN [];
+                }};
+                COMMIT TRANSACTION;
+                "
+            )
+            .bind(("user_id", auth_status.sub.clone()))
+            .bind(("role_constraints", auth_constraint.roles.iter().map(|role| role.to_uppercase()).collect::<Vec<String>>()))
+            .bind(("current_role_name", auth_status.current_role.clone()))
+            .await
+            .map_err(|e| {
+                tracing::error!("{}", e);
+                Error::new(ErrorKind::Other, "Database query failed")
+            })?;
+
+        // Get the first result from the first query
+        let response: Vec<String> = role_privilege_check_query.take(0).map_err(|e| {
+            tracing::error!("role_privilege_check_query: {}", e);
+            Error::new(ErrorKind::Other, "Database query deserialization failed")
+        })?;
+
+        is_role_privileged = response.len() > 0;
+    };
+
+    Ok((auth_constraint.roles.len() > 0
+        && is_role_privileged
+        && auth_constraint.privilege.is_some()
+        && is_admin_privileged)
+        || (auth_constraint.roles.len() > 0
+            && is_role_privileged
+            && auth_constraint.privilege.is_none())
+        || (auth_constraint.roles.len() == 0
+            && auth_constraint.privilege.is_some()
+            && is_admin_privileged))
 }

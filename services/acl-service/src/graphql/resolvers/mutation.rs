@@ -9,12 +9,14 @@ use surrealdb::{engine::remote::ws::Client, Surreal};
 
 use crate::{
     graphql::schemas::{
-        role::SystemRole,
+        role::{
+            AdminPrivilege, AuthorizationConstraint, RoleInput, RoleMetadata, RoleType, SystemRole,
+        },
         user::{AuthDetails, SurrealRelationQueryResponse, User, UserLogins, UserUpdate},
     },
     utils::auth::{
-        confirm_auth, initiate_auth_code_grant_flow, navigate_to_redirect_url, sign_jwt,
-        verify_login_credentials,
+        confirm_authentication, confirm_authorization, initiate_auth_code_grant_flow,
+        navigate_to_redirect_url, sign_jwt, verify_login_credentials,
     },
 };
 
@@ -59,14 +61,34 @@ impl Mutation {
         }
     }
 
-    async fn create_user_role(&self, ctx: &Context<'_>, role: SystemRole) -> Result<SystemRole> {
+    async fn create_user_role(
+        &self,
+        ctx: &Context<'_>,
+        role: RoleInput,
+        role_metadata: RoleMetadata,
+    ) -> Result<SystemRole> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
         let header_map = ctx.data_opt::<HeaderMap>();
 
-        let check_auth = confirm_auth(header_map, db).await;
+        let authenticated = confirm_authentication(header_map, db).await?;
 
-        if let Err(e) = check_auth {
-            tracing::error!("Unauthorized: {}", e);
+        // TODO: Evaluate admin permissions here to restrict the Admin from giving Superadmin privileges. Constraint is already effected in the database.
+        let authorization_constraint = if role_metadata.organization.is_some() {
+            AuthorizationConstraint {
+                roles: vec![],
+                privilege: Some(AdminPrivilege::SuperAdmin),
+            }
+        } else {
+            AuthorizationConstraint {
+                roles: vec![],
+                privilege: Some(AdminPrivilege::Admin),
+            }
+        };
+
+        let authorized =
+            confirm_authorization(db, &authenticated, authorization_constraint).await?;
+
+        if !authorized {
             return Err(ExtendedError::new(
                 "Unauthorized",
                 Some(StatusCode::UNAUTHORIZED.as_u16()),
@@ -74,12 +96,83 @@ impl Mutation {
             .build());
         }
 
-        let response: Option<SystemRole> = db
-            .create("role")
-            .content(SystemRole { ..role })
+        let is_admin = match role_metadata.role_type {
+            RoleType::Admin => true,
+            RoleType::Other => false,
+        };
+
+        if (role_metadata.department.is_some() && role_metadata.department_is_under.is_none())
+            || (role_metadata.department.is_none() && role_metadata.department_is_under.is_some())
+        {
+            return Err(ExtendedError::new(
+                "Invalid Input",
+                Some(StatusCode::BAD_REQUEST.as_u16()),
+            )
+            .build());
+        };
+
+        let mut create_role_query = db
+            .query(
+                "
+                BEGIN TRANSACTION;
+                LET $user = type::thing('user', $user_id);
+                IF !$user.exists() {
+                    THROW 'Invalid Input';
+                };
+
+                LET $created_role = (CREATE role CONTENT {
+                    role_name: $role_input.role_name,
+                    created_by: $user,
+                    is_admin: type::bool($is_admin),
+                    admin_permissions: $role_metadata.admin_permissions
+                } RETURN AFTER);
+                LET $role_id = (SELECT VALUE id FROM $created_role);
+                IF $role_metadata.organization IS NOT NONE {
+                    RELATE $role_id -> organization -> $role_id CONTENT {
+                        org_name: $role_metadata.organization.org_name
+                    };
+                };
+
+                IF $role_metadata.department IS NOT NONE {
+                    IF $role_metadata.department_is_under.body = 'Organization' {
+                        LET $org = type::thing('organization', $role_metadata.department_is_under.id);
+                        IF !$org.exists() {
+                            THROW 'Invalid Input';
+                        };
+                        LET $created_department = (SELECT VALUE id FROM (CREATE department CONTENT $role_metadata.department RETURN AFTER));
+                        RELATE $created_department -> is_under -> $org;
+                    } ELSE IF $role_metadata.department_is_under.body = 'Department' {
+                        LET $dep = type::thing('department', $role_metadata.department_is_under.id);
+                        IF !$dep.exists() {
+                            THROW 'Invalid Input';
+                        };
+                        LET $created_department = (SELECT VALUE id FROM (CREATE department CONTENT $role_metadata.department RETURN AFTER));
+                        RELATE $created_department -> is_under -> $dep;
+                    } ELSE {
+                        THROW 'Invalid Input';
+                    };
+                };
+
+                RETURN $created_role;
+                COMMIT TRANSACTION;
+                ",
+            )
+            .bind(("role_input", role))
+            .bind(("role_metadata", role_metadata))
+            .bind(("user_id", authenticated.sub.clone()))
+            .bind(("is_admin", is_admin))
             .await
             .map_err(|e| {
-            tracing::error!("Error creating role: {}", e);
+                tracing::error!("Error creating role: {}", e);
+                ExtendedError::new(
+                    "Failed to create role",
+                    Some(StatusCode::BAD_REQUEST.as_u16()),
+                )
+                .build()
+            })?;
+
+        let user_role: Option<SystemRole> = create_role_query.take(0).map_err(|e| {
+            tracing::error!("Failed to create role: {}", e);
             ExtendedError::new(
                 "Failed to create role",
                 Some(StatusCode::BAD_REQUEST.as_u16()),
@@ -87,8 +180,8 @@ impl Mutation {
             .build()
         })?;
 
-        match response {
-            Some(user) => Ok(user),
+        match user_role {
+            Some(role) => Ok(role),
             None => Err(ExtendedError::new(
                 "Failed to create role",
                 Some(StatusCode::BAD_REQUEST.as_u16()),
@@ -128,13 +221,10 @@ impl Mutation {
                         let mut user_roles_res = db
                             .query(
                                 "
-                            SELECT ->has_role->role.* AS roles FROM ONLY type::thing($user_id)
+                                SELECT ->(assigned WHERE is_default=true)->role.* AS roles FROM ONLY type::thing($user_id)
                             ",
                             )
-                            .bind((
-                                "user_id",
-                                format!("user:{}", user.id.as_ref().map(|t| &t.id).expect("id")),
-                            ))
+                            .bind(("user_id", user.id.clone()))
                             .await
                             .map_err(|_e| Error::new("DB Query failed: Get Roles"))?;
                         let user_roles: Option<SurrealRelationQueryResponse<SystemRole>> =
@@ -156,28 +246,35 @@ impl Mutation {
                                         .unwrap()
                                         .into_iter()
                                         .map(|role| {
-                                            role.id.as_ref().map(|t| &t.id).expect("id").to_raw()
+                                            let name_str = format!("{}", role.role_name);
+                                            tracing::debug!("name_str: {}", name_str);
+                                            name_str
                                         })
                                         .collect()
                                 }
-                                None => vec![],
+                                None => {
+                                    return Err(ExtendedError::new(
+                                        "Forbidden!",
+                                        Some(StatusCode::FORBIDDEN.as_u16()),
+                                    )
+                                    .build())
+                                }
                             },
                         };
 
-                        let token_str =
-                            sign_jwt(db, &auth_claim, access_token_expiry_duration, user)
-                                .await
-                                .map_err(|e| {
-                                    tracing::error!("Failed to sign Access Token: {}", e);
-                                    ExtendedError::new(
-                                        "Internal Server Error",
-                                        Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
-                                    )
-                                    .build()
-                                })?;
+                        let token_str = sign_jwt(&auth_claim, access_token_expiry_duration, user)
+                            .await
+                            .map_err(|e| {
+                                tracing::error!("Failed to sign Access Token: {}", e);
+                                ExtendedError::new(
+                                    "Internal Server Error",
+                                    Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
+                                )
+                                .build()
+                            })?;
 
                         let refresh_token_str =
-                            sign_jwt(db, &auth_claim, refresh_token_expiry_duration, user)
+                            sign_jwt(&auth_claim, refresh_token_expiry_duration, user)
                                 .await
                                 .map_err(|e| {
                                     tracing::error!("Failed to sign Refresh Token: {}", e);
@@ -234,11 +331,14 @@ impl Mutation {
                             url: None,
                         })
                     }
-                    Err(_e) => Err(ExtendedError::new(
-                        "Invalid credentials",
-                        Some(StatusCode::UNAUTHORIZED.as_u16()),
-                    )
-                    .build()),
+                    Err(e) => {
+                        tracing::error!("Error signing in: {}", e);
+                        Err(ExtendedError::new(
+                            "Invalid credentials",
+                            Some(StatusCode::UNAUTHORIZED.as_u16()),
+                        )
+                        .build())
+                    }
                 }
             }
         }
@@ -259,7 +359,7 @@ impl Mutation {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
         let header_map = ctx.data_opt::<HeaderMap>();
 
-        let check_auth = confirm_auth(header_map, db).await?;
+        let check_auth = confirm_authentication(header_map, db).await?;
 
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
 

@@ -10,7 +10,9 @@ use surrealdb::Surreal;
 use tonic::{Request, Response, Status};
 
 use crate::graphql::schemas::user::UserLogins;
-use crate::utils::auth::{confirm_auth, get_user_email, sign_jwt, verify_login_credentials};
+use crate::utils::auth::{
+    confirm_authentication, get_user_email, sign_jwt, verify_login_credentials,
+};
 
 use lib::integration::grpc::clients::acl_service::{
     acl_server::Acl, AuthDetails, AuthStatus, Empty, GetUserEmailRequest, GetUserEmailResponse,
@@ -47,7 +49,7 @@ impl Acl for AclServiceImplementation {
         header_map.insert(AUTHORIZATION, token_header_value);
         header_map.insert(COOKIE, cookie_header_value);
 
-        match confirm_auth(Some(&header_map), &self.db).await {
+        match confirm_authentication(Some(&header_map), &self.db).await {
             Ok(auth_status) => Ok(Response::new(auth_status.into())),
             Err(_e) => Err(Status::unauthenticated("Unauthorized")),
         }
@@ -73,10 +75,9 @@ impl Acl for AclServiceImplementation {
                 let auth_claim = AuthClaim { roles: vec![] };
                 let service_token_expiry_duration = Duration::from_secs(30);
 
-                let signed_jwt =
-                    sign_jwt(&self.db, &auth_claim, service_token_expiry_duration, &user)
-                        .await
-                        .map_err(|_e| Status::unauthenticated("Unauthorized"))?;
+                let signed_jwt = sign_jwt(&auth_claim, service_token_expiry_duration, &user)
+                    .await
+                    .map_err(|_e| Status::unauthenticated("Unauthorized"))?;
 
                 Ok(Response::new(AuthDetails { token: signed_jwt }))
             }

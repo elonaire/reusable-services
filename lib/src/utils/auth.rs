@@ -9,6 +9,5 @@ pub struct SymKey {
 
 #[derive(Serialize, Deserialize, Clone, Debug, SimpleObject)]
 pub struct AuthClaim {
-    // pub sub: String,
     pub roles: Vec<String>,
 }
