@@ -31,7 +31,7 @@ pub async fn handle_auth_with_refresh(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    let response = acl_grpc_client.check_auth(request).await;
+    let response = acl_grpc_client.confirm_authentication(request).await;
 
     match response {
         Ok(response) => {

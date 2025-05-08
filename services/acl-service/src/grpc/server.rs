@@ -31,7 +31,10 @@ impl AclServiceImplementation {
 
 #[tonic::async_trait]
 impl Acl for AclServiceImplementation {
-    async fn check_auth(&self, request: Request<Empty>) -> Result<Response<AuthStatus>, Status> {
+    async fn confirm_authentication(
+        &self,
+        request: Request<Empty>,
+    ) -> Result<Response<AuthStatus>, Status> {
         let metadata = request.metadata();
         let token = metadata
             .get("authorization")

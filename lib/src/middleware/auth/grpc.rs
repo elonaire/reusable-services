@@ -49,7 +49,7 @@ where
             Status::unavailable("Failed to connect to ACL service")
         })?;
 
-        let response = acl_grpc_client.check_auth(request).await?;
+        let response = acl_grpc_client.confirm_authentication(request).await?;
 
         let current_user = response.into_inner().sub;
         // Insert current user to the req extensions(response.sub)
