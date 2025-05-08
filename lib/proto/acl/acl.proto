@@ -2,7 +2,7 @@ syntax = "proto3";
 package acl;
 
 service Acl {
-    rpc CheckAuth(Empty) returns (AuthStatus);
+    rpc ConfirmAuthentication(Empty) returns (AuthStatus);
     rpc SignInAsService(Empty) returns (AuthDetails);
     rpc GetUserEmail(GetUserEmailRequest) returns (GetUserEmailResponse);
 }
