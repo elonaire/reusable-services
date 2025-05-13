@@ -17,6 +17,7 @@ use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use axum::{
     extract::{Extension, Query as AxumQuery},
     http::{header::COOKIE as AXUM_COOKIE, HeaderMap, HeaderValue},
+    response::{IntoResponse, Redirect},
     routing::{get, post},
     serve, Json, Router,
 };
@@ -29,12 +30,9 @@ use hyper::{
         ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS,
         AUTHORIZATION, CONTENT_TYPE, COOKIE, SET_COOKIE,
     },
-    Method, StatusCode,
+    Method,
 };
-use oauth2::{
-    basic::BasicTokenType, AuthorizationCode, EmptyExtraTokenFields, PkceCodeVerifier,
-    StandardTokenResponse,
-};
+use oauth2::{AuthorizationCode, PkceCodeVerifier, TokenResponse};
 use serde::Deserialize;
 use surrealdb::{engine::remote::ws::Client, Surreal};
 use tonic::transport::Server;
@@ -95,10 +93,7 @@ struct Params {
 }
 
 // client agnostic oauth handler
-async fn oauth_handler(
-    params: AxumQuery<Params>,
-    headers: HeaderMap,
-) -> Result<Json<StandardTokenResponse<EmptyExtraTokenFields, BasicTokenType>>, StatusCode> {
+async fn oauth_handler(params: AxumQuery<Params>, headers: HeaderMap) -> impl IntoResponse {
     // get the csrf state from the cookie
     // Extract the csrf_state, oauth_client, pkce_verifier cookies
     // Extract cookies from the headers
@@ -109,6 +104,8 @@ async fn oauth_handler(
 
     // Split and parse cookies manually
     let cookie_map: std::collections::HashMap<_, _> = parse_cookies(cookie_header);
+
+    tracing::debug!("cookie_map: {:?}", cookie_map);
 
     let oauth_client_name = cookie_map
         .get("oauth_client")
@@ -143,7 +140,14 @@ async fn oauth_handler(
         .await
         .unwrap();
 
-    Ok(Json(token_result))
+    let client_token_url = env::var("OAUTH_CLIENT_TOKEN_URL").unwrap_or_else(|_| "".to_string());
+
+    Redirect::to(&format!(
+        "{}?token={}",
+        client_token_url,
+        token_result.access_token().secret()
+    ))
+    .into_response()
 }
 
 #[tokio::main]

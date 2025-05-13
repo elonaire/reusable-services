@@ -29,6 +29,7 @@ use oauth2::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::graphql::schemas::user::GoogleUserInfo;
 use crate::graphql::schemas::{
     role::{AdminPrivilege, AuthorizationConstraint},
     user::{
@@ -168,16 +169,17 @@ pub async fn navigate_to_redirect_url(
                 .authorize_url(CsrfToken::new_random)
                 // Set the desired scopes.
                 .add_scope(Scope::new(
-                    "https://www.googleapis.com/auth/plus.me".to_string(),
+                    "https://www.googleapis.com/auth/userinfo.email".to_string(),
+                ))
+                .add_scope(Scope::new(
+                    "https://www.googleapis.com/auth/userinfo.profile".to_string(),
                 ))
         }
         OAuthClientName::Github => {
             oauth_client
                 .authorize_url(CsrfToken::new_random)
                 // Set the desired scopes.
-                .add_scope(Scope::new("read".to_string()))
-                .add_scope(Scope::new("write".to_string()))
-                .add_scope(Scope::new("user".to_string()))
+                .add_scope(Scope::new("read:user".to_string()))
         }
     };
 
@@ -193,7 +195,7 @@ pub async fn navigate_to_redirect_url(
     ctx.insert_http_header(
         SET_COOKIE,
         format!(
-            "oauth_client={}; HttpOnly; SameSite=Strict",
+            "oauth_client={}; HttpOnly; SameSite=Lax; Path=/; Secure",
             oauth_client_name.fmt()
         ),
     );
@@ -202,7 +204,7 @@ pub async fn navigate_to_redirect_url(
     ctx.append_http_header(
         SET_COOKIE,
         format!(
-            "j={}; Max-Age={}; HttpOnly; SameSite=Strict",
+            "j={}; Max-Age={}; HttpOnly; SameSite=Lax; Path=/; Secure",
             csrf_token.secret(),
             sensitive_cookies_expiry_duration.as_secs()
         ),
@@ -210,7 +212,7 @@ pub async fn navigate_to_redirect_url(
     ctx.append_http_header(
         SET_COOKIE,
         format!(
-            "k={}; Max-Age={}; HttpOnly; SameSite=Strict",
+            "k={}; Max-Age={}; HttpOnly; SameSite=Lax; Path=/; Secure",
             pkce_verifier.secret(),
             sensitive_cookies_expiry_duration.as_secs()
         ),
@@ -300,22 +302,54 @@ pub async fn confirm_authentication<T: Clone + AsSurrealClient>(
 
                                         match oauth_client_name {
                                             OAuthClientName::Google => {
+                                                let client = ReqWestClient::new();
+
+                                                let mut req_headers = ReqWestHeaderMap::new();
+                                                req_headers
+                                                    .insert("Authorization", token.to_owned());
+
                                                 // make a request to google oauth server to verify the token
                                                 let response =
-                                                    reqwest::get(format!("https://oauth2.googleapis.com/tokeninfo?access_token={}", token.to_str().unwrap().strip_prefix("Bearer ").unwrap()).as_str())
+                                                    // reqwest::get(format!("https://oauth2.googleapis.com/people/me?access_token={}", token.to_str().unwrap().strip_prefix("Bearer ").unwrap()).as_str())
+                                                    client
+                                                        .request(
+                                                            Method::GET,
+                                                            "https://people.googleapis.com/v1/people/me?personFields=names,emailAddresses",
+                                                        )
+                                                        .headers(req_headers)
+                                                        .send()
                                                         .await
-                                                        .map_err(|_e| {
+                                                        .map_err(|e| {
+                                                            tracing::debug!("OAuth request to Google failed: {:?}", e);
                                                             Error::new(ErrorKind::Other, "OAuth request to Google failed")
-                                                        })?
-                                                        .json::<DecodedGoogleOAuthToken>()
-                                                        .await
-                                                        .map_err(|_e| {
-                                                            Error::new(ErrorKind::Other, "Google Token deserialization failed")
                                                         })?;
+
+                                                // Log the raw JSON response
+                                                // let response_text = response
+                                                //     .text()
+                                                //     .await
+                                                //     .map_err(|e| {
+                                                //         tracing::debug!("Failed to read response body: {:?}", e);
+                                                //         Error::new(ErrorKind::Other, "Failed to read response body")
+                                                //     })?;
+                                                // tracing::debug!("Raw response body: {}", response_text);
+
+                                                let user_data = response
+                                                    .json::<GoogleUserInfo>()
+                                                    .await
+                                                    .map_err(|e| {
+                                                        tracing::debug!("Google Token deserialization failed: {:?}", e);
+                                                        Error::new(
+                                                            ErrorKind::Other,
+                                                            "Google Token deserialization failed",
+                                                        )
+                                                    })?;
+
+                                                tracing::debug!("user_data: {:?}", user_data);
 
                                                 return Ok(AuthStatus {
                                                     is_auth: true,
-                                                    sub: response.sub,
+                                                    sub: user_data.resource_name,
                                                     current_role: "".to_string(),
                                                 });
                                             }
@@ -337,6 +371,14 @@ pub async fn confirm_authentication<T: Clone + AsSurrealClient>(
                                                     "2022-11-28".parse().unwrap(),
                                                 );
 
+                                                let user_agent = env::var("GITHUB_OAUTH_USER_AGENT")
+                                                    .expect("Missing the GITHUB_OAUTH_USER_AGENT environment variable.");
+
+                                                req_headers.append(
+                                                    "User-Agent",
+                                                    user_agent.as_str().parse().unwrap(),
+                                                );
+
                                                 let response = client
                                                     .request(
                                                         Method::GET,
@@ -345,24 +387,48 @@ pub async fn confirm_authentication<T: Clone + AsSurrealClient>(
                                                     .headers(req_headers)
                                                     .send()
                                                     .await
-                                                    .map_err(|_e| {
+                                                    .map_err(|e| {
+                                                        tracing::debug!(
+                                                            "OAuth request to GitHub failed: {:?}",
+                                                            e
+                                                        );
                                                         Error::new(
                                                             ErrorKind::Other,
                                                             "OAuth request to GitHub failed",
                                                         )
-                                                    })?
-                                                    .json::<DecodedGithubOAuthToken>()
+                                                    })?;
+
+                                                let user_data = response.json::<DecodedGithubOAuthToken>()
                                                     .await
-                                                    .map_err(|_e| {
+                                                    .map_err(|e| {
+                                                        tracing::error!("GitHub Token deserialization failed: {}", e);
                                                         Error::new(
                                                             ErrorKind::Other,
                                                             "GitHub Token deserialization failed",
                                                         )
                                                     })?;
 
+                                                tracing::debug!("user_data: {:?}", user_data);
+
+                                                // let response_text =
+                                                //     response.text().await.map_err(|e| {
+                                                //         tracing::debug!(
+                                                //             "Failed to read response body: {:?}",
+                                                //             e
+                                                //         );
+                                                //         Error::new(
+                                                //             ErrorKind::Other,
+                                                //             "Failed to read response body",
+                                                //         )
+                                                //     })?;
+                                                // tracing::debug!(
+                                                //     "Rate limit response: {}",
+                                                //     response_text
+                                                // );
+
                                                 return Ok(AuthStatus {
                                                     is_auth: true,
-                                                    sub: response.id.to_string(),
+                                                    sub: user_data.id.to_string(),
                                                     current_role: "".to_string(),
                                                 });
                                             }
