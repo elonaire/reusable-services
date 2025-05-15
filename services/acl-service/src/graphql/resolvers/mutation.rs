@@ -14,9 +14,13 @@ use crate::{
         },
         user::{AuthDetails, SurrealRelationQueryResponse, User, UserLogins, UserUpdate},
     },
-    utils::auth::{
-        confirm_authentication, confirm_authorization, initiate_auth_code_grant_flow,
-        navigate_to_redirect_url, sign_jwt, verify_login_credentials,
+    utils::{
+        auth::{
+            confirm_authentication, confirm_authorization, fetch_default_user_roles,
+            initiate_auth_code_grant_flow, navigate_to_redirect_url, sign_jwt,
+            verify_login_credentials,
+        },
+        user::create_user,
     },
 };
 
@@ -38,18 +42,10 @@ impl Mutation {
         // User signup
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
 
-        let response: Option<User> = db
-            .create("user")
-            .content(User {
-                oauth_client: None,
-                ..user
-            })
-            .await
-            .map_err(|e| {
-                tracing::error!("Error creating user: {}", e);
-                ExtendedError::new("Failed to sign up", Some(StatusCode::BAD_REQUEST.as_u16()))
-                    .build()
-            })?;
+        let response: Option<User> = create_user(db, user).await.map_err(|e| {
+            tracing::error!("Error creating user: {}", e);
+            ExtendedError::new("Failed to sign up", Some(StatusCode::BAD_REQUEST.as_u16())).build()
+        })?;
 
         match response {
             Some(user) => Ok(user),
@@ -218,72 +214,49 @@ impl Mutation {
                         let refresh_token_expiry_duration = Duration::from_secs(30 * 24 * 60 * 60); // days by hours by minutes by 60 seconds
                         let access_token_expiry_duration = Duration::from_secs(15 * 60); // minutes by 60 seconds
 
-                        let mut user_roles_res = db
-                            .query(
-                                "
-                                SELECT ->(assigned WHERE is_default=true)->role.* AS roles FROM ONLY type::thing($user_id)
-                            ",
+                        let user_roles = fetch_default_user_roles(
+                            db,
+                            user.id
+                                .clone()
+                                .as_ref()
+                                .map(|t| &t.id)
+                                .unwrap()
+                                .to_raw()
+                                .as_str(),
+                        )
+                        .await?;
+
+                        let auth_claim = AuthClaim { roles: user_roles };
+
+                        let token_str = sign_jwt(
+                            &auth_claim,
+                            access_token_expiry_duration,
+                            &user.id.as_ref().map(|t| &t.id).expect("id").to_raw(),
+                        )
+                        .await
+                        .map_err(|e| {
+                            tracing::error!("Failed to sign Access Token: {}", e);
+                            ExtendedError::new(
+                                "Internal Server Error",
+                                Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
                             )
-                            .bind(("user_id", user.id.clone()))
-                            .await
-                            .map_err(|_e| Error::new("DB Query failed: Get Roles"))?;
-                        let user_roles: Option<SurrealRelationQueryResponse<SystemRole>> =
-                            user_roles_res.take(0).map_err(|e| {
-                                tracing::error!("Failed to get roles: {}", e);
-                                ExtendedError::new(
-                                    "Failed to get roles",
-                                    Some(StatusCode::BAD_REQUEST.as_u16()),
-                                )
-                                .build()
-                            })?;
+                            .build()
+                        })?;
 
-                        let auth_claim = AuthClaim {
-                            roles: match user_roles {
-                                Some(existing_roles) => {
-                                    // use id instead of Thing
-                                    existing_roles
-                                        .get("roles")
-                                        .unwrap()
-                                        .into_iter()
-                                        .map(|role| {
-                                            let name_str = format!("{}", role.role_name);
-                                            tracing::debug!("name_str: {}", name_str);
-                                            name_str
-                                        })
-                                        .collect()
-                                }
-                                None => {
-                                    return Err(ExtendedError::new(
-                                        "Forbidden!",
-                                        Some(StatusCode::FORBIDDEN.as_u16()),
-                                    )
-                                    .build())
-                                }
-                            },
-                        };
-
-                        let token_str = sign_jwt(&auth_claim, access_token_expiry_duration, user)
-                            .await
-                            .map_err(|e| {
-                                tracing::error!("Failed to sign Access Token: {}", e);
-                                ExtendedError::new(
-                                    "Internal Server Error",
-                                    Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
-                                )
-                                .build()
-                            })?;
-
-                        let refresh_token_str =
-                            sign_jwt(&auth_claim, refresh_token_expiry_duration, user)
-                                .await
-                                .map_err(|e| {
-                                    tracing::error!("Failed to sign Refresh Token: {}", e);
-                                    ExtendedError::new(
-                                        "Internal Server Error",
-                                        Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
-                                    )
-                                    .build()
-                                })?;
+                        let refresh_token_str = sign_jwt(
+                            &auth_claim,
+                            refresh_token_expiry_duration,
+                            &user.id.as_ref().map(|t| &t.id).expect("id").to_raw(),
+                        )
+                        .await
+                        .map_err(|e| {
+                            tracing::error!("Failed to sign Refresh Token: {}", e);
+                            ExtendedError::new(
+                                "Internal Server Error",
+                                Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
+                            )
+                            .build()
+                        })?;
 
                         match ctx.data_opt::<HeaderMap>() {
                             Some(headers) => {

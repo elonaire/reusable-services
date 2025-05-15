@@ -29,14 +29,13 @@ use oauth2::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::graphql::schemas::user::GoogleUserInfo;
+use crate::graphql::schemas::role::SystemRole;
+use crate::graphql::schemas::user::{GoogleUserInfo, OAuthUser, SurrealRelationQueryResponse};
 use crate::graphql::schemas::{
     role::{AdminPrivilege, AuthorizationConstraint},
-    user::{
-        AccountStatus, DecodedGithubOAuthToken, DecodedGoogleOAuthToken, User, UserLogins,
-        UserOutput,
-    },
+    user::{AccountStatus, GithubUserProfile, User, UserLogins, UserOutput},
 };
+use crate::utils::user::create_user;
 
 pub type OAuthClientInstance = Client<
     StandardErrorResponse<BasicErrorResponseType>,
@@ -275,10 +274,6 @@ pub async fn confirm_authentication<T: Clone + AsSurrealClient>(
                             match cookies.get("oauth_client") {
                                 Some(oauth_client) => {
                                     if oauth_client.is_empty() {
-                                        // let db = ctx
-                                        //     .data::<Extension<Arc<Surreal<SurrealClient>>>>()
-                                        //     .unwrap();
-
                                         let token_claims = decode_token(token).await;
 
                                         match &token_claims {
@@ -297,140 +292,87 @@ pub async fn confirm_authentication<T: Clone + AsSurrealClient>(
                                             Err(_err) => handle_refresh_token(&cookies, db).await,
                                         }
                                     } else {
-                                        let oauth_client_name =
-                                            OAuthClientName::from_str(oauth_client);
+                                        match cookies.get("oauth_user_roles_jwt") {
+                                            Some(oauth_user_roles_jwt) => {
+                                                let token_claims = decode_token(
+                                                    &HeaderValue::from_str(oauth_user_roles_jwt)
+                                                        .unwrap(),
+                                                )
+                                                .await;
 
-                                        match oauth_client_name {
-                                            OAuthClientName::Google => {
-                                                let client = ReqWestClient::new();
+                                                match &token_claims {
+                                                    Ok(claims) => {
+                                                        // Token verification successful
+                                                        let oauth_client_name =
+                                                            OAuthClientName::from_str(oauth_client);
 
-                                                let mut req_headers = ReqWestHeaderMap::new();
-                                                req_headers
-                                                    .insert("Authorization", token.to_owned());
+                                                        match oauth_client_name {
+                                                            OAuthClientName::Google => {
+                                                                let google_user =
+                                                                    verify_oauth_token::<
+                                                                        GoogleUserInfo,
+                                                                    >(
+                                                                        OAuthClientName::Google,
+                                                                        token,
+                                                                    )
+                                                                    .await?;
 
-                                                // make a request to google oauth server to verify the token
-                                                let response =
-                                                    // reqwest::get(format!("https://oauth2.googleapis.com/people/me?access_token={}", token.to_str().unwrap().strip_prefix("Bearer ").unwrap()).as_str())
-                                                    client
-                                                        .request(
-                                                            Method::GET,
-                                                            "https://people.googleapis.com/v1/people/me?personFields=names,emailAddresses",
-                                                        )
-                                                        .headers(req_headers)
-                                                        .send()
-                                                        .await
-                                                        .map_err(|e| {
-                                                            tracing::debug!("OAuth request to Google failed: {:?}", e);
-                                                            Error::new(ErrorKind::Other, "OAuth request to Google failed")
-                                                        })?;
+                                                                return Ok(AuthStatus {
+                                                                    is_auth: true,
+                                                                    sub: google_user.resource_name,
+                                                                    current_role: claims
+                                                                        .custom
+                                                                        .roles[0]
+                                                                        .clone(),
+                                                                });
+                                                            }
+                                                            OAuthClientName::Github => {
+                                                                let github_user =
+                                                                    verify_oauth_token::<
+                                                                        GithubUserProfile,
+                                                                    >(
+                                                                        OAuthClientName::Github,
+                                                                        token,
+                                                                    )
+                                                                    .await?;
 
-                                                // Log the raw JSON response
-                                                // let response_text = response
-                                                //     .text()
-                                                //     .await
-                                                //     .map_err(|e| {
-                                                //         tracing::debug!("Failed to read response body: {:?}", e);
-                                                //         Error::new(ErrorKind::Other, "Failed to read response body")
-                                                //     })?;
-                                                // tracing::debug!("Raw response body: {}", response_text);
-
-                                                let user_data = response
-                                                    .json::<GoogleUserInfo>()
-                                                    .await
-                                                    .map_err(|e| {
-                                                        tracing::debug!("Google Token deserialization failed: {:?}", e);
-                                                        Error::new(
-                                                            ErrorKind::Other,
-                                                            "Google Token deserialization failed",
-                                                        )
-                                                    })?;
-
-                                                tracing::debug!("user_data: {:?}", user_data);
-
-                                                return Ok(AuthStatus {
-                                                    is_auth: true,
-                                                    sub: user_data.resource_name,
-                                                    current_role: "".to_string(),
-                                                });
+                                                                return Ok(AuthStatus {
+                                                                    is_auth: true,
+                                                                    sub: github_user.id.to_string(),
+                                                                    current_role: claims
+                                                                        .custom
+                                                                        .roles[0]
+                                                                        .clone(),
+                                                                });
+                                                            }
+                                                        }
+                                                        // Ok(AuthStatus {
+                                                        //     is_auth: true,
+                                                        //     sub: claims
+                                                        //         .subject
+                                                        //         .as_ref()
+                                                        //         .map(|t| t.to_string())
+                                                        //         .unwrap_or("".to_string()),
+                                                        //     current_role: claims.custom.roles[0].clone(),
+                                                        // })
+                                                    }
+                                                    Err(_err) => {
+                                                        tracing::error!("Failed to decode jwt!");
+                                                        Err(Error::new(
+                                                            ErrorKind::PermissionDenied,
+                                                            "Not Authorized!",
+                                                        ))
+                                                    }
+                                                }
                                             }
-                                            OAuthClientName::Github => {
-                                                // make a request to github oauth server to verify the token
-                                                let client = ReqWestClient::new();
-
-                                                let mut req_headers = ReqWestHeaderMap::new();
-                                                req_headers
-                                                    .insert("Authorization", token.to_owned());
-
-                                                req_headers.append(
-                                                    "Accept",
-                                                    "application/vnd.github+json".parse().unwrap(),
+                                            None => {
+                                                tracing::error!(
+                                                    "Missing oauth user permissions jwt!"
                                                 );
-
-                                                req_headers.append(
-                                                    "X-GitHub-Api-Version",
-                                                    "2022-11-28".parse().unwrap(),
-                                                );
-
-                                                let user_agent = env::var("GITHUB_OAUTH_USER_AGENT")
-                                                    .expect("Missing the GITHUB_OAUTH_USER_AGENT environment variable.");
-
-                                                req_headers.append(
-                                                    "User-Agent",
-                                                    user_agent.as_str().parse().unwrap(),
-                                                );
-
-                                                let response = client
-                                                    .request(
-                                                        Method::GET,
-                                                        "https://api.github.com/user",
-                                                    )
-                                                    .headers(req_headers)
-                                                    .send()
-                                                    .await
-                                                    .map_err(|e| {
-                                                        tracing::debug!(
-                                                            "OAuth request to GitHub failed: {:?}",
-                                                            e
-                                                        );
-                                                        Error::new(
-                                                            ErrorKind::Other,
-                                                            "OAuth request to GitHub failed",
-                                                        )
-                                                    })?;
-
-                                                let user_data = response.json::<DecodedGithubOAuthToken>()
-                                                    .await
-                                                    .map_err(|e| {
-                                                        tracing::error!("GitHub Token deserialization failed: {}", e);
-                                                        Error::new(
-                                                            ErrorKind::Other,
-                                                            "GitHub Token deserialization failed",
-                                                        )
-                                                    })?;
-
-                                                tracing::debug!("user_data: {:?}", user_data);
-
-                                                // let response_text =
-                                                //     response.text().await.map_err(|e| {
-                                                //         tracing::debug!(
-                                                //             "Failed to read response body: {:?}",
-                                                //             e
-                                                //         );
-                                                //         Error::new(
-                                                //             ErrorKind::Other,
-                                                //             "Failed to read response body",
-                                                //         )
-                                                //     })?;
-                                                // tracing::debug!(
-                                                //     "Rate limit response: {}",
-                                                //     response_text
-                                                // );
-
-                                                return Ok(AuthStatus {
-                                                    is_auth: true,
-                                                    sub: user_data.id.to_string(),
-                                                    current_role: "".to_string(),
-                                                });
+                                                Err(Error::new(
+                                                    ErrorKind::PermissionDenied,
+                                                    "Not Authorized!",
+                                                ))
                                             }
                                         }
                                     }
@@ -489,12 +431,16 @@ async fn handle_refresh_token<T: Clone + AsSurrealClient>(
                             };
 
                             let token_expiry_duration = Duration::from_secs(15 * 60);
-                            let _token = sign_jwt(&auth_claim, token_expiry_duration, &user)
-                                .await
-                                .map_err(|e| {
-                                    tracing::error!("Error: {}", e);
-                                    Error::new(ErrorKind::PermissionDenied, "Unauthorized")
-                                })?;
+                            let _token = sign_jwt(
+                                &auth_claim,
+                                token_expiry_duration,
+                                &user.id.as_ref().map(|t| &t.id).expect("id").to_raw(),
+                            )
+                            .await
+                            .map_err(|e| {
+                                tracing::error!("Error: {}", e);
+                                Error::new(ErrorKind::PermissionDenied, "Unauthorized")
+                            })?;
 
                             // TODO: Handle these with the respective functionality for REST and GraphQL contexts(Hint: Might use a Trait for this)
                             // ctx.insert_http_header(
@@ -592,14 +538,14 @@ pub async fn verify_login_credentials<T: Clone + AsSurrealClient>(
 pub async fn sign_jwt(
     auth_claim: &AuthClaim,
     duration: Duration,
-    user: &User,
+    user_id: &str,
 ) -> Result<String, Error> {
     let converted_key = get_converted_jwt_secret_key().await?;
 
     tracing::debug!("Auth Claim: {:?}", auth_claim);
 
     let mut token_claims = Claims::with_custom_claims(auth_claim.clone(), duration);
-    token_claims.subject = Some(user.id.as_ref().map(|t| &t.id).expect("id").to_raw());
+    token_claims.subject = Some(user_id.to_string());
 
     Ok(converted_key.authenticate(token_claims).unwrap())
 }
@@ -741,4 +687,249 @@ pub async fn confirm_authorization<T: Clone + AsSurrealClient>(
         || (auth_constraint.roles.len() == 0
             && auth_constraint.privilege.is_some()
             && is_admin_privileged))
+}
+
+/// A generic utility function to verify OAuth tokens
+pub async fn verify_oauth_token<T: for<'de> Deserialize<'de> + std::fmt::Debug>(
+    oauth_client_name: OAuthClientName,
+    token: &HeaderValue,
+) -> Result<T, Error> {
+    match oauth_client_name {
+        OAuthClientName::Google => {
+            let client = ReqWestClient::new();
+
+            let mut req_headers = ReqWestHeaderMap::new();
+            req_headers.insert("Authorization", token.to_owned());
+
+            // make a request to google oauth server to verify the token
+            let response =
+                // reqwest::get(format!("https://oauth2.googleapis.com/people/me?access_token={}", token.to_str().unwrap().strip_prefix("Bearer ").unwrap()).as_str())
+                client
+                    .request(
+                        Method::GET,
+                        "https://people.googleapis.com/v1/people/me?personFields=names,emailAddresses",
+                    )
+                    .headers(req_headers)
+                    .send()
+                    .await
+                    .map_err(|e| {
+                        tracing::debug!("OAuth request to Google failed: {:?}", e);
+                        Error::new(ErrorKind::Other, "OAuth request to Google failed")
+                    })?;
+
+            // Log the raw JSON response
+            // let response_text = response
+            //     .text()
+            //     .await
+            //     .map_err(|e| {
+            //         tracing::debug!("Failed to read response body: {:?}", e);
+            //         Error::new(ErrorKind::Other, "Failed to read response body")
+            //     })?;
+            // tracing::debug!("Raw response body: {}", response_text);
+
+            let user_data = response.json::<T>().await.map_err(|e| {
+                tracing::debug!("Google Token deserialization failed: {:?}", e);
+                Error::new(ErrorKind::Other, "Google Token deserialization failed")
+            })?;
+
+            tracing::debug!("user_data: {:?}", user_data);
+
+            Ok(user_data)
+        }
+        OAuthClientName::Github => {
+            // make a request to github oauth server to verify the token
+            let client = ReqWestClient::new();
+
+            let mut req_headers = ReqWestHeaderMap::new();
+            req_headers.insert("Authorization", token.to_owned());
+
+            req_headers.append("Accept", "application/vnd.github+json".parse().unwrap());
+
+            req_headers.append("X-GitHub-Api-Version", "2022-11-28".parse().unwrap());
+
+            let user_agent = env::var("GITHUB_OAUTH_USER_AGENT")
+                .expect("Missing the GITHUB_OAUTH_USER_AGENT environment variable.");
+
+            req_headers.append("User-Agent", user_agent.as_str().parse().unwrap());
+
+            let response = client
+                .request(Method::GET, "https://api.github.com/user")
+                .headers(req_headers)
+                .send()
+                .await
+                .map_err(|e| {
+                    tracing::debug!("OAuth request to GitHub failed: {:?}", e);
+                    Error::new(ErrorKind::Other, "OAuth request to GitHub failed")
+                })?;
+
+            // let response_text =
+            //     response.text().await.map_err(|e| {
+            //         tracing::debug!(
+            //             "Failed to read response body: {:?}",
+            //             e
+            //         );
+            //         Error::new(
+            //             ErrorKind::Other,
+            //             "Failed to read response body",
+            //         )
+            //     })?;
+            // tracing::debug!(
+            //     "Rate limit response: {}",
+            //     response_text
+            // );
+
+            let user_data = response.json::<T>().await.map_err(|e| {
+                tracing::error!("GitHub Token deserialization failed: {}", e);
+                Error::new(ErrorKind::Other, "GitHub Token deserialization failed")
+            })?;
+
+            tracing::debug!("user_data: {:?}", user_data);
+
+            Ok(user_data)
+        }
+    }
+}
+
+pub async fn create_oauth_user_if_not_exists<T: Clone + AsSurrealClient>(
+    db: &T,
+    oauth_client_name: OAuthClientName,
+    user: &OAuthUser,
+) -> Result<(), Error> {
+    match oauth_client_name {
+        OAuthClientName::Google => {
+            if let OAuthUser::Google(google_user) = user {
+                // Handle Google user
+                let mut db_query = db
+                    .as_client()
+                    .query(
+                        "
+                        SELECT * FROM ONLY user WHERE oauth_user_id = $oauth_user_id LIMIT 1
+                        ",
+                    )
+                    .bind(("oauth_user_id", google_user.resource_name.clone()))
+                    .await
+                    .map_err(|e| {
+                        tracing::error!("DB Query Error: {}", e);
+                        Error::new(ErrorKind::Other, "Internal Server error")
+                    })?;
+
+                let existing_user: Option<UserOutput> = db_query.take(0).map_err(|e| {
+                    tracing::error!("Deserialization Error: {}", e);
+                    Error::new(ErrorKind::Other, "Internal Server error")
+                })?;
+
+                match existing_user {
+                    Some(_existing_user) => Ok(()),
+                    None => {
+                        let user = User {
+                            email: google_user
+                                .email_addresses
+                                .iter()
+                                .find(|email| email.metadata.primary)
+                                .unwrap()
+                                .value
+                                .clone(),
+                            oauth_client: Some(OAuthClientName::Google),
+                            oauth_user_id: Some(google_user.resource_name.clone()),
+                            status: AccountStatus::Active,
+                            ..User::default()
+                        };
+
+                        let _created_user = create_user(db, user).await?;
+
+                        Ok(())
+                    }
+                }
+            } else {
+                // Handle mismatch
+                tracing::error!("Invalid Google OAuth user!");
+                Err(Error::new(ErrorKind::Other, "Invalid Google OAuth user!"))
+            }
+        }
+        OAuthClientName::Github => {
+            if let OAuthUser::Github(github_user) = user {
+                // Handle Github user
+                let mut db_query = db
+                    .as_client()
+                    .query(
+                        "
+                        SELECT * FROM ONLY user WHERE oauth_user_id = type::string($oauth_user_id) LIMIT 1
+                        ",
+                    )
+                    .bind(("oauth_user_id", github_user.id.clone()))
+                    .await
+                    .map_err(|e| {
+                        tracing::error!("DB Query Error: {}", e);
+                        Error::new(ErrorKind::Other, "Internal Server error")
+                    })?;
+
+                let existing_user: Option<UserOutput> = db_query.take(0).map_err(|e| {
+                    tracing::error!("Deserialization Error: {}", e);
+                    Error::new(ErrorKind::Other, "Internal Server error")
+                })?;
+
+                match existing_user {
+                    Some(_existing_user) => Ok(()),
+                    None => {
+                        tracing::debug!("Getting None");
+                        let user = User {
+                            email: github_user.email.as_ref().unwrap().to_owned(),
+                            oauth_client: Some(OAuthClientName::Github),
+                            oauth_user_id: Some(github_user.id.to_string()),
+                            status: AccountStatus::Active,
+                            ..User::default()
+                        };
+
+                        let _created_user = create_user(db, user).await?;
+
+                        Ok(())
+                    }
+                }
+            } else {
+                // Handle mismatch
+                tracing::error!("Invalid Github OAuth user!");
+                Err(Error::new(ErrorKind::Other, "Invalid Google OAuth user!"))
+            }
+        }
+    }
+}
+
+pub async fn fetch_default_user_roles<T: Clone + AsSurrealClient>(
+    db: &T,
+    user_id: &str,
+) -> Result<Vec<String>, Error> {
+    let owned_user_id = user_id.to_string();
+
+    let mut user_roles_res = db
+        .as_client()
+        .query(
+            "
+            SELECT ->(assigned WHERE is_default=true)->role.* AS roles FROM ONLY user WHERE id = type::thing($user_id) OR oauth_user_id = $user_id
+        ",
+        )
+        .bind(("user_id", owned_user_id))
+        .await
+        .map_err(|_e| Error::new(ErrorKind::Other, "DB Query failed: Get Roles"))?;
+    let user_roles: Option<SurrealRelationQueryResponse<SystemRole>> =
+        user_roles_res.take(0).map_err(|e| {
+            tracing::error!("Failed to get roles: {}", e);
+            Error::new(ErrorKind::Other, "Failed to get roles")
+        })?;
+
+    match user_roles {
+        Some(roles) => Ok(roles
+            .get("roles")
+            .unwrap()
+            .into_iter()
+            .map(|role| {
+                let name_str = format!("{}", role.role_name);
+                tracing::debug!("name_str: {}", name_str);
+                name_str
+            })
+            .collect()),
+        None => {
+            tracing::error!("Cannot get authenticated without roles");
+            Err(Error::new(ErrorKind::PermissionDenied, "Forbidden"))
+        }
+    }
 }

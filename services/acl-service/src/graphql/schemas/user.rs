@@ -28,7 +28,7 @@ pub enum AccountStatus {
     Deleted,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject, Default)]
 #[graphql(input_name = "UserInput")]
 #[graphql(complex)]
 pub struct User {
@@ -49,7 +49,10 @@ pub struct User {
     pub updated_at: Option<String>,
     #[graphql(skip)]
     pub status: AccountStatus,
+    #[graphql(skip)]
     pub oauth_client: Option<OAuthClientName>,
+    #[graphql(skip)]
+    pub oauth_user_id: Option<String>,
     pub profile_picture: Option<String>,
     pub bio: Option<String>,
     pub website: Option<String>,
@@ -71,13 +74,17 @@ impl User {
         )
     }
 
-    async fn age(&self) -> u32 {
+    async fn age(&self) -> Option<u32> {
         // calculate age from &self.dob
-        let dob =
-            DateTime::parse_from_rfc3339(&self.dob.as_ref().unwrap()).expect("Invalid date format");
-        let from_ymd = NaiveDate::from_ymd_opt(dob.year(), dob.month(), dob.day()).unwrap();
-        let today = Utc::now().date_naive();
-        today.years_since(from_ymd).unwrap()
+        match &self.dob.as_ref() {
+            Some(dob) => {
+                let dob = DateTime::parse_from_rfc3339(dob).expect("Invalid date format");
+                let from_ymd = NaiveDate::from_ymd_opt(dob.year(), dob.month(), dob.day()).unwrap();
+                let today = Utc::now().date_naive();
+                today.years_since(from_ymd)
+            }
+            None => None,
+        }
     }
 }
 
@@ -99,6 +106,7 @@ pub struct UserOutput {
     pub updated_at: Option<String>,
     pub status: Option<AccountStatus>,
     pub oauth_client: Option<OAuthClientName>,
+    pub oauth_user_id: Option<String>,
     pub profile_picture: Option<String>,
     pub bio: Option<String>,
     pub website: Option<String>,
@@ -271,7 +279,7 @@ pub enum GoogleUserUserType {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
-pub struct DecodedGithubOAuthToken {
+pub struct GithubUserProfile {
     pub login: String,
     pub id: u64,
     pub node_id: String,
@@ -321,14 +329,19 @@ pub struct Plan {
     pub private_repos: u64,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
-#[graphql(input_name = "ProfessionInput")]
-pub struct Profession {
-    pub user_id: String,
-    pub occupation: String,
-    pub description: String,
-    pub start_date: String,
+pub enum OAuthUser {
+    Google(GoogleUserInfo),
+    Github(GithubUserProfile),
 }
+
+// #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
+// #[graphql(input_name = "ProfessionInput")]
+// pub struct Profession {
+//     pub user_id: String,
+//     pub occupation: String,
+//     pub description: String,
+//     pub start_date: String,
+// }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
 #[graphql(input_name = "UserUpdateInput")]

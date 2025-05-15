@@ -2,7 +2,7 @@
 -- DEFINE CONFIG GRAPHQL AUTO;
 
 -- A schema-full user table.
-DEFINE TABLE user SCHEMAFULL;
+DEFINE TABLE OVERWRITE user SCHEMAFULL;
 -- define some fields.
 DEFINE FIELD user_name ON TABLE user TYPE option<string>;
 DEFINE INDEX userNameIndex ON TABLE user COLUMNS user_name UNIQUE;
@@ -22,7 +22,13 @@ DEFINE FIELD country ON TABLE user TYPE option<string>;
 DEFINE FIELD phone ON TABLE user TYPE option<string>;
   -- ASSERT string::len($value) == 10;
 DEFINE INDEX userPhoneIndex ON TABLE user COLUMNS phone UNIQUE;
-DEFINE FIELD password ON TABLE user TYPE string;
+DEFINE FIELD OVERWRITE password ON TABLE user TYPE option<string>
+  DEFAULT None;
+DEFINE EVENT enforce_blank_password_constraint ON TABLE user WHEN $event = 'CREATE' THEN {
+    IF $after.password IS NONE AND ($after.oauth_client IS NONE OR $after.oauth_user_id IS NONE) {
+        THROW 'Forbidden.';
+    };
+};
 DEFINE EVENT user_created ON TABLE user WHEN $event = 'CREATE' THEN (
     -- add default role to user
     fn::assign_default_role($after.id)
@@ -34,6 +40,8 @@ DEFINE FIELD status ON TABLE user TYPE string
 DEFINE FIELD oauth_client ON TABLE user TYPE option<string>
 -- Allow only these values in the array
   ASSERT $value INSIDE ['Google', 'Github', None];
+DEFINE FIELD oauth_user_id ON TABLE user TYPE option<string>
+  DEFAULT None;
 DEFINE FIELD address ON TABLE user TYPE option<string>
   DEFAULT None;
 DEFINE FIELD profile_picture ON TABLE user TYPE option<string>
