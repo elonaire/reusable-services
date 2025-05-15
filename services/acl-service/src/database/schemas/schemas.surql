@@ -2,7 +2,7 @@
 -- DEFINE CONFIG GRAPHQL AUTO;
 
 -- A schema-full user table.
-DEFINE TABLE OVERWRITE user SCHEMAFULL;
+DEFINE TABLE user SCHEMAFULL;
 -- define some fields.
 DEFINE FIELD user_name ON TABLE user TYPE option<string>;
 DEFINE INDEX userNameIndex ON TABLE user COLUMNS user_name UNIQUE;
@@ -22,7 +22,7 @@ DEFINE FIELD country ON TABLE user TYPE option<string>;
 DEFINE FIELD phone ON TABLE user TYPE option<string>;
   -- ASSERT string::len($value) == 10;
 DEFINE INDEX userPhoneIndex ON TABLE user COLUMNS phone UNIQUE;
-DEFINE FIELD OVERWRITE password ON TABLE user TYPE option<string>
+DEFINE FIELD password ON TABLE user TYPE option<string>
   DEFAULT None;
 DEFINE EVENT enforce_blank_password_constraint ON TABLE user WHEN $event = 'CREATE' THEN {
     IF $after.password IS NONE AND ($after.oauth_client IS NONE OR $after.oauth_user_id IS NONE) {
@@ -86,10 +86,10 @@ DEFINE EVENT enforce_one_super_admin_role ON TABLE role WHEN $event = 'CREATE' O
     };
 };
 DEFINE INDEX roleNameIndex ON TABLE role COLUMNS role_name UNIQUE;
-DEFINE FIELD OVERWRITE created_by ON TABLE role TYPE record<user>;
+DEFINE FIELD created_by ON TABLE role TYPE record<user>;
 DEFINE FIELD admin_permissions ON TABLE role TYPE option<array<string>>
   ASSERT $value ALLINSIDE ['CreateOrganization', 'CreateDepartment', 'CreateRole', 'AssignRole'];
-DEFINE EVENT OVERWRITE evaluate_admin_permissions ON TABLE role WHEN $event = 'CREATE' OR $event = 'UPDATE' THEN {
+DEFINE EVENT evaluate_admin_permissions ON TABLE role WHEN $event = 'CREATE' OR $event = 'UPDATE' THEN {
   IF (!$after.is_super_admin AND $after.admin_permissions IS NOT NONE AND $after.admin_permissions CONTAINS "CreateOrganization") OR (!$after.is_super_admin AND !$after.is_admin AND $after.admin_permissions IS NOT NONE AND $after.admin_permissions CONTAINSANY ['CreateDepartment', 'CreateRole', 'AssignRole']) {
     THROW 'Not enough permissions.';
   };
@@ -141,7 +141,7 @@ DEFINE FIELD updated_at ON TABLE department TYPE datetime
 
 
 -- A schema-full relation table for departments
-DEFINE TABLE OVERWRITE is_under SCHEMAFULL TYPE RELATION IN department OUT department | organization;
+DEFINE TABLE is_under SCHEMAFULL TYPE RELATION IN department OUT department | organization;
 
 
 -- Function to check if user has a role, if not, assign a default role using edge relationship
