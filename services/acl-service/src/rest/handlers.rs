@@ -9,13 +9,13 @@ use axum::{
 use axum_cookie::prelude::*;
 use hyper::HeaderMap;
 use jwt_simple::prelude::Duration;
-use lib::utils::{auth::AuthClaim, cookie_parser::parse_cookies, models::AuthStatus};
+use lib::utils::{auth::AuthClaim, cookie_parser::parse_cookies};
 use oauth2::{AuthorizationCode, PkceCodeVerifier, TokenResponse};
 use serde::{Deserialize, Serialize};
 use surrealdb::{engine::remote::ws::Client, Surreal};
 
 use crate::{
-    graphql::schemas::user::{GithubUserProfile, GoogleUserInfo, OAuthUser},
+    graphql::schemas::user::{AuthDetails, GithubUserProfile, GoogleUserInfo, OAuthUser},
     utils::auth::{
         create_oauth_user_if_not_exists, fetch_default_user_roles, initiate_auth_code_grant_flow,
         sign_jwt, verify_oauth_token, OAuthClientName,
@@ -72,7 +72,7 @@ pub async fn exchange_code_for_token(
     headers: HeaderMap,
     cookie: CookieManager,
     Json(payload): Json<TokenExchangeContract>,
-) -> Json<AuthStatus> {
+) -> Json<AuthDetails> {
     let cookie_header = headers
         .get(AXUM_COOKIE)
         .and_then(|v| v.to_str().ok())
@@ -141,12 +141,15 @@ pub async fn exchange_code_for_token(
                 .await
                 .unwrap();
 
-            cookie.add(Cookie::new("oauth_user_roles_jwt", token_str));
+            let jwt_cookie = CookieBuilder::new("oauth_user_roles_jwt", token_str.clone())
+                .path("/")
+                .build();
 
-            (AuthStatus {
-                is_auth: true,
-                sub: user.resource_name,
-                current_role: user_roles[0].clone(),
+            cookie.add(jwt_cookie);
+
+            (AuthDetails {
+                url: None,
+                token: Some(token_str),
             })
             .into()
         }
@@ -175,12 +178,15 @@ pub async fn exchange_code_for_token(
                 .await
                 .unwrap();
 
-            cookie.add(Cookie::new("oauth_user_roles_jwt", token_str));
+            let jwt_cookie = CookieBuilder::new("oauth_user_roles_jwt", token_str.clone())
+                .path("/")
+                .build();
 
-            (AuthStatus {
-                is_auth: true,
-                sub: user.id.to_string(),
-                current_role: user_roles[0].clone(),
+            cookie.add(jwt_cookie);
+
+            (AuthDetails {
+                url: None,
+                token: Some(token_str),
             })
             .into()
         }

@@ -137,7 +137,7 @@ async fn main() -> Result<(), Error> {
         .route("/", post(graphql_handler))
         .route("/oauth/callback", get(oauth_callback_handler))
         .route("/social-sign-in", post(exchange_code_for_token))
-        .layer(CookieLayer::default())
+        .layer(CookieLayer::strict())
         .layer(Extension(schema))
         .layer(Extension(db.clone()))
         .layer(

@@ -904,7 +904,7 @@ pub async fn fetch_default_user_roles<T: Clone + AsSurrealClient>(
         .as_client()
         .query(
             "
-            SELECT ->(assigned WHERE is_default=true)->role.* AS roles FROM ONLY user WHERE id = type::thing($user_id) OR oauth_user_id = $user_id
+            SELECT ->(assigned WHERE is_default=true)->role.* AS roles FROM ONLY user WHERE id = type::thing('user', $user_id) OR oauth_user_id = $user_id LIMIT 1
         ",
         )
         .bind(("user_id", owned_user_id))

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use async_graphql::{Context, Error, Object, Result};
+use async_graphql::{Context, Object, Result};
 use axum::Extension;
 use hyper::{header::SET_COOKIE, HeaderMap, StatusCode};
 use jwt_simple::prelude::*;
@@ -12,7 +12,7 @@ use crate::{
         role::{
             AdminPrivilege, AuthorizationConstraint, RoleInput, RoleMetadata, RoleType, SystemRole,
         },
-        user::{AuthDetails, SurrealRelationQueryResponse, User, UserLogins, UserUpdate},
+        user::{AuthDetails, User, UserLogins, UserUpdate},
     },
     utils::{
         auth::{
