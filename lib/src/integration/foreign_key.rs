@@ -17,7 +17,7 @@ where
 
     match result {
         Ok(mut result) => {
-            let response: Option<F> = result.take(0).unwrap();
+            let response: Option<F> = result.take(0).ok()?;
 
             if response.is_none() {
                 let insert_query = format!(
@@ -32,7 +32,7 @@ where
 
                 match record_add_res {
                     Ok(mut res) => {
-                        let res: Option<F> = res.take(0).unwrap();
+                        let res: Option<F> = res.take(0).ok()?;
                         res
                     }
                     Err(e) => {

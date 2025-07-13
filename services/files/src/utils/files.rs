@@ -54,6 +54,10 @@ pub async fn get_system_filename<T: Clone + AsSurrealClient>(
         BEGIN TRANSACTION;
         LET $file_thing = type::thing($file_id);
 
+        IF !$file_thing.exists() {
+            THROW 'Invalid Input';
+        };
+
         LET $file = (SELECT * FROM ONLY $file_thing LIMIT 1);
 
         RETURN $file;
@@ -96,6 +100,9 @@ pub async fn purchase_file<T: Clone + AsSurrealClient>(
             "
             BEGIN TRANSACTION;
             LET $file_thing = type::thing($file_id);
+            IF !$file_thing.exists() {
+                THROW 'Invalid Input';
+            };
             LET $user = (SELECT * FROM ONLY user_id WHERE user_id = $user_id LIMIT 1);
             LET $purchased_file = (RELATE $user->bought_file->$file_thing RETURN AFTER);
             RETURN $user_id;
