@@ -23,7 +23,7 @@ WORKDIR /app
 # Copy the entire workspace
 COPY . .
 # Create the output directory for grpc
-RUN mkdir -p /app/src/integration/grpc/out
+RUN mkdir lib/src/integration/grpc/out
 
 # Build for release
 RUN cargo build --release --package ${SERVICE_NAME}
