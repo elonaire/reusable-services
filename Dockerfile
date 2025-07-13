@@ -32,9 +32,11 @@ FROM alpine:latest
 ARG DEBIAN_FRONTEND=noninteractive
 ARG SERVICE_NAME
 ARG PORT
+ARG GRPC_PORT
 
 ENV SERVICE_NAME=${SERVICE_NAME}
 ENV PORT=${PORT}
+ENV GRPC_PORT=${GRPC_PORT}
 
 # Copy necessary shared libraries
 RUN apk add --no-cache \
@@ -51,8 +53,9 @@ USER myuser
 # Copy the binary from the builder stage
 COPY --from=0 /app/target/release/${SERVICE_NAME} .
 
-# Expose the port
+# Expose the ports
 EXPOSE ${PORT}
+EXPOSE ${GRPC_PORT}
 
 # Command to run
 CMD ./${SERVICE_NAME}

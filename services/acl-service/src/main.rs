@@ -60,7 +60,7 @@ async fn graphql_handler(
     tracing::debug!("Request data set!");
     let operation_name = request.operation_name.clone();
 
-    // Log request info
+    // Log request info(I just want to deploy ACL again)
     tracing::info!("Executing GraphQL request: {:?}", &operation_name);
     let start = std::time::Instant::now();
 

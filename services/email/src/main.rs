@@ -56,7 +56,7 @@ async fn graphql_handler(
     request = request.data(headers.clone());
     let operation_name = request.operation_name.clone();
 
-    // Log request info
+    // Log request info(I just want to deploy Email again)
     tracing::info!("Executing GraphQL request: {:?}", &operation_name);
     let start = std::time::Instant::now();
 
