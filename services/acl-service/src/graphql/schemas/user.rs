@@ -28,7 +28,7 @@ pub enum AccountStatus {
     Deleted,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject, Default)]
 #[graphql(input_name = "UserInput")]
 #[graphql(complex)]
 pub struct User {
@@ -49,7 +49,10 @@ pub struct User {
     pub updated_at: Option<String>,
     #[graphql(skip)]
     pub status: AccountStatus,
+    #[graphql(skip)]
     pub oauth_client: Option<OAuthClientName>,
+    #[graphql(skip)]
+    pub oauth_user_id: Option<String>,
     pub profile_picture: Option<String>,
     pub bio: Option<String>,
     pub website: Option<String>,
@@ -71,13 +74,17 @@ impl User {
         )
     }
 
-    async fn age(&self) -> u32 {
+    async fn age(&self) -> Option<u32> {
         // calculate age from &self.dob
-        let dob =
-            DateTime::parse_from_rfc3339(&self.dob.as_ref().unwrap()).expect("Invalid date format");
-        let from_ymd = NaiveDate::from_ymd_opt(dob.year(), dob.month(), dob.day()).unwrap();
-        let today = Utc::now().date_naive();
-        today.years_since(from_ymd).unwrap()
+        match &self.dob.as_ref() {
+            Some(dob) => {
+                let dob = DateTime::parse_from_rfc3339(dob).expect("Invalid date format");
+                let from_ymd = NaiveDate::from_ymd_opt(dob.year(), dob.month(), dob.day()).unwrap();
+                let today = Utc::now().date_naive();
+                today.years_since(from_ymd)
+            }
+            None => None,
+        }
     }
 }
 
@@ -99,6 +106,7 @@ pub struct UserOutput {
     pub updated_at: Option<String>,
     pub status: Option<AccountStatus>,
     pub oauth_client: Option<OAuthClientName>,
+    pub oauth_user_id: Option<String>,
     pub profile_picture: Option<String>,
     pub bio: Option<String>,
     pub website: Option<String>,
@@ -120,13 +128,17 @@ impl UserOutput {
         )
     }
 
-    async fn age(&self) -> u32 {
+    async fn age(&self) -> Option<u32> {
         // calculate age from &self.dob
-        let dob =
-            DateTime::parse_from_rfc3339(&self.dob.as_ref().unwrap()).expect("Invalid date format");
-        let from_ymd = NaiveDate::from_ymd_opt(dob.year(), dob.month(), dob.day()).unwrap();
-        let today = Utc::now().date_naive();
-        today.years_since(from_ymd).unwrap()
+        match &self.dob.as_ref() {
+            Some(dob) => {
+                let dob = DateTime::parse_from_rfc3339(dob).expect("Invalid date format");
+                let from_ymd = NaiveDate::from_ymd_opt(dob.year(), dob.month(), dob.day()).unwrap();
+                let today = Utc::now().date_naive();
+                today.years_since(from_ymd)
+            }
+            None => None,
+        }
     }
 }
 
@@ -173,7 +185,101 @@ pub struct DecodedGoogleOAuthToken {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
-pub struct DecodedGithubOAuthToken {
+#[serde(rename_all = "camelCase")]
+pub struct GoogleUserInfo {
+    pub resource_name: String,
+    pub etag: String,
+    pub email_addresses: Vec<GoogleUserEmailAddress>,
+    pub names: Vec<GoogleUserName>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
+#[serde(rename_all = "camelCase")]
+pub struct GoogleUserName {
+    pub metadata: GoogleFieldMetadata,
+    pub display_name: String,
+    pub display_name_last_first: String,
+    pub unstructured_name: String,
+    pub family_name: String,
+    pub given_name: String,
+    pub middle_name: Option<String>,
+    pub honorific_prefix: Option<String>,
+    pub honorific_suffix: Option<String>,
+    pub phonetic_full_name: Option<String>,
+    pub phonetic_family_name: Option<String>,
+    pub phonetic_given_name: Option<String>,
+    pub phonetic_middle_name: Option<String>,
+    pub phonetic_honorific_prefix: Option<String>,
+    pub phonetic_honorific_suffix: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
+#[serde(rename_all = "camelCase")]
+pub struct GoogleUserEmailAddress {
+    pub metadata: GoogleFieldMetadata,
+    pub value: String,
+    pub r#type: Option<String>,
+    pub formatted_type: Option<String>,
+    pub display_name: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
+#[serde(rename_all = "camelCase")]
+pub struct GoogleFieldMetadata {
+    pub primary: bool,
+    pub source_primary: bool,
+    pub verified: Option<bool>,
+    pub source: GoogleSource,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
+#[serde(rename_all = "camelCase")]
+pub struct GoogleSource {
+    pub r#type: GoogleSourceType,
+    pub id: String,
+    pub etag: Option<String>,
+    pub update_time: Option<String>,
+    pub profile_metadata: Option<GoogleUserProfileMetadata>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum GoogleSourceType {
+    SourceTypeUnspecified,
+    Account,
+    Profile,
+    DomainProfile,
+    Contact,
+    OtherContact,
+    DomainContact,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
+#[serde(rename_all = "camelCase")]
+pub struct GoogleUserProfileMetadata {
+    pub object_type: GoogleUserObjectType,
+    pub user_types: GoogleUserUserType,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum GoogleUserObjectType {
+    ObjectTypeUnspecified,
+    Person,
+    Page,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum GoogleUserUserType {
+    UserTypeUnknown,
+    GoogleUser,
+    GplusUser,
+    GoogleAppsUser,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
+pub struct GithubUserProfile {
     pub login: String,
     pub id: u64,
     pub node_id: String,
@@ -223,14 +329,19 @@ pub struct Plan {
     pub private_repos: u64,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
-#[graphql(input_name = "ProfessionInput")]
-pub struct Profession {
-    pub user_id: String,
-    pub occupation: String,
-    pub description: String,
-    pub start_date: String,
+pub enum OAuthUser {
+    Google(GoogleUserInfo),
+    Github(GithubUserProfile),
 }
+
+// #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
+// #[graphql(input_name = "ProfessionInput")]
+// pub struct Profession {
+//     pub user_id: String,
+//     pub occupation: String,
+//     pub description: String,
+//     pub start_date: String,
+// }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
 #[graphql(input_name = "UserUpdateInput")]

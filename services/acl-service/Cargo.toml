@@ -29,6 +29,7 @@ tracing-appender = "0.2.3"
 tonic = "0.12.3"
 prost = "0.13.5"
 tonic-middleware = "0.2.3"
+axum-cookie = "0.2.3"
 
 
 [lints.rust]

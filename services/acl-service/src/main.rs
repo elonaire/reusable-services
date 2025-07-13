@@ -1,9 +1,9 @@
 mod database;
 mod graphql;
 mod grpc;
+mod rest;
 mod utils;
 
-use core::panic;
 use std::{
     env,
     io::{Error, ErrorKind},
@@ -15,12 +15,13 @@ use std::{
 use async_graphql::{EmptySubscription, Schema};
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use axum::{
-    extract::{Extension, Query as AxumQuery},
-    http::{header::COOKIE as AXUM_COOKIE, HeaderMap, HeaderValue},
+    extract::Extension,
+    http::{HeaderMap, HeaderValue},
     routing::{get, post},
-    serve, Json, Router,
+    serve, Router,
 };
 
+use axum_cookie::CookieLayer;
 use graphql::resolvers::query::Query;
 use grpc::server::AclServiceImplementation;
 use hyper::{
@@ -29,13 +30,9 @@ use hyper::{
         ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS,
         AUTHORIZATION, CONTENT_TYPE, COOKIE, SET_COOKIE,
     },
-    Method, StatusCode,
+    Method,
 };
-use oauth2::{
-    basic::BasicTokenType, AuthorizationCode, EmptyExtraTokenFields, PkceCodeVerifier,
-    StandardTokenResponse,
-};
-use serde::Deserialize;
+use rest::handlers::{exchange_code_for_token, oauth_callback_handler};
 use surrealdb::{engine::remote::ws::Client, Surreal};
 use tonic::transport::Server;
 use tower_http::cors::CorsLayer;
@@ -43,11 +40,7 @@ use tower_http::cors::CorsLayer;
 use graphql::resolvers::mutation::Mutation;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 
-use crate::utils::auth::{initiate_auth_code_grant_flow, OAuthClientName};
-use lib::{
-    integration::grpc::clients::acl_service::acl_server::AclServer,
-    utils::cookie_parser::parse_cookies,
-};
+use lib::integration::grpc::clients::acl_service::acl_server::AclServer;
 
 type MySchema = Schema<Query, Mutation, EmptySubscription>;
 
@@ -67,7 +60,7 @@ async fn graphql_handler(
     tracing::debug!("Request data set!");
     let operation_name = request.operation_name.clone();
 
-    // Log request info
+    // Log request info(I just want to deploy ACL again)
     tracing::info!("Executing GraphQL request: {:?}", &operation_name);
     let start = std::time::Instant::now();
 
@@ -86,64 +79,6 @@ async fn graphql_handler(
 
     // Convert GraphQL response into the Axum response type
     response.into()
-}
-
-#[derive(Debug, Deserialize, Clone)]
-struct Params {
-    code: Option<String>,
-    state: Option<String>,
-}
-
-// client agnostic oauth handler
-async fn oauth_handler(
-    params: AxumQuery<Params>,
-    headers: HeaderMap,
-) -> Result<Json<StandardTokenResponse<EmptyExtraTokenFields, BasicTokenType>>, StatusCode> {
-    // get the csrf state from the cookie
-    // Extract the csrf_state, oauth_client, pkce_verifier cookies
-    // Extract cookies from the headers
-    let cookie_header = headers
-        .get(AXUM_COOKIE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-
-    // Split and parse cookies manually
-    let cookie_map: std::collections::HashMap<_, _> = parse_cookies(cookie_header);
-
-    let oauth_client_name = cookie_map
-        .get("oauth_client")
-        .expect("OAuth client name cookie not found");
-    let pcke_verifier_secret = cookie_map.get("k").expect("PKCE verifier cookie not found");
-    let csrf_state = cookie_map.get("j").expect("CSRF state cookie not found");
-
-    if params.0.state.unwrap() != csrf_state.to_owned() {
-        panic!("CSRF token mismatch! Aborting request. Might be a hacker 🥷🏻!");
-    }
-
-    // We need to get the same client instance that we used to generate the auth url. Hence the cookies.
-    let oauth_client =
-        initiate_auth_code_grant_flow(OAuthClientName::from_str(oauth_client_name)).await;
-
-    // Generate a PKCE verifier using the secret.
-    let pkce_verifier = PkceCodeVerifier::new(pcke_verifier_secret.to_string());
-    let auth_code = AuthorizationCode::new(params.0.code.clone().unwrap());
-
-    let http_client = reqwest::ClientBuilder::new()
-        // Following redirects opens the client up to SSRF vulnerabilities.
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .expect("Client should build");
-
-    // Now you can trade it for an access token.
-    let token_result = oauth_client
-        .exchange_code(auth_code)
-        // Set the PKCE code verifier.
-        .set_pkce_verifier(pkce_verifier)
-        .request_async(&http_client)
-        .await
-        .unwrap();
-
-    Ok(Json(token_result))
 }
 
 #[tokio::main]
@@ -200,7 +135,9 @@ async fn main() -> Result<(), Error> {
 
     let app = Router::new()
         .route("/", post(graphql_handler))
-        .route("/oauth/callback", get(oauth_handler))
+        .route("/oauth/callback", get(oauth_callback_handler))
+        .route("/social-sign-in", post(exchange_code_for_token))
+        .layer(CookieLayer::strict())
         .layer(Extension(schema))
         .layer(Extension(db.clone()))
         .layer(
