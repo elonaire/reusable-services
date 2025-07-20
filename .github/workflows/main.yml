@@ -93,6 +93,12 @@ jobs:
 
   build_and_deploy_acl:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
     needs: [check_service_changes]
     if: ${{ needs.check_service_changes.outputs.acl_service_should_deploy == 'true' }}
 
@@ -101,6 +107,11 @@ jobs:
       contents: read # required to checkout the code from the repo
 
     steps:
+      - name: Prepare
+        run: |
+          platform=${{ matrix.platform }}
+          echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
+
       - uses: actions/checkout@v4
 
       - name: Log in to Docker Hub
@@ -109,19 +120,42 @@ jobs:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-        with:
-          version: "lab:latest"
-          driver: cloud
-          endpoint: "elonaire/elonaire-builder"
+        # with:
+        #   version: "lab:latest"
+        #   driver: cloud
+        #   endpoint: "elonaire/elonaire-builder"
 
-      - name: Build the Docker image
-        run: |
-          docker buildx build --platform linux/amd64,linux/arm64 --build-arg SERVICE_NAME=acl-service --build-arg PORT=3007 --build-arg GRPC_PORT=50051 -t elonaire/acl-service:latest --provenance=mode=max --sbom=true --push .
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: elonaire/acl-service:latest
+          build-args: |
+            SERVICE_NAME=acl-service
+            GRPC_PORT=50051
+            PORT=3007
+          platform: ${{ matrix.platform }}
+          provenance: true # enables --provenance=mode=max
+          sbom: true
+
+      # - name: Build the Docker image
+      #   run: |
+      #     docker buildx build --platform linux/amd64,linux/arm64 --build-arg SERVICE_NAME=acl-service --build-arg PORT=3007 --build-arg GRPC_PORT=50051 -t elonaire/acl-service:latest --provenance=mode=max --sbom=true --push .
 
   build_and_deploy_email_service:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
     needs: [check_service_changes]
     if: ${{ needs.check_service_changes.outputs.email_service_should_deploy == 'true' }}
 
@@ -130,6 +164,11 @@ jobs:
       contents: read # required to checkout the code from the repo
 
     steps:
+      - name: Prepare
+        run: |
+          platform=${{ matrix.platform }}
+          echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
+
       - uses: actions/checkout@v4
 
       - name: Log in to Docker Hub
@@ -138,19 +177,42 @@ jobs:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-        with:
-          version: "lab:latest"
-          driver: cloud
-          endpoint: "elonaire/elonaire-builder"
+        # with:
+        #   version: "lab:latest"
+        #   driver: cloud
+        #   endpoint: "elonaire/elonaire-builder"
 
-      - name: Build the Docker image
-        run: |
-          docker buildx build --platform linux/amd64,linux/arm64 --build-arg SERVICE_NAME=email --build-arg PORT=3019 --build-arg GRPC_PORT=50052 -t elonaire/email-service:latest --provenance=mode=max --sbom=true --push .
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: elonaire/email-service:latest
+          build-args: |
+            SERVICE_NAME=email
+            GRPC_PORT=50052
+            PORT=3019
+          platform: ${{ matrix.platform }}
+          provenance: true # enables --provenance=mode=max
+          sbom: true
+
+      # - name: Build the Docker image
+      #   run: |
+      #     docker buildx build --platform linux/amd64,linux/arm64 --build-arg SERVICE_NAME=email --build-arg PORT=3019 --build-arg GRPC_PORT=50052 -t elonaire/email-service:latest --provenance=mode=max --sbom=true --push .
 
   build_and_deploy_files:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
     needs: [check_service_changes]
     if: ${{ needs.check_service_changes.outputs.files_service_should_deploy == 'true' }}
 
@@ -167,16 +229,33 @@ jobs:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-        with:
-          version: "lab:latest"
-          driver: cloud
-          endpoint: "elonaire/elonaire-builder"
+        # with:
+        #   version: "lab:latest"
+        #   driver: cloud
+        #   endpoint: "elonaire/elonaire-builder"
 
-      - name: Build the Docker image
-        run: |
-          docker buildx build --platform linux/amd64,linux/arm64 --build-arg SERVICE_NAME=files --build-arg PORT=3001 --build-arg GRPC_PORT=50053 -t elonaire/files-service:latest --provenance=mode=max --sbom=true --push .
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: elonaire/files-service:latest
+          build-args: |
+            SERVICE_NAME=files
+            GRPC_PORT=50053
+            PORT=3001
+          platform: ${{ matrix.platform }}
+          provenance: true # enables --provenance=mode=max
+          sbom: true
+
+      # - name: Build the Docker image
+      #   run: |
+      #     docker buildx build --platform linux/amd64,linux/arm64 --build-arg SERVICE_NAME=files --build-arg PORT=3001 --build-arg GRPC_PORT=50053 -t elonaire/files-service:latest --provenance=mode=max --sbom=true --push .
 
   automerge:
     runs-on: ubuntu-latest

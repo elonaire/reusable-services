@@ -1,3 +1,5 @@
+use std::env;
+
 use crate::{
     integration::grpc::clients::acl_service::{acl_client::AclClient, Empty},
     utils::grpc::{create_grpc_client, AuthMetaData},
@@ -20,8 +22,10 @@ pub async fn handle_auth_with_refresh(
         cookie_header,
         constructed_grpc_request: Some(&mut request),
     };
+    let acl_service_grpc = env::var("OAUTH_SERVICE_GRPC")
+        .expect("Missing the OAUTH_SERVICE_GRPC environment variable.");
     let mut acl_grpc_client = create_grpc_client::<Empty, AclClient<Channel>>(
-        "http://[::1]:50051",
+        &acl_service_grpc,
         true,
         Some(auth_metadata),
     )
