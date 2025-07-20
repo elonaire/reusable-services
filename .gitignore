@@ -7,3 +7,4 @@ prod.env
 /services/**/logs
 /services/**/src/database/schemas/users.surql
 /lib/src/integration/grpc/out
+k8s.env
