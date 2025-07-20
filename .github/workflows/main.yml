@@ -134,7 +134,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: true
+          # push: true
           tags: elonaire/acl-service:latest
           build-args: |
             SERVICE_NAME=acl-service
@@ -143,6 +143,7 @@ jobs:
           platform: ${{ matrix.platform }}
           provenance: true # enables --provenance=mode=max
           sbom: true
+          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
 
       # - name: Build the Docker image
       #   run: |
@@ -191,7 +192,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: true
+          # push: true
           tags: elonaire/email-service:latest
           build-args: |
             SERVICE_NAME=email
@@ -200,6 +201,7 @@ jobs:
           platform: ${{ matrix.platform }}
           provenance: true # enables --provenance=mode=max
           sbom: true
+          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
 
       # - name: Build the Docker image
       #   run: |
@@ -243,7 +245,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: true
+          # push: true
           tags: elonaire/files-service:latest
           build-args: |
             SERVICE_NAME=files
@@ -252,6 +254,7 @@ jobs:
           platform: ${{ matrix.platform }}
           provenance: true # enables --provenance=mode=max
           sbom: true
+          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
 
       # - name: Build the Docker image
       #   run: |
