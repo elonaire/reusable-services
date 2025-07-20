@@ -111,6 +111,13 @@ jobs:
         run: |
           platform=${{ matrix.platform }}
           echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
+          echo "ACL_REGISTRY_IMAGE=elonaire/acl-service" >> $GITHUB_ENV
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.ACL_REGISTRY_IMAGE }}
 
       - uses: actions/checkout@v4
 
@@ -133,9 +140,10 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
-          context: .
+          # context: .
           # push: true
-          tags: elonaire/acl-service:latest
+          id: build
+          tags: ${{ env.ACL_REGISTRY_IMAGE }}
           build-args: |
             SERVICE_NAME=acl-service
             GRPC_PORT=50051
@@ -144,6 +152,42 @@ jobs:
           provenance: true # enables --provenance=mode=max
           sbom: true
           outputs: type=image,push-by-digest=true,name-canonical=true,push=true
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Export digest
+        run: |
+          mkdir -p ${{ runner.temp }}/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-acl-${{ env.PLATFORM_PAIR }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-acl-*
+          merge-multiple: true
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.ACL_REGISTRY_IMAGE }}
+          tags: |
+            type=raw,value=latest
+
+      - name: Create manifest list and push
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.ACL_REGISTRY_IMAGE }}@sha256:%s ' *)
 
       # - name: Build the Docker image
       #   run: |
@@ -169,6 +213,13 @@ jobs:
         run: |
           platform=${{ matrix.platform }}
           echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
+          echo "EMAIL_REGISTRY_IMAGE=elonaire/email-service" >> $GITHUB_ENV
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.EMAIL_REGISTRY_IMAGE }}
 
       - uses: actions/checkout@v4
 
@@ -191,9 +242,10 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
-          context: .
+          # context: .
           # push: true
-          tags: elonaire/email-service:latest
+          id: build
+          tags: ${{ env.EMAIL_REGISTRY_IMAGE }}
           build-args: |
             SERVICE_NAME=email
             GRPC_PORT=50052
@@ -202,6 +254,42 @@ jobs:
           provenance: true # enables --provenance=mode=max
           sbom: true
           outputs: type=image,push-by-digest=true,name-canonical=true,push=true
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Export digest
+        run: |
+          mkdir -p ${{ runner.temp }}/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-email-${{ env.PLATFORM_PAIR }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-email-*
+          merge-multiple: true
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.EMAIL_REGISTRY_IMAGE }}
+          tags: |
+            type=raw,value=latest
+
+      - name: Create manifest list and push
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.EMAIL_REGISTRY_IMAGE }}@sha256:%s ' *)
 
       # - name: Build the Docker image
       #   run: |
@@ -223,6 +311,18 @@ jobs:
       contents: read # required to checkout the code from the repo
 
     steps:
+      - name: Prepare
+        run: |
+          platform=${{ matrix.platform }}
+          echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
+          echo "FILES_REGISTRY_IMAGE=elonaire/files-service" >> $GITHUB_ENV
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.FILES_REGISTRY_IMAGE }}
+
       - uses: actions/checkout@v4
 
       - name: Log in to Docker Hub
@@ -244,9 +344,10 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
-          context: .
+          # context: .
           # push: true
-          tags: elonaire/files-service:latest
+          id: build
+          tags: ${{ env.FILES_REGISTRY_IMAGE }}
           build-args: |
             SERVICE_NAME=files
             GRPC_PORT=50053
@@ -255,6 +356,42 @@ jobs:
           provenance: true # enables --provenance=mode=max
           sbom: true
           outputs: type=image,push-by-digest=true,name-canonical=true,push=true
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Export digest
+        run: |
+          mkdir -p ${{ runner.temp }}/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-files-${{ env.PLATFORM_PAIR }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-files-*
+          merge-multiple: true
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.FILES_REGISTRY_IMAGE }}
+          tags: |
+            type=raw,value=latest
+
+      - name: Create manifest list and push
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.FILES_REGISTRY_IMAGE }}@sha256:%s ' *)
 
       # - name: Build the Docker image
       #   run: |
