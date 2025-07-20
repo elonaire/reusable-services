@@ -148,7 +148,7 @@ jobs:
             SERVICE_NAME=acl-service
             GRPC_PORT=50051
             PORT=3007
-          platform: ${{ matrix.platform }}
+          platforms: ${{ matrix.platform }}
           provenance: true # enables --provenance=mode=max
           sbom: true
           outputs: type=image,push-by-digest=true,name-canonical=true,push=true
@@ -250,7 +250,7 @@ jobs:
             SERVICE_NAME=email
             GRPC_PORT=50052
             PORT=3019
-          platform: ${{ matrix.platform }}
+          platforms: ${{ matrix.platform }}
           provenance: true # enables --provenance=mode=max
           sbom: true
           outputs: type=image,push-by-digest=true,name-canonical=true,push=true
@@ -352,7 +352,7 @@ jobs:
             SERVICE_NAME=files
             GRPC_PORT=50053
             PORT=3001
-          platform: ${{ matrix.platform }}
+          platforms: ${{ matrix.platform }}
           provenance: true # enables --provenance=mode=max
           sbom: true
           outputs: type=image,push-by-digest=true,name-canonical=true,push=true
