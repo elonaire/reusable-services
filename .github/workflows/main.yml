@@ -176,7 +176,7 @@ jobs:
           merge-multiple: true
 
       - name: Docker meta
-        id: meta
+        id: meta-tag
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.ACL_REGISTRY_IMAGE }}
@@ -278,7 +278,7 @@ jobs:
           merge-multiple: true
 
       - name: Docker meta
-        id: meta
+        id: meta-tag
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.EMAIL_REGISTRY_IMAGE }}
@@ -380,7 +380,7 @@ jobs:
           merge-multiple: true
 
       - name: Docker meta
-        id: meta
+        id: meta-tag
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.FILES_REGISTRY_IMAGE }}
