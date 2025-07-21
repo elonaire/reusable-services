@@ -98,7 +98,7 @@ jobs:
       matrix:
         platform:
           - linux/amd64
-          - linux/arm64
+          # - linux/arm64
     needs: [check_service_changes]
     if: ${{ needs.check_service_changes.outputs.acl_service_should_deploy == 'true' }}
 
@@ -191,10 +191,6 @@ jobs:
           docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf '${{ env.ACL_REGISTRY_IMAGE }}@sha256:%s ' *)
 
-      # - name: Build the Docker image
-      #   run: |
-      #     docker buildx build --platform linux/amd64,linux/arm64 --build-arg SERVICE_NAME=acl-service --build-arg PORT=3007 --build-arg GRPC_PORT=50051 -t elonaire/acl-service:latest --provenance=mode=max --sbom=true --push .
-
   build_and_deploy_email_service:
     runs-on: ubuntu-latest
     strategy:
@@ -202,7 +198,7 @@ jobs:
       matrix:
         platform:
           - linux/amd64
-          - linux/arm64
+          # - linux/arm64
     needs: [check_service_changes]
     if: ${{ needs.check_service_changes.outputs.email_service_should_deploy == 'true' }}
 
@@ -295,10 +291,6 @@ jobs:
           docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf '${{ env.EMAIL_REGISTRY_IMAGE }}@sha256:%s ' *)
 
-      # - name: Build the Docker image
-      #   run: |
-      #     docker buildx build --platform linux/amd64,linux/arm64 --build-arg SERVICE_NAME=email --build-arg PORT=3019 --build-arg GRPC_PORT=50052 -t elonaire/email-service:latest --provenance=mode=max --sbom=true --push .
-
   build_and_deploy_files:
     runs-on: ubuntu-latest
     strategy:
@@ -306,7 +298,7 @@ jobs:
       matrix:
         platform:
           - linux/amd64
-          - linux/arm64
+          # - linux/arm64
     needs: [check_service_changes]
     if: ${{ needs.check_service_changes.outputs.files_service_should_deploy == 'true' }}
 
@@ -398,10 +390,6 @@ jobs:
         run: |
           docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf '${{ env.FILES_REGISTRY_IMAGE }}@sha256:%s ' *)
-
-      # - name: Build the Docker image
-      #   run: |
-      #     docker buildx build --platform linux/amd64,linux/arm64 --build-arg SERVICE_NAME=files --build-arg PORT=3001 --build-arg GRPC_PORT=50053 -t elonaire/files-service:latest --provenance=mode=max --sbom=true --push .
 
   automerge:
     runs-on: ubuntu-latest
