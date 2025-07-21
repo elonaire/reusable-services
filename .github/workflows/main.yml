@@ -138,11 +138,11 @@ jobs:
         #   endpoint: "elonaire/elonaire-builder"
 
       - name: Build and push Docker image
+        id: build
         uses: docker/build-push-action@v6
         with:
           # context: .
           # push: true
-          id: build
           tags: ${{ env.ACL_REGISTRY_IMAGE }}
           build-args: |
             SERVICE_NAME=acl-service
@@ -240,11 +240,11 @@ jobs:
         #   endpoint: "elonaire/elonaire-builder"
 
       - name: Build and push Docker image
+        id: build
         uses: docker/build-push-action@v6
         with:
           # context: .
           # push: true
-          id: build
           tags: ${{ env.EMAIL_REGISTRY_IMAGE }}
           build-args: |
             SERVICE_NAME=email
@@ -342,11 +342,11 @@ jobs:
         #   endpoint: "elonaire/elonaire-builder"
 
       - name: Build and push Docker image
+        id: build
         uses: docker/build-push-action@v6
         with:
           # context: .
           # push: true
-          id: build
           tags: ${{ env.FILES_REGISTRY_IMAGE }}
           build-args: |
             SERVICE_NAME=files
