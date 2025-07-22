@@ -167,7 +167,7 @@ async fn main() -> Result<(), Error> {
 
     // Set up the gRPC server
     let files_grpc = FilesServiceImplementation::new(db.clone());
-    let grpc_address: SocketAddr = format!("[::1]:{}", files_grpc_port)
+    let grpc_address: SocketAddr = format!("0.0.0.0:{}", files_grpc_port)
         .as_str()
         .parse()
         .unwrap();
