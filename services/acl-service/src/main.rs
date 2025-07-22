@@ -162,7 +162,10 @@ async fn main() -> Result<(), Error> {
 
     // Set up the gRPC server
     let acl_grpc = AclServiceImplementation::new(db.clone());
-    let grpc_address: SocketAddr = format!("[::1]:{}", acl_grpc_port).as_str().parse().unwrap();
+    let grpc_address: SocketAddr = format!("0.0.0.0:{}", acl_grpc_port)
+        .as_str()
+        .parse()
+        .unwrap();
     // let tonic_auth_middleware = AuthMiddleware::default();
 
     tokio::spawn(async move {

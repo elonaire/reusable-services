@@ -152,7 +152,7 @@ async fn main() -> Result<(), Error> {
 
     // Set up the gRPC server
     let email_grpc = EmailServiceImplementation::default();
-    let grpc_address: SocketAddr = format!("[::1]:{}", email_grpc_port)
+    let grpc_address: SocketAddr = format!("0.0.0.0:{}", email_grpc_port)
         .as_str()
         .parse()
         .unwrap();
