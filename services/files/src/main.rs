@@ -28,7 +28,7 @@ use hyper::{
         ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS,
         AUTHORIZATION, CONTENT_TYPE, COOKIE, SET_COOKIE,
     },
-    Method,
+    Method, StatusCode,
 };
 
 use grpc::server::FilesServiceImplementation;
@@ -142,6 +142,8 @@ async fn main() -> Result<(), Error> {
         .route_layer(middleware::from_fn(handle_auth_with_refresh))
         .route("/", post(graphql_handler))
         .route("/view/{file_name}", get(get_image))
+        .route("/healthz", get(|| async { StatusCode::OK }))
+        .route("/ready", get(|| async { StatusCode::OK }))
         .layer(Extension(schema))
         .layer(Extension(db.clone()))
         .layer(DefaultBodyLimit::max(100 * 1024 * 1024))

@@ -30,7 +30,7 @@ use hyper::{
         ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS,
         AUTHORIZATION, CONTENT_TYPE, COOKIE, SET_COOKIE,
     },
-    Method,
+    Method, StatusCode,
 };
 use rest::handlers::{exchange_code_for_token, oauth_callback_handler};
 use surrealdb::{engine::remote::ws::Client, Surreal};
@@ -137,6 +137,8 @@ async fn main() -> Result<(), Error> {
         .route("/", post(graphql_handler))
         .route("/oauth/callback", get(oauth_callback_handler))
         .route("/social-sign-in", post(exchange_code_for_token))
+        .route("/healthz", get(|| async { StatusCode::OK }))
+        .route("/ready", get(|| async { StatusCode::OK }))
         .layer(CookieLayer::strict())
         .layer(Extension(schema))
         .layer(Extension(db.clone()))
