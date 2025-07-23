@@ -63,7 +63,7 @@ pub async fn create_grpc_client<'a, R, T: GrpcClient>(
     is_authenticated: bool,
     auth_metadata: Option<AuthMetaData<'_, R>>,
 ) -> Result<T, StdError> {
-    if is_authenticated {
+    if is_authenticated && auth_metadata.is_some() {
         add_auth_headers_to_request::<R>(auth_metadata.unwrap()).await?;
     }
     T::connect(endpoint)

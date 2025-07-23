@@ -11,7 +11,6 @@ use std::{
 };
 
 use async_graphql::{Context, Enum};
-use dotenvy::dotenv;
 use hyper::{
     header::{COOKIE, SET_COOKIE},
     HeaderMap, Method,
@@ -85,72 +84,131 @@ impl OAuthClientName {
 }
 
 /// Creates a desired OAuthClient of choice. For now GitHub and Google
-pub async fn initiate_auth_code_grant_flow(oauth_client: OAuthClientName) -> OAuthClientInstance {
-    dotenv().ok();
+pub async fn initiate_auth_code_grant_flow(
+    oauth_client: OAuthClientName,
+) -> Result<OAuthClientInstance, Error> {
     // Create an OAuth2 client by specifying the client ID, client secret, authorization URL and
     // token URL.
     let client = match oauth_client {
         OAuthClientName::Google => BasicClient::new(ClientId::new(
-            env::var("GOOGLE_OAUTH_CLIENT_ID")
-                .expect("Missing the GOOGLE_OAUTH_CLIENT_ID environment variable."),
+            env::var("GOOGLE_OAUTH_CLIENT_ID").map_err(|e| {
+                tracing::error!(
+                    "Missing the GOOGLE_OAUTH_CLIENT_ID environment variable.: {}",
+                    e
+                );
+                Error::new(ErrorKind::Other, "Server Error")
+            })?,
         ))
         .set_client_secret(ClientSecret::new(
-            env::var("GOOGLE_OAUTH_CLIENT_SECRET")
-                .expect("Missing the GOOGLE_OAUTH_CLIENT_SECRET environment variable."),
+            env::var("GOOGLE_OAUTH_CLIENT_SECRET").map_err(|e| {
+                tracing::error!(
+                    "Missing the GOOGLE_OAUTH_CLIENT_SECRET environment variable.: {}",
+                    e
+                );
+                Error::new(ErrorKind::Other, "Server Error")
+            })?,
         ))
         .set_auth_uri(
-            AuthUrl::new(
-                env::var("GOOGLE_OAUTH_AUTHORIZE_URL")
-                    .expect("Missing the GOOGLE_OAUTH_AUTHORIZE_URL environment variable."),
-            )
-            .unwrap(),
+            AuthUrl::new(env::var("GOOGLE_OAUTH_AUTHORIZE_URL").map_err(|e| {
+                tracing::error!(
+                    "Missing the GOOGLE_OAUTH_AUTHORIZE_URL environment variable.: {}",
+                    e
+                );
+                Error::new(ErrorKind::Other, "Server Error")
+            })?)
+            .map_err(|e| {
+                tracing::error!("Failed to create AuthUrl.: {}", e);
+                Error::new(ErrorKind::Other, "Server Error")
+            })?,
         )
         .set_token_uri(
-            TokenUrl::new(
-                env::var("GOOGLE_OAUTH_ACCESS_TOKEN_URL")
-                    .expect("Missing the GOOGLE_OAUTH_ACCESS_TOKEN_URL environment variable."),
-            )
-            .unwrap(),
+            TokenUrl::new(env::var("GOOGLE_OAUTH_ACCESS_TOKEN_URL").map_err(|e| {
+                tracing::error!(
+                    "Missing the GOOGLE_OAUTH_ACCESS_TOKEN_URL environment variable.: {}",
+                    e
+                );
+                Error::new(ErrorKind::Other, "Server Error")
+            })?)
+            .map_err(|e| {
+                tracing::error!("Failed to create TokenUrl.: {}", e);
+                Error::new(ErrorKind::Other, "Server Error")
+            })?,
         )
         .set_revocation_url(
-            RevocationUrl::new(
-                env::var("GOOGLE_OAUTH_REVOKE_TOKEN_URL")
-                    .expect("Missing the GOOGLE_OAUTH_REVOKE_TOKEN_URL environment variable."),
-            )
-            .expect("Invalid revocation endpoint URL"),
+            RevocationUrl::new(env::var("GOOGLE_OAUTH_REVOKE_TOKEN_URL").map_err(|e| {
+                tracing::error!(
+                    "Missing the GOOGLE_OAUTH_REVOKE_TOKEN_URL environment variable.: {}",
+                    e
+                );
+                Error::new(ErrorKind::Other, "Server Error")
+            })?)
+            .map_err(|e| {
+                tracing::error!("Invalid RevocationUrl: {}", e);
+                Error::new(ErrorKind::Other, "Server Error")
+            })?,
         ),
         OAuthClientName::Github => BasicClient::new(ClientId::new(
-            env::var("GITHUB_OAUTH_CLIENT_ID")
-                .expect("Missing the GITHUB_OAUTH_CLIENT_ID environment variable."),
+            env::var("GITHUB_OAUTH_CLIENT_ID").map_err(|e| {
+                tracing::error!(
+                    "Missing the GITHUB_OAUTH_CLIENT_ID environment variable.: {}",
+                    e
+                );
+                Error::new(ErrorKind::Other, "Server Error")
+            })?,
         ))
         .set_client_secret(ClientSecret::new(
-            env::var("GITHUB_OAUTH_CLIENT_SECRET")
-                .expect("Missing the GITHUB_OAUTH_CLIENT_SECRET environment variable."),
+            env::var("GITHUB_OAUTH_CLIENT_SECRET").map_err(|e| {
+                tracing::error!(
+                    "Missing the GITHUB_OAUTH_CLIENT_SECRET environment variable.: {}",
+                    e
+                );
+                Error::new(ErrorKind::Other, "Server Error")
+            })?,
         ))
         .set_auth_uri(
-            AuthUrl::new(
-                env::var("GITHUB_OAUTH_AUTHORIZE_URL")
-                    .expect("Missing the GITHUB_OAUTH_AUTHORIZE_URL environment variable."),
-            )
-            .unwrap(),
+            AuthUrl::new(env::var("GITHUB_OAUTH_AUTHORIZE_URL").map_err(|e| {
+                tracing::error!(
+                    "Missing the GITHUB_OAUTH_AUTHORIZE_URL environment variable.: {}",
+                    e
+                );
+                Error::new(ErrorKind::Other, "Server Error")
+            })?)
+            .map_err(|e| {
+                tracing::error!("Failed to create AuthUrl.: {}", e);
+                Error::new(ErrorKind::Other, "Server Error")
+            })?,
         )
         .set_token_uri(
-            TokenUrl::new(
-                env::var("GITHUB_OAUTH_ACCESS_TOKEN_URL")
-                    .expect("Missing the GITHUB_OAUTH_ACCESS_TOKEN_URL environment variable."),
-            )
-            .unwrap(),
+            TokenUrl::new(env::var("GITHUB_OAUTH_ACCESS_TOKEN_URL").map_err(|e| {
+                tracing::error!(
+                    "Missing the GITHUB_OAUTH_ACCESS_TOKEN_URL environment variable.: {}",
+                    e
+                );
+                Error::new(ErrorKind::Other, "Server Error")
+            })?)
+            .map_err(|e| {
+                tracing::error!("Failed to create TokenUrl.: {}", e);
+                Error::new(ErrorKind::Other, "Server Error")
+            })?,
         )
-        .set_revocation_url(RevocationUrl::new("http://localhost:3007".to_string()).unwrap()),
+        .set_revocation_url(
+            RevocationUrl::new("http://localhost:3007".to_string()).map_err(|e| {
+                tracing::error!("Failed to create RevocationUrl.: {}", e);
+                Error::new(ErrorKind::Other, "Server Error")
+            })?,
+        ),
     };
 
-    client.set_redirect_uri(
+    Ok(client.set_redirect_uri(
         RedirectUrl::new(
             env::var("OAUTH_REDIRECT_URI")
                 .expect("Missing the OAUTH_REDIRECT_URI environment variable."),
         )
-        .unwrap(),
-    )
+        .map_err(|e| {
+            tracing::error!("Failed to create RedirectUrl.: {}", e);
+            Error::new(ErrorKind::Other, "Server Error")
+        })?,
+    ))
 }
 
 // Generates a Redirect url for the OAuth Code Grant Flow
@@ -222,7 +280,11 @@ pub async fn navigate_to_redirect_url(
 
 /// A utility function to decode JWT tokens. Returns full claims
 pub async fn decode_token(token_header: &HeaderValue) -> Result<JWTClaims<AuthClaim>, Error> {
-    let token = token_header.to_str().unwrap().strip_prefix("Bearer ");
+    let token = (token_header.to_str().map_err(|e| {
+        tracing::error!("Failed to convert header to str: {}", e);
+        Error::new(ErrorKind::InvalidData, "Unauthorized!")
+    })?)
+    .strip_prefix("Bearer ");
 
     match token {
         Some(token) => {
@@ -296,7 +358,13 @@ pub async fn confirm_authentication<T: Clone + AsSurrealClient>(
                                             Some(oauth_user_roles_jwt) => {
                                                 let token_claims = decode_token(
                                                     &HeaderValue::from_str(oauth_user_roles_jwt)
-                                                        .unwrap(),
+                                                        .map_err(|e| {
+                                                            tracing::error!("Failed to convert str to headervalue: {}", e);
+                                                            Error::new(
+                                                                ErrorKind::InvalidData,
+                                                                "Unauthorized!",
+                                                            )
+                                                        })?,
                                                 )
                                                 .await;
 
@@ -415,6 +483,10 @@ async fn handle_refresh_token<T: Clone + AsSurrealClient>(
 
             match refresh_claims {
                 Ok(refresh_claims) => {
+                    if refresh_claims.subject.is_none() {
+                        return Err(Error::new(ErrorKind::Other, "Unauthorized!"));
+                    }
+
                     let user: Option<User> = db
                         .as_client()
                         .select(("user", refresh_claims.subject.unwrap().as_str()))
@@ -493,6 +565,13 @@ pub async fn verify_login_credentials<T: Clone + AsSurrealClient>(
 ) -> Result<User, Error> {
     let user_details = raw_user_details.transformed();
 
+    if user_details.user_name.is_none() || user_details.password.is_none() {
+        return Err(Error::new(
+            ErrorKind::PermissionDenied,
+            "Invalid username or password",
+        ));
+    }
+
     let mut result = db
         .as_client()
         .query(
@@ -516,8 +595,12 @@ pub async fn verify_login_credentials<T: Clone + AsSurrealClient>(
 
     match response {
         Some(user) => {
-            if bcrypt::verify(&user_details.password.unwrap(), &user.password.as_str()).unwrap()
-                && user.status == AccountStatus::Active
+            if bcrypt::verify(&user_details.password.unwrap(), &user.password.as_str()).map_err(
+                |e| {
+                    tracing::error!("Failed to verify user credentials: {}", e);
+                    Error::new(ErrorKind::PermissionDenied, "Invalid username or password")
+                },
+            )? && user.status == AccountStatus::Active
             {
                 Ok(user)
             } else {
@@ -547,7 +630,10 @@ pub async fn sign_jwt(
     let mut token_claims = Claims::with_custom_claims(auth_claim.clone(), duration);
     token_claims.subject = Some(user_id.to_string());
 
-    Ok(converted_key.authenticate(token_claims).unwrap())
+    Ok(converted_key.authenticate(token_claims).map_err(|e| {
+        tracing::error!("Failed to authenticate: {}", e);
+        Error::new(ErrorKind::PermissionDenied, "Unauthorized!")
+    })?)
 }
 
 pub async fn get_user_email<T: Clone + AsSurrealClient>(
@@ -743,14 +829,37 @@ pub async fn verify_oauth_token<T: for<'de> Deserialize<'de> + std::fmt::Debug>(
             let mut req_headers = ReqWestHeaderMap::new();
             req_headers.insert("Authorization", token.to_owned());
 
-            req_headers.append("Accept", "application/vnd.github+json".parse().unwrap());
+            req_headers.append(
+                "Accept",
+                "application/vnd.github+json".parse().map_err(|e| {
+                    tracing::error!("Failed to parse headers: {}", e);
+                    Error::new(ErrorKind::PermissionDenied, "Unauthorized!")
+                })?,
+            );
 
-            req_headers.append("X-GitHub-Api-Version", "2022-11-28".parse().unwrap());
+            req_headers.append(
+                "X-GitHub-Api-Version",
+                "2022-11-28".parse().map_err(|e| {
+                    tracing::error!("Failed to parse headers: {}", e);
+                    Error::new(ErrorKind::PermissionDenied, "Unauthorized!")
+                })?,
+            );
 
-            let user_agent = env::var("GITHUB_OAUTH_USER_AGENT")
-                .expect("Missing the GITHUB_OAUTH_USER_AGENT environment variable.");
+            let user_agent = env::var("GITHUB_OAUTH_USER_AGENT").map_err(|e| {
+                tracing::error!(
+                    "Missing the GITHUB_OAUTH_USER_AGENT environment variable.: {}",
+                    e
+                );
+                Error::new(ErrorKind::PermissionDenied, "Server Error")
+            })?;
 
-            req_headers.append("User-Agent", user_agent.as_str().parse().unwrap());
+            req_headers.append(
+                "User-Agent",
+                user_agent.as_str().parse().map_err(|e| {
+                    tracing::error!("Failed to parse headers: {}", e);
+                    Error::new(ErrorKind::PermissionDenied, "Unauthorized!")
+                })?,
+            );
 
             let response = client
                 .request(Method::GET, "https://api.github.com/user")
@@ -782,8 +891,6 @@ pub async fn verify_oauth_token<T: for<'de> Deserialize<'de> + std::fmt::Debug>(
                 tracing::error!("GitHub Token deserialization failed: {}", e);
                 Error::new(ErrorKind::Other, "GitHub Token deserialization failed")
             })?;
-
-            tracing::debug!("user_data: {:?}", user_data);
 
             Ok(user_data)
         }
@@ -821,14 +928,18 @@ pub async fn create_oauth_user_if_not_exists<T: Clone + AsSurrealClient>(
                 match existing_user {
                     Some(_existing_user) => Ok(()),
                     None => {
+                        let email = google_user
+                            .email_addresses
+                            .iter()
+                            .find(|email| email.metadata.primary);
+
+                        if email.is_none() {
+                            tracing::error!("No primary email found");
+                            return Err(Error::new(ErrorKind::Other, "No primary email found"));
+                        }
+
                         let user = User {
-                            email: google_user
-                                .email_addresses
-                                .iter()
-                                .find(|email| email.metadata.primary)
-                                .unwrap()
-                                .value
-                                .clone(),
+                            email: email.unwrap().value.clone(),
                             oauth_client: Some(OAuthClientName::Google),
                             oauth_user_id: Some(google_user.resource_name.clone()),
                             status: AccountStatus::Active,
@@ -871,9 +982,14 @@ pub async fn create_oauth_user_if_not_exists<T: Clone + AsSurrealClient>(
                 match existing_user {
                     Some(_existing_user) => Ok(()),
                     None => {
-                        tracing::debug!("Getting None");
+                        let email = github_user.email.as_ref();
+
+                        if email.is_none() {
+                            tracing::error!("No primary email found");
+                            return Err(Error::new(ErrorKind::Other, "No primary email found"));
+                        }
                         let user = User {
-                            email: github_user.email.as_ref().unwrap().to_owned(),
+                            email: email.unwrap().to_owned(),
                             oauth_client: Some(OAuthClientName::Github),
                             oauth_user_id: Some(github_user.id.to_string()),
                             status: AccountStatus::Active,
@@ -919,11 +1035,10 @@ pub async fn fetch_default_user_roles<T: Clone + AsSurrealClient>(
     match user_roles {
         Some(roles) => Ok(roles
             .get("roles")
-            .unwrap()
+            .unwrap_or(&vec![] as &Vec<SystemRole>)
             .into_iter()
             .map(|role| {
                 let name_str = format!("{}", role.role_name);
-                tracing::debug!("name_str: {}", name_str);
                 name_str
             })
             .collect()),

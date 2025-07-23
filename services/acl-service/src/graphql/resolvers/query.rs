@@ -13,7 +13,14 @@ pub struct Query;
 #[Object]
 impl Query {
     async fn get_users(&self, ctx: &Context<'_>) -> Result<Vec<UserOutput>> {
-        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
+        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
+            tracing::error!("Error extracting Surreal Client: {:?}", e);
+            ExtendedError::new(
+                "Server Error",
+                Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
+            )
+            .build()
+        })?;
 
         let response: Vec<UserOutput> = db.select("user").await.map_err(|e| {
             tracing::error!("Error fetching users: {}", e);
@@ -28,7 +35,14 @@ impl Query {
     }
 
     async fn get_user(&self, ctx: &Context<'_>, id: String) -> Result<UserOutput> {
-        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
+        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
+            tracing::error!("Error extracting Surreal Client: {:?}", e);
+            ExtendedError::new(
+                "Server Error",
+                Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
+            )
+            .build()
+        })?;
 
         let user: Option<UserOutput> = db.select(("user", id.as_str())).await.map_err(|e| {
             tracing::error!("Error fetching user: {}", e);
@@ -48,7 +62,14 @@ impl Query {
     }
 
     async fn check_auth(&self, ctx: &Context<'_>) -> Result<AuthStatus> {
-        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
+        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
+            tracing::error!("Error extracting Surreal Client: {:?}", e);
+            ExtendedError::new(
+                "Server Error",
+                Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
+            )
+            .build()
+        })?;
         let header_map = ctx.data_opt::<HeaderMap>();
 
         confirm_authentication(header_map, db)

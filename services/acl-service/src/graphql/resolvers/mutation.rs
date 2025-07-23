@@ -29,18 +29,32 @@ pub struct Mutation;
 #[Object]
 impl Mutation {
     async fn sign_up(&self, ctx: &Context<'_>, mut user: User) -> Result<User> {
-        user.password = bcrypt::hash(user.password, bcrypt::DEFAULT_COST).unwrap();
+        user.password = bcrypt::hash(user.password, bcrypt::DEFAULT_COST).map_err(|e| {
+            tracing::error!("Bcrypt Error: {}", e);
+            ExtendedError::new("Failed to sign up", Some(StatusCode::BAD_REQUEST.as_u16())).build()
+        })?;
+
         user.dob = match &user.dob {
             Some(ref date_str) => Some(
-                chrono::DateTime::parse_from_rfc3339(date_str)
-                    .unwrap()
-                    .to_rfc3339(),
+                (chrono::DateTime::parse_from_rfc3339(date_str).map_err(|e| {
+                    tracing::error!("Parse from rfc3339 error: {}", e);
+                    ExtendedError::new("Failed to sign up", Some(StatusCode::BAD_REQUEST.as_u16()))
+                        .build()
+                })?)
+                .to_rfc3339(),
             ),
             None => None,
         };
 
         // User signup
-        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
+        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
+            tracing::error!("Error extracting Surreal Client: {:?}", e);
+            ExtendedError::new(
+                "Server Error",
+                Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
+            )
+            .build()
+        })?;
 
         let response: Option<User> = create_user(db, user).await.map_err(|e| {
             tracing::error!("Error creating user: {}", e);
@@ -63,7 +77,14 @@ impl Mutation {
         role: RoleInput,
         role_metadata: RoleMetadata,
     ) -> Result<SystemRole> {
-        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
+        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
+            tracing::error!("Error extracting Surreal Client: {:?}", e);
+            ExtendedError::new(
+                "Server Error",
+                Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
+            )
+            .build()
+        })?;
         let header_map = ctx.data_opt::<HeaderMap>();
 
         let authenticated = confirm_authentication(header_map, db).await?;
@@ -194,7 +215,7 @@ impl Mutation {
         let user_details = raw_user_details.transformed();
         match user_details.oauth_client {
             Some(oauth_client) => {
-                let oauth_client_instance = initiate_auth_code_grant_flow(oauth_client).await;
+                let oauth_client_instance = initiate_auth_code_grant_flow(oauth_client).await?;
                 let redirect_url =
                     navigate_to_redirect_url(oauth_client_instance, ctx, oauth_client).await;
                 Ok(AuthDetails {
@@ -203,13 +224,27 @@ impl Mutation {
                 })
             }
             None => {
-                let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
+                let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
+                    tracing::error!("Error extracting Surreal Client: {:?}", e);
+                    ExtendedError::new(
+                        "Server Error",
+                        Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
+                    )
+                    .build()
+                })?;
 
                 let verified_credentials = verify_login_credentials(db, &raw_user_details).await;
 
                 match &verified_credentials {
                     Ok(user) => {
-                        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
+                        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
+                            tracing::error!("Error extracting Surreal Client: {:?}", e);
+                            ExtendedError::new(
+                                "Server Error",
+                                Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
+                            )
+                            .build()
+                        })?;
 
                         let refresh_token_expiry_duration = Duration::from_secs(30 * 24 * 60 * 60); // days by hours by minutes by 60 seconds
                         let access_token_expiry_duration = Duration::from_secs(15 * 60); // minutes by 60 seconds
@@ -329,12 +364,17 @@ impl Mutation {
         mut user: UserUpdate,
         user_id: String,
     ) -> Result<User> {
-        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
+        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
+            tracing::error!("Error extracting Surreal Client: {:?}", e);
+            ExtendedError::new(
+                "Server Error",
+                Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
+            )
+            .build()
+        })?;
         let header_map = ctx.data_opt::<HeaderMap>();
 
         let check_auth = confirm_authentication(header_map, db).await?;
-
-        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
 
         if check_auth.sub != user_id {
             return Err(ExtendedError::new(
@@ -345,8 +385,13 @@ impl Mutation {
         }
 
         if user.password.is_some() {
-            user.password =
-                Some(bcrypt::hash(user.password.unwrap(), bcrypt::DEFAULT_COST).unwrap());
+            user.password = Some(
+                bcrypt::hash(user.password.unwrap(), bcrypt::DEFAULT_COST).map_err(|e| {
+                    tracing::error!("Bcrypt Error: {}", e);
+                    ExtendedError::new("Failed to sign up", Some(StatusCode::BAD_REQUEST.as_u16()))
+                        .build()
+                })?,
+            );
         }
 
         let response: Option<User> = db

@@ -14,7 +14,14 @@ pub struct FileQuery;
 #[Object]
 impl FileQuery {
     pub async fn fetch_file_id(&self, ctx: &Context<'_>, file_name: String) -> Result<String> {
-        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
+        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
+            tracing::error!("Error extracting Surreal Client: {:?}", e);
+            ExtendedError::new(
+                "Server Error",
+                Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
+            )
+            .build()
+        })?;
 
         let file_id_res = get_file_id(db, file_name).await;
 
@@ -32,7 +39,14 @@ impl FileQuery {
     }
 
     pub async fn fetch_file_name(&self, ctx: &Context<'_>, file_id: String) -> Result<String> {
-        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().unwrap();
+        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
+            tracing::error!("Error extracting Surreal Client: {:?}", e);
+            ExtendedError::new(
+                "Server Error",
+                Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
+            )
+            .build()
+        })?;
 
         let file_name_res = get_system_filename(db, file_id).await;
 
@@ -61,7 +75,14 @@ impl FileQuery {
                     let raw_html =
                         markdown::to_html_with_options(data.as_str(), &markdown::Options::gfm());
 
-                    Ok(raw_html.unwrap())
+                    Ok(raw_html.map_err(|e| {
+                        tracing::error!("Error serving MD file: {:?}", e);
+                        ExtendedError::new(
+                            "Server Error",
+                            Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
+                        )
+                        .build()
+                    })?)
                 }
                 Err(_e) => Ok("".into()),
             },

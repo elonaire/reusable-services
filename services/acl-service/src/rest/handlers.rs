@@ -7,7 +7,7 @@ use axum::{
     Extension, Json,
 };
 use axum_cookie::prelude::*;
-use hyper::HeaderMap;
+use hyper::{HeaderMap, StatusCode};
 use jwt_simple::prelude::Duration;
 use lib::utils::{auth::AuthClaim, cookie_parser::parse_cookies};
 use oauth2::{AuthorizationCode, PkceCodeVerifier, TokenResponse};
@@ -41,27 +41,37 @@ pub async fn oauth_callback_handler(
     // get the csrf state from the cookie
     // Extract the csrf_state, oauth_client, pkce_verifier cookies
     // Extract cookies from the headers
-    let cookie_header = headers
-        .get(AXUM_COOKIE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
+    let cookie_header = headers.get(AXUM_COOKIE).and_then(|v| v.to_str().ok());
+
+    if params.0.state.is_none() || params.0.code.is_none() || cookie_header.is_none() {
+        return (StatusCode::FORBIDDEN, "Forbidden").into_response();
+    }
 
     // Split and parse cookies manually
-    let cookie_map: std::collections::HashMap<_, _> = parse_cookies(cookie_header);
+    let cookie_map: std::collections::HashMap<_, _> = parse_cookies(cookie_header.unwrap());
 
     // let pkce_verifier_secret = cookie_map.get("k").expect("PKCE verifier cookie not found");
-    let csrf_state = cookie_map.get("j").expect("CSRF state cookie not found");
+    let csrf_state = cookie_map.get("j");
 
-    if params.0.state.unwrap() != csrf_state.to_owned() {
+    if csrf_state.is_none() {
+        return (StatusCode::FORBIDDEN, "Forbidden").into_response();
+    }
+
+    let client_token_url = env::var("OAUTH_CLIENT_TOKEN_URL");
+
+    if let Err(e) = &client_token_url {
+        tracing::error!("OAUTH_CLIENT_TOKEN_URL not set: {}", e);
+        return (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response();
+    }
+
+    if params.0.state.unwrap() != csrf_state.unwrap().to_owned() {
         tracing::error!("CSRF token mismatch! Aborting request. Might be a hacker 🥷🏻!");
         panic!("CSRF token mismatch! Aborting request. Might be a hacker 🥷🏻!");
     }
 
-    let client_token_url = env::var("OAUTH_CLIENT_TOKEN_URL").unwrap_or_else(|_| "".to_string());
-
     Redirect::to(&format!(
         "{}?auth_code={}",
-        client_token_url,
+        client_token_url.unwrap(),
         params.0.code.clone().unwrap()
     ))
     .into_response()
@@ -72,35 +82,46 @@ pub async fn exchange_code_for_token(
     headers: HeaderMap,
     cookie: CookieManager,
     Json(payload): Json<TokenExchangeContract>,
-) -> Json<AuthDetails> {
-    let cookie_header = headers
-        .get(AXUM_COOKIE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
+) -> Result<Json<AuthDetails>, StatusCode> {
+    let cookie_header = headers.get(AXUM_COOKIE).and_then(|v| v.to_str().ok());
+
+    if cookie_header.is_none() || payload.auth_code.is_none() {
+        return Err(StatusCode::FORBIDDEN);
+    }
 
     // Split and parse cookies manually
-    let cookie_map: std::collections::HashMap<_, _> = parse_cookies(cookie_header);
+    let cookie_map: std::collections::HashMap<_, _> = parse_cookies(cookie_header.unwrap());
 
-    let pcke_verifier_secret = cookie_map.get("k").expect("PKCE verifier cookie not found");
+    let pcke_verifier_secret = cookie_map.get("k");
 
-    let oauth_client_name = cookie_map
-        .get("oauth_client")
-        .expect("OAuth client name cookie not found");
+    let oauth_client_name = cookie_map.get("oauth_client");
 
-    let oauth_client_name_conversion = OAuthClientName::from_str(oauth_client_name);
+    if pcke_verifier_secret.is_none() || oauth_client_name.is_none() {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    let oauth_client_name_conversion = OAuthClientName::from_str(oauth_client_name.unwrap());
 
     // We need to get the same client instance that we used to generate the auth url. Hence the cookies.
-    let oauth_client = initiate_auth_code_grant_flow(oauth_client_name_conversion).await;
+    let oauth_client = initiate_auth_code_grant_flow(oauth_client_name_conversion)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to initiate auth code grant flow: {}", e);
+            StatusCode::FORBIDDEN
+        })?;
 
     // Generate a PKCE verifier using the secret.
-    let pkce_verifier = PkceCodeVerifier::new(pcke_verifier_secret.to_owned());
+    let pkce_verifier = PkceCodeVerifier::new(pcke_verifier_secret.unwrap().to_owned());
     let auth_code = AuthorizationCode::new(payload.auth_code.unwrap());
 
     let http_client = reqwest::ClientBuilder::new()
         // Following redirects opens the client up to SSRF vulnerabilities.
         .redirect(reqwest::redirect::Policy::none())
         .build()
-        .expect("Client should build");
+        .map_err(|e| {
+            tracing::error!("Failed to build HTTP Client: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     // // Now you can trade it for an access token.
     let token_result = oauth_client
@@ -109,18 +130,27 @@ pub async fn exchange_code_for_token(
         .set_pkce_verifier(pkce_verifier)
         .request_async(&http_client)
         .await
-        .unwrap();
+        .map_err(|e| {
+            tracing::error!("Failed to exchange code for token: {}", e);
+            StatusCode::FORBIDDEN
+        })?;
 
     let token = token_result.access_token().secret();
 
-    let token_header = HeaderValue::from_str(&format!("Bearer {}", token)).unwrap();
+    let token_header = HeaderValue::from_str(&format!("Bearer {}", token)).map_err(|e| {
+        tracing::error!("Failed to create token header: {}", e);
+        StatusCode::FORBIDDEN
+    })?;
     let token_expiry_duration = Duration::from_secs(30 * 24 * 60 * 60); // days by hours by minutes by 60 seconds
 
     match oauth_client_name_conversion {
         OAuthClientName::Google => {
             let user = verify_oauth_token::<GoogleUserInfo>(OAuthClientName::Google, &token_header)
                 .await
-                .unwrap();
+                .map_err(|e| {
+                    tracing::error!("Failed to verify Google token: {}", e);
+                    StatusCode::UNAUTHORIZED
+                })?;
 
             let _create_user = create_oauth_user_if_not_exists::<Arc<Surreal<Client>>>(
                 &db,
@@ -131,7 +161,10 @@ pub async fn exchange_code_for_token(
 
             let user_roles = fetch_default_user_roles(&db, &user.resource_name)
                 .await
-                .unwrap();
+                .map_err(|e| {
+                    tracing::error!("Failed to fetch default roles: {}", e);
+                    StatusCode::UNAUTHORIZED
+                })?;
 
             let auth_claim = AuthClaim {
                 roles: user_roles.to_vec(),
@@ -139,7 +172,10 @@ pub async fn exchange_code_for_token(
 
             let token_str = sign_jwt(&auth_claim, token_expiry_duration, &user.resource_name)
                 .await
-                .unwrap();
+                .map_err(|e| {
+                    tracing::error!("Failed to sign JWT: {}", e);
+                    StatusCode::UNAUTHORIZED
+                })?;
 
             let jwt_cookie = CookieBuilder::new("oauth_user_roles_jwt", token_str.clone())
                 .path("/")
@@ -147,17 +183,20 @@ pub async fn exchange_code_for_token(
 
             cookie.add(jwt_cookie);
 
-            (AuthDetails {
+            Ok((AuthDetails {
                 url: None,
                 token: Some(token_str),
             })
-            .into()
+            .into())
         }
         OAuthClientName::Github => {
             let user =
                 verify_oauth_token::<GithubUserProfile>(OAuthClientName::Github, &token_header)
                     .await
-                    .unwrap();
+                    .map_err(|e| {
+                        tracing::error!("Failed to verify GitHub token: {}", e);
+                        StatusCode::UNAUTHORIZED
+                    })?;
 
             let _create_user = create_oauth_user_if_not_exists::<Arc<Surreal<Client>>>(
                 &db,
@@ -168,7 +207,10 @@ pub async fn exchange_code_for_token(
 
             let user_roles = fetch_default_user_roles(&db, &user.id.to_string())
                 .await
-                .unwrap();
+                .map_err(|e| {
+                    tracing::error!("Failed to fetch user roles: {}", e);
+                    StatusCode::UNAUTHORIZED
+                })?;
 
             let auth_claim = AuthClaim {
                 roles: user_roles.to_vec(),
@@ -176,7 +218,10 @@ pub async fn exchange_code_for_token(
 
             let token_str = sign_jwt(&auth_claim, token_expiry_duration, &user.id.to_string())
                 .await
-                .unwrap();
+                .map_err(|e| {
+                    tracing::error!("Failed to sign JWT: {}", e);
+                    StatusCode::UNAUTHORIZED
+                })?;
 
             let jwt_cookie = CookieBuilder::new("oauth_user_roles_jwt", token_str.clone())
                 .path("/")
@@ -184,11 +229,11 @@ pub async fn exchange_code_for_token(
 
             cookie.add(jwt_cookie);
 
-            (AuthDetails {
+            Ok((AuthDetails {
                 url: None,
                 token: Some(token_str),
             })
-            .into()
+            .into())
         }
     }
 }

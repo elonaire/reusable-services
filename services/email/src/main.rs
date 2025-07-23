@@ -3,7 +3,7 @@ mod grpc;
 mod rest;
 mod utils;
 
-use dotenvy::dotenv;
+// use dotenvy::dotenv;
 use lib::{
     integration::grpc::clients::email_service::email_service_server::EmailServiceServer,
     middleware::auth::grpc::AuthMiddleware,
@@ -79,7 +79,7 @@ async fn graphql_handler(
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    dotenv().ok();
+    // dotenv().ok();
     // let db = Arc::new(database::connection::create_db_connection().await.unwrap());
 
     // Bring in some needed env vars
@@ -106,8 +106,7 @@ async fn main() -> Result<(), Error> {
     let origins: Vec<HeaderValue> = allowed_services_cors
         .as_str()
         .split(",")
-        .into_iter()
-        .map(|endpoint| endpoint.parse::<HeaderValue>().unwrap())
+        .filter_map(|endpoint| endpoint.trim().parse::<HeaderValue>().ok())
         .collect();
 
     // Persist the server logs to a file on a daily basis using "tracing_subscriber"
@@ -156,7 +155,7 @@ async fn main() -> Result<(), Error> {
     let grpc_address: SocketAddr = format!("0.0.0.0:{}", email_grpc_port)
         .as_str()
         .parse()
-        .unwrap();
+        .expect("The gRPC address must be set");
     let tonic_auth_middleware = AuthMiddleware::default();
 
     tokio::spawn(async move {

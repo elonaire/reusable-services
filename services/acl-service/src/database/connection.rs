@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::io::Read;
 
-use dotenvy::dotenv;
+// use dotenvy::dotenv;
 // use serde::Serialize;
 use surrealdb::{
     engine::remote::ws::{Client, Ws},
@@ -10,7 +10,7 @@ use surrealdb::{
 };
 
 pub async fn create_db_connection() -> Result<Surreal<Client>> {
-    dotenv().ok();
+    // dotenv().ok();
     println!("Creating Surreal database connection...");
     let db_host = std::env::var("DATABASE_HOST_ACL").expect("DB_HOST not set");
     let db_port = std::env::var("DATABASE_PORT_ACL").expect("DB_PORT not set");
@@ -46,17 +46,20 @@ pub async fn create_db_connection() -> Result<Surreal<Client>> {
         std::env::var("DATABASE_SCHEMA_FILE_PATH").expect("DATABASE_SCHEMA_FILE_PATH not set");
 
     let schema = read_file_to_string(file_name.as_str());
-    db.query(schema.as_str()).await.map_err(|e| {
-        tracing::error!("{}", e);
-        Error::from(e)
-    })?;
+
+    if schema.is_some() {
+        db.query(schema.unwrap().as_str()).await.map_err(|e| {
+            tracing::error!("{}", e);
+            Error::from(e)
+        })?;
+    }
 
     Ok(db)
 }
 
-fn read_file_to_string(filename: &str) -> String {
-    let mut file = File::open(filename).unwrap();
+fn read_file_to_string(filename: &str) -> Option<String> {
+    let mut file = File::open(filename).ok()?;
     let mut contents = String::new();
-    file.read_to_string(&mut contents).unwrap();
-    contents
+    file.read_to_string(&mut contents).ok()?;
+    Some(contents)
 }
