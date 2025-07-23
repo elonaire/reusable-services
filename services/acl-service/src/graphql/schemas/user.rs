@@ -78,8 +78,8 @@ impl User {
         // calculate age from &self.dob
         match &self.dob.as_ref() {
             Some(dob) => {
-                let dob = DateTime::parse_from_rfc3339(dob).expect("Invalid date format");
-                let from_ymd = NaiveDate::from_ymd_opt(dob.year(), dob.month(), dob.day()).unwrap();
+                let dob = DateTime::parse_from_rfc3339(dob).ok()?;
+                let from_ymd = NaiveDate::from_ymd_opt(dob.year(), dob.month(), dob.day())?;
                 let today = Utc::now().date_naive();
                 today.years_since(from_ymd)
             }
@@ -132,8 +132,8 @@ impl UserOutput {
         // calculate age from &self.dob
         match &self.dob.as_ref() {
             Some(dob) => {
-                let dob = DateTime::parse_from_rfc3339(dob).expect("Invalid date format");
-                let from_ymd = NaiveDate::from_ymd_opt(dob.year(), dob.month(), dob.day()).unwrap();
+                let dob = DateTime::parse_from_rfc3339(dob).ok()?;
+                let from_ymd = NaiveDate::from_ymd_opt(dob.year(), dob.month(), dob.day())?;
                 let today = Utc::now().date_naive();
                 today.years_since(from_ymd)
             }

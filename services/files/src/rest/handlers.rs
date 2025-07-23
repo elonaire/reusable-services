@@ -293,7 +293,10 @@ pub async fn download_file(
                     )
                     .header("Content-Type", content_type.to_string())
                     .body(bytes.into())
-                    .unwrap();
+                    .map_err(|err| {
+                        tracing::error!("Failed to build response: {}", err);
+                        StatusCode::INTERNAL_SERVER_ERROR
+                    })?;
                 Ok(response)
             }
             None => Err(StatusCode::NOT_FOUND),
@@ -339,7 +342,10 @@ pub async fn get_image(
                 let response = Response::builder()
                     .header("Content-Type", content_type.to_string())
                     .body(bytes.into())
-                    .unwrap();
+                    .map_err(|e| {
+                        tracing::error!("Failed database query: {}", e);
+                        StatusCode::INTERNAL_SERVER_ERROR
+                    })?;
                 Ok(response)
             }
             None => Err(StatusCode::NOT_FOUND),

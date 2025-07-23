@@ -15,15 +15,26 @@ use lettre::{
 use reqwest::Client as ReqWestClient;
 
 pub async fn send_email(email: &Email) -> Result<&'static str, Error> {
-    let smtp_user = env::var("SMTP_USER").expect("Missing the SMTP_USER environment variable.");
-    let smtp_password =
-        env::var("SMTP_PASSWORD").expect("Missing the SMTP_PASSWORD environment variable.");
-    let smtp_server =
-        env::var("SMTP_SERVER").expect("Missing the SMTP_SERVER environment variable.");
-    let files_service =
-        env::var("FILES_SERVICE").expect("Missing the FILES_SERVICE environment variable.");
-    let primary_logo =
-        env::var("PRIMARY_LOGO").expect("Missing the PRIMARY_LOGO environment variable.");
+    let smtp_user = env::var("SMTP_USER").map_err(|e| {
+        tracing::error!("Missing the SMTP_USER environment variable.: {:?}", e);
+        Error::new(ErrorKind::Other, "Server Error")
+    })?;
+    let smtp_password = env::var("SMTP_PASSWORD").map_err(|e| {
+        tracing::error!("Missing the SMTP_PASSWORD environment variable.: {:?}", e);
+        Error::new(ErrorKind::Other, "Server Error")
+    })?;
+    let smtp_server = env::var("SMTP_SERVER").map_err(|e| {
+        tracing::error!("Missing the SMTP_SERVER environment variable.: {:?}", e);
+        Error::new(ErrorKind::Other, "Server Error")
+    })?;
+    let files_service = env::var("FILES_SERVICE").map_err(|e| {
+        tracing::error!("Missing the FILES_SERVICE environment variable.: {:?}", e);
+        Error::new(ErrorKind::Other, "Server Error")
+    })?;
+    let primary_logo = env::var("PRIMARY_LOGO").map_err(|e| {
+        tracing::error!("Missing the PRIMARY_LOGO environment variable.: {:?}", e);
+        Error::new(ErrorKind::Other, "Server Error")
+    })?;
 
     let current_year = {
         let now = SystemTime::now();
@@ -38,21 +49,23 @@ pub async fn send_email(email: &Email) -> Result<&'static str, Error> {
     let client = ReqWestClient::builder()
         .danger_accept_invalid_certs(true)
         .build()
-        .unwrap();
+        .map_err(|e| {
+            tracing::error!("Failed to build client: {:?}", e);
+            Error::new(ErrorKind::Other, "Failed to send email")
+        })?;
     // let logo_image = fs::read("https://imagedelivery.net/fa3SWf5GIAHiTnHQyqU8IQ/5d0feb5f-2b15-4b86-9cf3-1f99372f4600/public")?;
     let logo_image = client
         .request(Method::GET, logo_url.as_str())
         .send()
         .await
         .map_err(|e| {
-            println!("Error sending: {:?}", e);
-            // Error::new(e.to_string())
+            tracing::error!("Error sending: {:?}", e);
             Error::new(ErrorKind::Other, "Failed to send email")
         })?
         .bytes()
         .await
         .map_err(|e| {
-            println!("Error deserializing: {:?}", e);
+            tracing::error!("Error deserializing: {:?}", e);
             // Error::new(e.to_string())
             Error::new(ErrorKind::Other, "Failed to send email")
         })?;
@@ -132,38 +145,51 @@ pub async fn send_email(email: &Email) -> Result<&'static str, Error> {
         .from(
             format!("Rusty Templates <{}>", &smtp_user)
                 .parse()
-                .map_err(|_e| Error::new(ErrorKind::Other, ""))?,
+                .map_err(|e| {
+                    tracing::error!("Failed to parse sender email address: {}", e);
+                    Error::new(ErrorKind::Other, "Failed to send email")
+                })?,
         )
-        .reply_to(
-            format!(" <{}>", &smtp_user)
-                .parse()
-                .map_err(|_e| Error::new(ErrorKind::Other, ""))?,
-        )
+        .reply_to(format!(" <{}>", &smtp_user).parse().map_err(|e| {
+            tracing::error!("Failed to parse reply-to email address: {}", e);
+            Error::new(ErrorKind::Other, "Failed to send email")
+        })?)
         .to(format!(
             "{} <{}>",
             &email.recipient.clone().full_name.unwrap_or(String::new()),
             &email.recipient.clone().email_address
         )
         .parse()
-        .map_err(|_e| Error::new(ErrorKind::Other, ""))?)
+        .map_err(|e| {
+            tracing::error!("Failed to parse recipient email address: {}", e);
+            Error::new(ErrorKind::Other, "Failed to send email")
+        })?)
         .subject(&email.subject)
         .multipart(
             MultiPart::related()
                 .singlepart(SinglePart::html(email_body))
-                .singlepart(
-                    Attachment::new_inline(String::from("logo"))
-                        .body(logo_image_body, "image/png".parse().unwrap()),
-                ),
+                .singlepart(Attachment::new_inline(String::from("logo")).body(
+                    logo_image_body,
+                    "image/png".parse().map_err(|e| {
+                        tracing::error!("Failed to parse image content type: {}", e);
+                        Error::new(ErrorKind::Other, "Failed to send email")
+                    })?,
+                )),
         )
-        .map_err(|_e| Error::new(ErrorKind::Other, ""))?;
+        .map_err(|e| {
+            tracing::error!("Failed to send email: {}", e);
+            Error::new(ErrorKind::Other, "Failed to send email")
+        })?;
 
     let creds = Credentials::new(smtp_user.to_owned(), smtp_password.to_owned());
 
     // Open a remote connection to smtp server
-    let mailer = SmtpTransport::starttls_relay(&smtp_server)
-        .unwrap()
-        .credentials(creds)
-        .build();
+    let mailer = (SmtpTransport::starttls_relay(&smtp_server).map_err(|e| {
+        tracing::error!("Failed to start TLS relay: {}", e);
+        Error::new(ErrorKind::Other, "Failed to send email")
+    })?)
+    .credentials(creds)
+    .build();
 
     // Send the email
     match mailer.send(&message) {

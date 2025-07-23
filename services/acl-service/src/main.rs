@@ -114,8 +114,7 @@ async fn main() -> Result<(), Error> {
     let origins: Vec<HeaderValue> = allowed_services_cors
         .as_str()
         .split(",")
-        .into_iter()
-        .map(|endpoint| endpoint.parse::<HeaderValue>().unwrap())
+        .filter_map(|endpoint| endpoint.trim().parse::<HeaderValue>().ok())
         .collect();
 
     // Persist the server logs to a file on a daily basis using "tracing_subscriber"
@@ -167,7 +166,7 @@ async fn main() -> Result<(), Error> {
     let grpc_address: SocketAddr = format!("0.0.0.0:{}", acl_grpc_port)
         .as_str()
         .parse()
-        .unwrap();
+        .expect("The gRPC address must be set");
     // let tonic_auth_middleware = AuthMiddleware::default();
 
     tokio::spawn(async move {
