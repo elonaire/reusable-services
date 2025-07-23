@@ -3,7 +3,7 @@ mod grpc;
 mod rest;
 mod utils;
 
-// use dotenvy::dotenv;
+use dotenvy::dotenv;
 use lib::{
     integration::grpc::clients::email_service::email_service_server::EmailServiceServer,
     middleware::auth::grpc::AuthMiddleware,
@@ -79,7 +79,7 @@ async fn graphql_handler(
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    // dotenv().ok();
+    dotenv().ok();
     // let db = Arc::new(database::connection::create_db_connection().await.unwrap());
 
     // Bring in some needed env vars

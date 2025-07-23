@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::io::Read;
 
-// use dotenvy::dotenv;
+use dotenvy::dotenv;
 // use serde::Serialize;
 use surrealdb::{
     engine::remote::ws::{Client, Ws},
@@ -10,7 +10,7 @@ use surrealdb::{
 };
 
 pub async fn create_db_connection() -> Result<Surreal<Client>> {
-    // dotenv().ok();
+    dotenv().ok();
     println!("Creating Surreal database connection...");
     let db_host = std::env::var("DATABASE_HOST_ACL").expect("DB_HOST not set");
     let db_port = std::env::var("DATABASE_PORT_ACL").expect("DB_PORT not set");
