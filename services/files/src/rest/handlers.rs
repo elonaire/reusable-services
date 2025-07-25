@@ -28,8 +28,12 @@ pub async fn upload(
     Extension(current_user): Extension<String>,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
-    let upload_dir =
-        env::var("FILE_UPLOADS_DIR").expect("Missing the FILE_UPLOADS_DIR environment variable.");
+    let upload_dir = env::var("FILE_UPLOADS_DIR");
+
+    if let Err(e) = upload_dir {
+        tracing::error!("Missing the FILE_UPLOADS_DIR environment variable.: {}", e);
+        return (StatusCode::INTERNAL_SERVER_ERROR, "Server Error").into_response();
+    }
 
     let user_fk_body = ForeignKey {
         table: "user_id".into(),
@@ -39,6 +43,10 @@ pub async fn upload(
 
     let user_fk =
         add_foreign_key_if_not_exists::<Arc<Surreal<Client>>, User>(&db, user_fk_body).await;
+
+    if user_fk.is_none() {
+        return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
+    }
 
     let user_id_raw = user_fk
         .unwrap()
@@ -52,6 +60,7 @@ pub async fn upload(
     let mut filename = String::new();
     let system_filename = Uuid::new_v4();
     let mut mime_type = String::new();
+    let upload_dir = upload_dir.unwrap();
     let filepath = format!("{}{}", &upload_dir, system_filename);
     let mut field_name = String::new();
     let mut is_free = true;
@@ -184,8 +193,14 @@ pub async fn download_file(
     Extension(current_user): Extension<String>,
     AxumUrlParams(file_name): AxumUrlParams<String>,
 ) -> Result<Response, StatusCode> {
-    let upload_dir =
-        env::var("FILE_UPLOADS_DIR").expect("Missing the FILE_UPLOADS_DIR environment variable.");
+    let upload_dir = env::var("FILE_UPLOADS_DIR");
+
+    if let Err(e) = upload_dir {
+        tracing::error!("Missing the FILE_UPLOADS_DIR environment variable.: {}", e);
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+    let upload_dir = upload_dir.unwrap();
+
     let path = Path::new(&upload_dir).join(&file_name);
 
     if path.exists() {
@@ -310,8 +325,14 @@ pub async fn get_image(
     Extension(db): Extension<Arc<Surreal<Client>>>,
     AxumUrlParams(file_name): AxumUrlParams<String>,
 ) -> Result<Response, StatusCode> {
-    let upload_dir =
-        env::var("FILE_UPLOADS_DIR").expect("Missing the FILE_UPLOADS_DIR environment variable.");
+    let upload_dir = env::var("FILE_UPLOADS_DIR");
+
+    if let Err(e) = upload_dir {
+        tracing::error!("Missing the FILE_UPLOADS_DIR environment variable.: {}", e);
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+    let upload_dir = upload_dir.unwrap();
+
     let path = Path::new(&upload_dir).join(&file_name);
 
     if path.exists() {

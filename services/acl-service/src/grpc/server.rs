@@ -62,10 +62,17 @@ impl Acl for AclServiceImplementation {
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<AuthDetails>, Status> {
-        let username =
-            env::var("INTERNAL_USER").expect("Missing the INTERNAL_USER environment variable.");
-        let password = env::var("INTERNAL_USER_PASSWORD")
-            .expect("Missing the INTERNAL_USER_PASSWORD environment variable.");
+        let username = env::var("INTERNAL_USER").map_err(|e| {
+            tracing::error!("Missing the INTERNAL_USER environment variable.: {}", e);
+            Status::internal("Server Error")
+        })?;
+        let password = env::var("INTERNAL_USER_PASSWORD").map_err(|e| {
+            tracing::error!(
+                "Missing the INTERNAL_USER_PASSWORD environment variable.: {}",
+                e
+            );
+            Status::internal("Server Error")
+        })?;
 
         let raw_user_details = UserLogins {
             user_name: Some(username),
@@ -81,7 +88,16 @@ impl Acl for AclServiceImplementation {
                 let signed_jwt = sign_jwt(
                     &auth_claim,
                     service_token_expiry_duration,
-                    &user.id.as_ref().map(|t| &t.id).expect("id").to_raw(),
+                    &user
+                        .id
+                        .as_ref()
+                        .map(|t| &t.id)
+                        .ok_or("Unauthorized")
+                        .map_err(|e| {
+                            tracing::error!("{}", e);
+                            Status::unauthenticated("Unauthorized")
+                        })?
+                        .to_raw(),
                 )
                 .await
                 .map_err(|_e| Status::unauthenticated("Unauthorized"))?;
