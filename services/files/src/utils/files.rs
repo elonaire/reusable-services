@@ -39,8 +39,17 @@ pub async fn get_file_id<T: Clone + AsSurrealClient>(
     })?;
 
     match response {
-        Some(file) => Ok(file.id.as_ref().map(|t| &t.id).expect("id").to_raw()),
-        None => Err(Error::new(ErrorKind::InvalidData, "Invalid parameters!")),
+        Some(file) => Ok(file
+            .id
+            .as_ref()
+            .map(|t| &t.id)
+            .ok_or("Not Found!")
+            .map_err(|e| {
+                tracing::error!("Invalid ID: {}", e);
+                Error::new(ErrorKind::InvalidData, "Not Found!")
+            })?
+            .to_raw()),
+        None => Err(Error::new(ErrorKind::InvalidData, "Not Found!")),
     }
 }
 pub async fn get_system_filename<T: Clone + AsSurrealClient>(

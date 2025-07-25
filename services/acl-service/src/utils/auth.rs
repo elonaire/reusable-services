@@ -1,5 +1,7 @@
 use axum::http::HeaderValue;
+use hyper::StatusCode;
 use jwt_simple::prelude::*;
+use lib::utils::custom_error::ExtendedError;
 use lib::utils::{
     auth::AuthClaim, cookie_parser::parse_cookies, custom_traits::AsSurrealClient,
     models::AuthStatus,
@@ -506,7 +508,16 @@ async fn handle_refresh_token<T: Clone + AsSurrealClient>(
                             let _token = sign_jwt(
                                 &auth_claim,
                                 token_expiry_duration,
-                                &user.id.as_ref().map(|t| &t.id).expect("id").to_raw(),
+                                &user
+                                    .id
+                                    .as_ref()
+                                    .map(|t| &t.id)
+                                    .ok_or("Invalid ID")
+                                    .map_err(|e| {
+                                        tracing::error!("{}", e);
+                                        Error::new(ErrorKind::PermissionDenied, "Unauthorized")
+                                    })?
+                                    .to_raw(),
                             )
                             .await
                             .map_err(|e| {
@@ -524,7 +535,16 @@ async fn handle_refresh_token<T: Clone + AsSurrealClient>(
 
                             return Ok(AuthStatus {
                                 is_auth: true,
-                                sub: user.id.as_ref().map(|t| &t.id).expect("id").to_raw(),
+                                sub: user
+                                    .id
+                                    .as_ref()
+                                    .map(|t| &t.id)
+                                    .ok_or("Invalid ID")
+                                    .map_err(|e| {
+                                        tracing::error!("{}", e);
+                                        Error::new(ErrorKind::PermissionDenied, "Unauthorized")
+                                    })?
+                                    .to_raw(),
                                 current_role: refresh_claims.custom.roles[0].clone(),
                             });
                         }

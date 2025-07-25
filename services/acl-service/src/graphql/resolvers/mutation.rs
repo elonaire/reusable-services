@@ -266,7 +266,20 @@ impl Mutation {
                         let token_str = sign_jwt(
                             &auth_claim,
                             access_token_expiry_duration,
-                            &user.id.as_ref().map(|t| &t.id).expect("id").to_raw(),
+                            &user
+                                .id
+                                .as_ref()
+                                .map(|t| &t.id)
+                                .ok_or("Invalid ID")
+                                .map_err(|e| {
+                                    tracing::error!("{}", e);
+                                    ExtendedError::new(
+                                        "Forbidden",
+                                        Some(StatusCode::FORBIDDEN.as_u16()),
+                                    )
+                                    .build()
+                                })?
+                                .to_raw(),
                         )
                         .await
                         .map_err(|e| {
@@ -281,7 +294,20 @@ impl Mutation {
                         let refresh_token_str = sign_jwt(
                             &auth_claim,
                             refresh_token_expiry_duration,
-                            &user.id.as_ref().map(|t| &t.id).expect("id").to_raw(),
+                            &user
+                                .id
+                                .as_ref()
+                                .map(|t| &t.id)
+                                .ok_or("Invalid ID")
+                                .map_err(|e| {
+                                    tracing::error!("{}", e);
+                                    ExtendedError::new(
+                                        "Forbidden",
+                                        Some(StatusCode::FORBIDDEN.as_u16()),
+                                    )
+                                    .build()
+                                })?
+                                .to_raw(),
                         )
                         .await
                         .map_err(|e| {

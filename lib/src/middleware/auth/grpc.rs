@@ -39,8 +39,13 @@ where
             constructed_grpc_request: Some(&mut request),
         };
 
-        let acl_service_grpc = env::var("OAUTH_SERVICE_GRPC")
-            .expect("Missing the OAUTH_SERVICE_GRPC environment variable.");
+        let acl_service_grpc = env::var("OAUTH_SERVICE_GRPC").map_err(|e| {
+            tracing::error!(
+                "Missing the OAUTH_SERVICE_GRPC environment variable.: {}",
+                e
+            );
+            Status::internal("Server Error")
+        })?;
 
         let mut acl_grpc_client = create_grpc_client::<Empty, AclClient<Channel>>(
             &acl_service_grpc,
