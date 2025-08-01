@@ -84,3 +84,11 @@ pub struct PurchaseFileDetails {
     pub file_id: String,
     pub buyer_id: String,
 }
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct EmailMQTTPayload<'a> {
+    pub recipient: &'a str,
+    pub subject: &'a str,
+    pub title: &'a str,
+    pub template: String,
+}

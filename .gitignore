@@ -8,3 +8,5 @@ prod.env
 /services/**/src/database/schemas/users.surql
 /lib/src/integration/grpc/out
 k8s.env
+*.key
+*.pem

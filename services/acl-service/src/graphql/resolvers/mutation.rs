@@ -1,11 +1,19 @@
-use std::sync::Arc;
+use std::{env, sync::Arc};
 
 use async_graphql::{Context, Object, Result};
 use axum::Extension;
+use base64::{engine::general_purpose, Engine as _engine};
 use hyper::{header::SET_COOKIE, HeaderMap, StatusCode};
 use jwt_simple::prelude::*;
-use lib::utils::{auth::AuthClaim, custom_error::ExtendedError};
+use lib::utils::{auth::AuthClaim, custom_error::ExtendedError, models::EmailMQTTPayload};
+use rsa::{
+    pkcs1::{DecodeRsaPrivateKey, DecodeRsaPublicKey},
+    pkcs8::DecodePublicKey,
+    Pkcs1v15Encrypt, RsaPrivateKey, RsaPublicKey,
+};
+use rumqttc::v5::mqttbytes::QoS;
 use surrealdb::{engine::remote::ws::Client, Surreal};
+use tokio::fs;
 
 use crate::{
     graphql::schemas::{
@@ -22,6 +30,7 @@ use crate::{
         },
         user::create_user,
     },
+    AppState,
 };
 
 pub struct Mutation;
@@ -62,7 +71,137 @@ impl Mutation {
         })?;
 
         match response {
-            Some(user) => Ok(user),
+            Some(user) => {
+                let shared_state = ctx.data::<Extension<Arc<AppState>>>();
+
+                // There should be a check to prevent any panics, especially because registration was successful
+                if let Err(e) = &shared_state {
+                    tracing::error!("Error extracting Shared State: {:?}", e);
+
+                    return Ok(user);
+                };
+
+                let auth_claim = AuthClaim { roles: vec![] };
+                let token_duration = Duration::from_secs(15 * 60); // minutes by 60 seconds;
+
+                let user_id = user.id.as_ref().map(|t| &t.id).unwrap().to_raw();
+
+                let signed_jwt = sign_jwt(&auth_claim, token_duration, &user_id).await;
+
+                let public_key_path = env::var("RSA_PUBLIC_KEY_PATH");
+
+                if let Err(e) = &public_key_path {
+                    tracing::error!("Failed to get RSA_PUBLIC_KEY_PATH env var: {}", e);
+
+                    return Ok(user);
+                }
+
+                let public_key = fs::read_to_string(&public_key_path.unwrap()).await;
+
+                if let Err(e) = &signed_jwt {
+                    tracing::error!("Failed to sign JWT: {}", e);
+
+                    return Ok(user);
+                }
+
+                if let Err(e) = &public_key {
+                    tracing::error!("Failed to read public key: {}", e);
+
+                    return Ok(user);
+                }
+
+                let mut rng = rand::rngs::OsRng; // rand@0.8
+                let public_key = RsaPublicKey::from_public_key_pem(&public_key.unwrap());
+
+                if let Err(e) = &public_key {
+                    tracing::error!("Failed to get public key: {}", e);
+
+                    return Ok(user);
+                }
+
+                let encrypted_token = public_key.unwrap().encrypt(
+                    &mut rng,
+                    Pkcs1v15Encrypt,
+                    &signed_jwt.unwrap().as_bytes(),
+                );
+
+                if let Err(e) = &encrypted_token {
+                    tracing::error!("Failed to encrypt token: {}", e);
+
+                    return Ok(user);
+                }
+
+                let auth_service = env::var("OAUTH_SERVICE");
+
+                if let Err(e) = &auth_service {
+                    tracing::error!("Failed to get OAUTH_SERVICE env var: {}", e);
+
+                    return Ok(user);
+                }
+
+                let encoded_token =
+                    general_purpose::URL_SAFE_NO_PAD.encode(&encrypted_token.unwrap()[..]);
+
+                let verification_url = format!(
+                    "{}/verify-email?token={}",
+                    auth_service.unwrap(),
+                    encoded_token
+                );
+
+                let email_template = format!(
+                    r#"
+                <div style="font-family: Arial, sans-serif; background-color: #f4f4f4;">
+                    <div style="max-width: 600px; margin: auto; background-color: #ffffff; border-radius: 8px; box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);">
+                        <h2 style="background-color: #4CAF50; color: #ffffff; padding: 10px; border-radius: 8px 8px 0 0; text-align: center;">Please Verify Your Email</h2>
+                        <div style="padding: 10px;">
+                            <p>Dear Customer,</p>
+                            <p>We are pleased to inform you that you have successfully registered on our platform.</p>
+                            <p>We just need to verify your email address. Please click the link below to confirm your email address.</p>
+                            <p>
+                                <a href="{}" style="display: inline-block; padding: 10px 20px; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 5px; font-weight: bold;">Verify Email</a>
+                            </p>
+                            <p>If you have any questions or concerns, please do not hesitate to contact our support team.</p>
+                            <p>Thank you!</p>
+                            <p>Sincerely,<br/>Elon A. Idiong'o<br />CEO</p>
+                        </div>
+                    </div>
+                </div>
+                "#,
+                    verification_url
+                );
+
+                let email_payload = EmailMQTTPayload {
+                    recipient: &user.email,
+                    subject: "Email Address Verification",
+                    title: "Verify Your Email Address",
+                    template: email_template,
+                };
+
+                let encoded_payload = serde_json::to_vec(&email_payload);
+
+                if let Err(e) = &encoded_payload {
+                    tracing::error!("Error serializing Email Payload: {:?}", e);
+
+                    return Ok(user);
+                };
+
+                if let Err(e) = shared_state
+                    .unwrap()
+                    .mqtt_client
+                    .publish(
+                        "email/send",
+                        QoS::AtLeastOnce,
+                        false,
+                        encoded_payload.unwrap(),
+                    )
+                    .await
+                {
+                    tracing::error!("Failed to publish email/send event: {}", e);
+
+                    return Ok(user);
+                }
+                Ok(user)
+            }
             None => Err(ExtendedError::new(
                 "Failed to sign up",
                 Some(StatusCode::BAD_REQUEST.as_u16()),

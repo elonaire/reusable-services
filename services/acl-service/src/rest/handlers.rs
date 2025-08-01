@@ -7,18 +7,22 @@ use axum::{
     Extension, Json,
 };
 use axum_cookie::prelude::*;
+use base64::{engine::general_purpose, Engine as _engine};
 use hyper::{HeaderMap, StatusCode};
 use jwt_simple::prelude::Duration;
 use lib::utils::{auth::AuthClaim, cookie_parser::parse_cookies};
 use oauth2::{AuthorizationCode, PkceCodeVerifier, TokenResponse};
+use rsa::{pkcs1::DecodeRsaPrivateKey, pkcs8::DecodePrivateKey, Pkcs1v15Encrypt, RsaPrivateKey};
 use serde::{Deserialize, Serialize};
 use surrealdb::{engine::remote::ws::Client, Surreal};
+use tokio::fs;
 
 use crate::{
     graphql::schemas::user::{AuthDetails, GithubUserProfile, GoogleUserInfo, OAuthUser},
     utils::auth::{
-        create_oauth_user_if_not_exists, fetch_default_user_roles, initiate_auth_code_grant_flow,
-        sign_jwt, verify_oauth_token, OAuthClientName,
+        create_oauth_user_if_not_exists, decode_token, decode_token_string,
+        fetch_default_user_roles, initiate_auth_code_grant_flow, sign_jwt, verify_oauth_token,
+        OAuthClientName,
     },
 };
 
@@ -26,6 +30,11 @@ use crate::{
 pub struct Params {
     pub code: Option<String>,
     pub state: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct EmailVerificationParams {
+    pub token: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -234,6 +243,100 @@ pub async fn exchange_code_for_token(
                 token: Some(token_str),
             })
             .into())
+        }
+    }
+}
+
+pub async fn verify_email_handler(
+    Extension(db): Extension<Arc<Surreal<Client>>>,
+    params: Query<EmailVerificationParams>,
+) -> impl IntoResponse {
+    if params.0.token.is_none() {
+        return (StatusCode::FORBIDDEN, "Forbidden").into_response();
+    }
+
+    let private_key_path = env::var("RSA_PRIVATE_KEY_PATH");
+
+    if let Err(e) = &private_key_path {
+        tracing::error!("Failed to get RSA_PRIVATE_KEY_PATH env var: {}", e);
+
+        return (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response();
+    }
+
+    let private_key_file = fs::read_to_string(&private_key_path.unwrap()).await;
+
+    if let Err(e) = &private_key_file {
+        tracing::error!("Failed to read private key file: {}", e);
+        return (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response();
+    };
+
+    let private_key = RsaPrivateKey::from_pkcs8_pem(&private_key_file.unwrap());
+
+    if let Err(e) = &private_key {
+        tracing::error!("Failed to parse private key: {}", e);
+        return (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response();
+    };
+
+    let decoded_token = general_purpose::URL_SAFE_NO_PAD.decode(params.0.token.unwrap());
+
+    if let Err(e) = &decoded_token {
+        tracing::error!("Failed to decode token: {}", e);
+        return (StatusCode::BAD_REQUEST, "Bad Request").into_response();
+    };
+
+    let decrypted_token = private_key
+        .unwrap()
+        .decrypt(Pkcs1v15Encrypt, &decoded_token.unwrap());
+
+    if let Err(e) = &decrypted_token {
+        tracing::error!("Failed to decrypt token: {}", e);
+        return (StatusCode::BAD_REQUEST, "Bad Request").into_response();
+    };
+
+    let signed_jwt = String::from_utf8(decrypted_token.unwrap());
+
+    if let Err(e) = &signed_jwt {
+        tracing::error!("Failed to create signed JWT: {}", e);
+        return (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response();
+    };
+
+    let claims_result = decode_token_string(&signed_jwt.unwrap()).await;
+
+    match claims_result {
+        Ok(claims) => {
+            // Token verification successful
+            let user_id = claims
+                .subject
+                .as_ref()
+                .map(|t| t.to_string())
+                .unwrap_or("".to_string());
+
+            let activate_user_account_query = db
+                .query(
+                    "
+                   BEGIN TRANSACTION;
+                   LET $user = type::thing('user', $user_id);
+                   IF !$user.exists() {
+                       THROW 'Invalid Input';
+                   };
+                   UPDATE $user SET status = 'Active';
+                   COMMIT TRANSACTION;
+                   ",
+                )
+                .bind(("user_id", user_id))
+                .await;
+
+            if let Err(e) = activate_user_account_query {
+                tracing::error!("Failed to activate user account: {}", e);
+                return (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error")
+                    .into_response();
+            }
+
+            (StatusCode::OK, "Email Verified!").into_response()
+        }
+        Err(e) => {
+            tracing::error!("Failed to decode token: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response()
         }
     }
 }
