@@ -88,8 +88,15 @@ impl Mutation {
 
                 let signed_jwt = sign_jwt(&auth_claim, token_duration, &user_id).await;
 
-                // let private_key = fs::read_to_string("../../rsa_token.key").await;
-                let public_key = fs::read_to_string("../../rsa_token_pub.pem").await;
+                let public_key_path = env::var("RSA_PUBLIC_KEY_PATH");
+
+                if let Err(e) = &public_key_path {
+                    tracing::error!("Failed to get RSA_PUBLIC_KEY_PATH env var: {}", e);
+
+                    return Ok(user);
+                }
+
+                let public_key = fs::read_to_string(&public_key_path.unwrap()).await;
 
                 if let Err(e) = &signed_jwt {
                     tracing::error!("Failed to sign JWT: {}", e);

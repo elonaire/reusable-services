@@ -255,9 +255,15 @@ pub async fn verify_email_handler(
         return (StatusCode::FORBIDDEN, "Forbidden").into_response();
     }
 
-    tracing::debug!("token: {}", params.0.token.as_ref().unwrap());
+    let private_key_path = env::var("RSA_PRIVATE_KEY_PATH");
 
-    let private_key_file = fs::read_to_string("../../rsa_token.key").await;
+    if let Err(e) = &private_key_path {
+        tracing::error!("Failed to get RSA_PRIVATE_KEY_PATH env var: {}", e);
+
+        return (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response();
+    }
+
+    let private_key_file = fs::read_to_string(&private_key_path.unwrap()).await;
 
     if let Err(e) = &private_key_file {
         tracing::error!("Failed to read private key file: {}", e);
