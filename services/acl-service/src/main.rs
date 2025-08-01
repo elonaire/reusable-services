@@ -32,7 +32,8 @@ use hyper::{
     },
     Method, StatusCode,
 };
-use rest::handlers::{exchange_code_for_token, oauth_callback_handler};
+use rest::handlers::{exchange_code_for_token, oauth_callback_handler, verify_email_handler};
+use rumqttc::v5::AsyncClient;
 use surrealdb::{engine::remote::ws::Client, Surreal};
 use tonic::transport::Server;
 use tower_http::cors::CorsLayer;
@@ -40,13 +41,20 @@ use tower_http::cors::CorsLayer;
 use graphql::resolvers::mutation::Mutation;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 
-use lib::integration::grpc::clients::acl_service::acl_server::AclServer;
+use lib::{
+    integration::grpc::clients::acl_service::acl_server::AclServer, utils::mqtt::MqttClient,
+};
 
 type MySchema = Schema<Query, Mutation, EmptySubscription>;
+
+pub struct AppState {
+    pub mqtt_client: AsyncClient,
+}
 
 async fn graphql_handler(
     schema: Extension<MySchema>,
     db: Extension<Arc<Surreal<Client>>>,
+    mqtt_client: Extension<Arc<AppState>>,
     headers: HeaderMap,
     req: GraphQLRequest,
 ) -> GraphQLResponse {
@@ -54,9 +62,11 @@ async fn graphql_handler(
 
     let db = db.clone();
     let headers = headers.clone();
+    let mqtt_client = mqtt_client.clone();
 
     request = request.data(db);
     request = request.data(headers);
+    request = request.data(mqtt_client);
     tracing::debug!("Request data set!");
     let operation_name = request.operation_name.clone();
 
@@ -99,6 +109,8 @@ async fn main() -> Result<(), Error> {
         env::var("ACL_HTTP_PORT").expect("Missing the ACL_HTTP_PORT environment variable.");
     let acl_grpc_port =
         env::var("ACL_GRPC_PORT").expect("Missing the ACL_GRPC_PORT environment variable.");
+    let mqtt_host = env::var("MQTT_HOST").expect("Missing the MQTT_HOST environment variable.");
+    let mqtt_port = env::var("MQTT_PORT").expect("Missing the MQTT_PORT environment variable.");
 
     // Initialize the schema builder
     let mut schema_builder = Schema::build(Query, Mutation, EmptySubscription);
@@ -123,7 +135,9 @@ async fn main() -> Result<(), Error> {
 
     let stdout = std::io::stdout
         .with_filter(|meta| {
-            meta.target() != "h2::codec::framed_write" && meta.target() != "h2::codec::framed_read"
+            meta.target() != "h2::codec::framed_write"
+                && meta.target() != "h2::codec::framed_read"
+                && meta.target() != "rumqttc::v5::state"
         })
         .with_max_level(tracing::Level::DEBUG); // Log to console at DEBUG level
 
@@ -132,12 +146,23 @@ async fn main() -> Result<(), Error> {
         .with_writer(stdout.and(non_blocking))
         .init();
 
+    let (client, mut eventloop) =
+        MqttClient::new("acl-service", &mqtt_host, mqtt_port.parse().unwrap()).await?;
+
+    tokio::spawn(async move { while let Ok(_event) = eventloop.poll().await {} });
+
+    let shared_state = Arc::new(AppState {
+        mqtt_client: client,
+    });
+
     let app = Router::new()
         .route("/", post(graphql_handler))
         .route("/oauth/callback", get(oauth_callback_handler))
         .route("/social-sign-in", post(exchange_code_for_token))
         .route("/healthz", get(|| async { StatusCode::OK }))
         .route("/ready", get(|| async { StatusCode::OK }))
+        .route("/verify-email", get(verify_email_handler))
+        .layer(Extension(shared_state))
         .layer(CookieLayer::strict())
         .layer(Extension(schema))
         .layer(Extension(db.clone()))

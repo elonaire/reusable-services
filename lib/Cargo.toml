@@ -17,6 +17,7 @@ prost = "0.13.5"
 tracing = "0.1.41"
 async-trait = "0.1.87"
 tonic-middleware = "0.2.3"
+rumqttc = "0.24.0"
 
 [build-dependencies]
 tonic-build = "0.12.3"

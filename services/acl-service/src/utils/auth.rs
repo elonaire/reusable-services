@@ -1,7 +1,5 @@
 use axum::http::HeaderValue;
-use hyper::StatusCode;
 use jwt_simple::prelude::*;
-use lib::utils::custom_error::ExtendedError;
 use lib::utils::{
     auth::AuthClaim, cookie_parser::parse_cookies, custom_traits::AsSurrealClient,
     models::AuthStatus,
@@ -309,6 +307,27 @@ pub async fn decode_token(token_header: &HeaderValue) -> Result<JWTClaims<AuthCl
             }
         }
         None => Err(Error::new(ErrorKind::Other, "Invalid token format")),
+    }
+}
+
+/// A utility function to decode JWT tokens(String Args). Returns full claims
+pub async fn decode_token_string(token: &String) -> Result<JWTClaims<AuthClaim>, Error> {
+    let converted_jwt_secret_key = get_converted_jwt_secret_key().await?;
+
+    let claims_result = converted_jwt_secret_key.verify_token::<AuthClaim>(&token, None);
+
+    match claims_result {
+        Ok(claims) => {
+            // Token verification successful
+            Ok(claims)
+        }
+        Err(e) => {
+            tracing::error!("Token verification failed: {}", e);
+            Err(Error::new(
+                ErrorKind::PermissionDenied,
+                "Token verification failed",
+            ))
+        }
     }
 }
 
@@ -795,7 +814,7 @@ pub async fn confirm_authorization<T: Clone + AsSurrealClient>(
             && is_admin_privileged))
 }
 
-/// A generic utility function to verify OAuth tokens
+/// A generic utility function to verify OAuth tokens for Google, GitHub, and other OAuth providers
 pub async fn verify_oauth_token<T: for<'de> Deserialize<'de> + std::fmt::Debug>(
     oauth_client_name: OAuthClientName,
     token: &HeaderValue,

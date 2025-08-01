@@ -1,17 +1,21 @@
 mod graphql;
 mod grpc;
+mod mqtt;
 mod rest;
 mod utils;
 
 use dotenvy::dotenv;
 use lib::{
     integration::grpc::clients::email_service::email_service_server::EmailServiceServer,
-    middleware::auth::grpc::AuthMiddleware,
+    middleware::auth::grpc::AuthMiddleware, utils::mqtt::MqttClient,
 };
+use mqtt::{events::handle_events, subscriptions::register_subscriptions};
+use rumqttc::v5::AsyncClient;
 use std::{
     env,
     io::{Error, ErrorKind},
     net::SocketAddr,
+    sync::Arc,
 };
 use tonic::transport::Server;
 use tonic_middleware::MiddlewareLayer;
@@ -44,6 +48,10 @@ use tower_http::cors::CorsLayer;
 use graphql::resolvers::mutation::Mutation;
 
 type MySchema = Schema<Query, Mutation, EmptySubscription>;
+
+pub struct AppState {
+    pub mqtt_client: AsyncClient,
+}
 
 async fn graphql_handler(
     schema: Extension<MySchema>,
@@ -90,6 +98,8 @@ async fn main() -> Result<(), Error> {
         env::var("EMAIL_HTTP_PORT").expect("Missing the EMAIL_HTTP_PORT environment variable.");
     let email_grpc_port =
         env::var("EMAIL_GRPC_PORT").expect("Missing the EMAIL_GRPC_PORT environment variable.");
+    let mqtt_host = env::var("MQTT_HOST").expect("Missing the MQTT_HOST environment variable.");
+    let mqtt_port = env::var("MQTT_PORT").expect("Missing the MQTT_PORT environment variable.");
 
     // Initialize the schema builder
     let mut schema_builder =
@@ -115,7 +125,9 @@ async fn main() -> Result<(), Error> {
 
     let stdout = std::io::stdout
         .with_filter(|meta| {
-            meta.target() != "h2::codec::framed_write" && meta.target() != "h2::codec::framed_read"
+            meta.target() != "h2::codec::framed_write"
+                && meta.target() != "h2::codec::framed_read"
+                && meta.target() != "rumqttc::v5::state"
         })
         .with_max_level(tracing::Level::DEBUG); // Log to console at DEBUG level
 
@@ -124,10 +136,20 @@ async fn main() -> Result<(), Error> {
         .with_writer(stdout.and(non_blocking))
         .init();
 
+    let (client, mut eventloop) =
+        MqttClient::new("email-service", &mqtt_host, mqtt_port.parse().unwrap()).await?;
+
+    register_subscriptions(&client).await;
+
+    let shared_state = Arc::new(AppState {
+        mqtt_client: client,
+    });
+
     let app = Router::new()
         .route("/", post(graphql_handler))
         .route("/healthz", get(|| async { StatusCode::OK }))
         .route("/ready", get(|| async { StatusCode::OK }))
+        .layer(Extension(shared_state))
         .layer(Extension(schema))
         // .layer(Extension(db))
         .layer(
@@ -169,6 +191,12 @@ async fn main() -> Result<(), Error> {
                 tracing::error!("Failed to start gRPC server: {}", e);
             })
             .ok();
+    });
+
+    tokio::spawn(async move {
+        while let Ok(event) = eventloop.poll().await {
+            handle_events(&event).await;
+        }
     });
 
     match tokio::net::TcpListener::bind(format!("0.0.0.0:{}", email_http_port)).await {

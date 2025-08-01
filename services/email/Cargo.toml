@@ -23,6 +23,8 @@ tracing-appender = "0.2.3"
 tonic = "0.12.3"
 prost = "0.13.5"
 tonic-middleware = "0.2.3"
+rumqttc = "0.24.0"
+serde_json = "1.0.141"
 
 [lints.rust]
 unsafe_code = "forbid"
