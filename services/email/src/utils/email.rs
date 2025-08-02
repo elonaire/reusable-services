@@ -35,6 +35,31 @@ pub async fn send_email(email: &Email) -> Result<&'static str, Error> {
         tracing::error!("Missing the PRIMARY_LOGO environment variable.: {:?}", e);
         Error::new(ErrorKind::Other, "Server Error")
     })?;
+    let business_name = env::var("BUSINESS_NAME").map_err(|e| {
+        tracing::error!("Missing the BUSINESS_NAME environment variable.: {:?}", e);
+        Error::new(ErrorKind::Other, "Server Error")
+    })?;
+    let business_permanent_address = env::var("BUSINESS_PERMANENT_ADDRESS").map_err(|e| {
+        tracing::error!(
+            "Missing the BUSINESS_PERMANENT_ADDRESS environment variable.: {:?}",
+            e
+        );
+        Error::new(ErrorKind::Other, "Server Error")
+    })?;
+    let header_footer_bg_color = env::var("HEADER_FOOTER_BG_COLOR").map_err(|e| {
+        tracing::error!(
+            "Missing the HEADER_FOOTER_BG_COLOR environment variable.: {:?}",
+            e
+        );
+        Error::new(ErrorKind::Other, "Server Error")
+    })?;
+    let header_footer_text_color = env::var("HEADER_FOOTER_TEXT_COLOR").map_err(|e| {
+        tracing::error!(
+            "Missing the HEADER_FOOTER_TEXT_COLOR environment variable.: {:?}",
+            e
+        );
+        Error::new(ErrorKind::Other, "Server Error")
+    })?;
 
     let current_year = {
         let now = SystemTime::now();
@@ -44,6 +69,11 @@ pub async fn send_email(email: &Email) -> Result<&'static str, Error> {
 
     let email_title = &email.title;
     let email_content = &email.body;
+    let business_email = &smtp_user;
+    let business_name_ref = &business_name;
+    let business_permanent_address_ref = &business_permanent_address;
+    let header_footer_bg_color_ref = &header_footer_bg_color;
+    let header_footer_text_color_ref = &header_footer_text_color;
 
     let logo_url = format!("{}/view/{}", files_service, primary_logo);
     let client = ReqWestClient::builder()
@@ -90,9 +120,10 @@ pub async fn send_email(email: &Email) -> Result<&'static str, Error> {
                     background-color: #ffffff;
                 }}
                 .header {{
-                    background-color: #FFB161;
+                    background-color: #{header_footer_bg_color_ref};
                     padding: 10px;
                     text-align: center;
+                    color: #{header_footer_text_color_ref};
                 }}
                 .header img {{
                     width: 200px;
@@ -105,8 +136,8 @@ pub async fn send_email(email: &Email) -> Result<&'static str, Error> {
                     color: #333333;
                 }}
                 .footer {{
-                    background-color: #FFB161;
-                    color: #ffffff;
+                    background-color: #{header_footer_bg_color_ref};
+                    color: #{header_footer_text_color_ref};
                     text-align: center;
                     padding: 10px 0;
                 }}
@@ -116,7 +147,7 @@ pub async fn send_email(email: &Email) -> Result<&'static str, Error> {
             <div class="email-container">
                 <!-- Header with logo -->
                 <div class="header">
-                    <img src=cid:logo alt="Rusty Templates Logo">
+                    <img src=cid:logo alt="Business Logo">
                 </div>
 
                 <!-- Main content -->
@@ -128,10 +159,10 @@ pub async fn send_email(email: &Email) -> Result<&'static str, Error> {
                 </div>
                     <!-- Footer -->
                     <div class="footer">
-                        <div style="text-align: center; padding: 10px; font-size: 12px; color: #888888;">
-                            <p>Rusty Templates | Tatu City, Kenya | info@rustytemplates.com</p>
+                        <div style="text-align: center; padding: 10px; font-size: 12px;">
+                            <p>{business_name_ref} | {business_permanent_address_ref} | {business_email}</p>
                         </div>
-                        &copy; {current_year} Rusty Templates. All rights reserved.
+                        &copy; {current_year} {business_name_ref}. All rights reserved.
                     </div>
                 </div>
             </body>
@@ -143,7 +174,7 @@ pub async fn send_email(email: &Email) -> Result<&'static str, Error> {
 
     let message = Message::builder()
         .from(
-            format!("Rusty Templates <{}>", &smtp_user)
+            format!("{business_name_ref} <{}>", &smtp_user)
                 .parse()
                 .map_err(|e| {
                     tracing::error!("Failed to parse sender email address: {}", e);
@@ -181,7 +212,7 @@ pub async fn send_email(email: &Email) -> Result<&'static str, Error> {
             Error::new(ErrorKind::Other, "Failed to send email")
         })?;
 
-    let creds = Credentials::new(smtp_user.to_owned(), smtp_password.to_owned());
+    let creds = Credentials::new(smtp_user, smtp_password);
 
     // Open a remote connection to smtp server
     let mailer = (SmtpTransport::starttls_relay(&smtp_server).map_err(|e| {
