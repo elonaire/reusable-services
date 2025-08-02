@@ -6,11 +6,7 @@ use base64::{engine::general_purpose, Engine as _engine};
 use hyper::{header::SET_COOKIE, HeaderMap, StatusCode};
 use jwt_simple::prelude::*;
 use lib::utils::{auth::AuthClaim, custom_error::ExtendedError, models::EmailMQTTPayload};
-use rsa::{
-    pkcs1::{DecodeRsaPrivateKey, DecodeRsaPublicKey},
-    pkcs8::DecodePublicKey,
-    Pkcs1v15Encrypt, RsaPrivateKey, RsaPublicKey,
-};
+use rsa::{pkcs8::DecodePublicKey, Pkcs1v15Encrypt, RsaPublicKey};
 use rumqttc::v5::mqttbytes::QoS;
 use surrealdb::{engine::remote::ws::Client, Surreal};
 use tokio::fs;
