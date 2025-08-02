@@ -12,7 +12,7 @@ use hyper::{HeaderMap, StatusCode};
 use jwt_simple::prelude::Duration;
 use lib::utils::{auth::AuthClaim, cookie_parser::parse_cookies};
 use oauth2::{AuthorizationCode, PkceCodeVerifier, TokenResponse};
-use rsa::{pkcs1::DecodeRsaPrivateKey, pkcs8::DecodePrivateKey, Pkcs1v15Encrypt, RsaPrivateKey};
+use rsa::{pkcs8::DecodePrivateKey, Pkcs1v15Encrypt, RsaPrivateKey};
 use serde::{Deserialize, Serialize};
 use surrealdb::{engine::remote::ws::Client, Surreal};
 use tokio::fs;
@@ -20,9 +20,8 @@ use tokio::fs;
 use crate::{
     graphql::schemas::user::{AuthDetails, GithubUserProfile, GoogleUserInfo, OAuthUser},
     utils::auth::{
-        create_oauth_user_if_not_exists, decode_token, decode_token_string,
-        fetch_default_user_roles, initiate_auth_code_grant_flow, sign_jwt, verify_oauth_token,
-        OAuthClientName,
+        create_oauth_user_if_not_exists, decode_token_string, fetch_default_user_roles,
+        initiate_auth_code_grant_flow, sign_jwt, verify_oauth_token, OAuthClientName,
     },
 };
 
