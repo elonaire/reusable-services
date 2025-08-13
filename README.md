@@ -11,8 +11,8 @@ These instructions will get you a copy of the project up and running on your loc
 - Start SurrealDB using the command: `surreal start --log debug --bind 0.0.0.0:8000 surrealkv://./services/<service_directory>/db-file` in the root directory of the project.\
 e.g. `surreal start --log debug  --bind 0.0.0.0:8000 surrealkv://./services/acl-service/db-file` will start the ACL service database.
 - Ask the Lead Engineer for the `.env` file and place it in the root directory of the project. **N/B**: The `.env` file is not committed to the repository for security reasons. It has the database credentials and other sensitive information.
-- Run any service using the command: `bacon run-<service>` in the root directory. This will start the server and restart it whenever you make changes to the code.\
-e.g. `bacon run-acl` will start the ACL service.\
+- Run any service using the command: `cd services/<service_directory> && bacon run-<service>` in a service working directory i.e. `services/<service_directory>`. This will start the server and restart it whenever you make changes to the code.\
+e.g. `cd services/acl-service && bacon run-acl` will start the ACL service.\
 **N/B**: The `bacon run-<service>` commands are in the `bacon.toml` file located in the root directory of the project.\
 Cargo will automatically install any dependencies that are missing.
 
