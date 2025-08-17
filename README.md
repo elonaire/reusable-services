@@ -1,18 +1,19 @@
-# Welcome to the Techie Tenka 🌱 GraphQL services!
+# Welcome to the Techie Tenka Shared 🌱 GraphQL services!
 
 ## Getting Started 🚀
-These instructions will get you a copy of the project up and running on your local machine for development and testing purposes. The architecture of the project is microservices monorepo. Each service is in its own directory with its own dependencies.
+These instructions will get you a copy of the project up and running on your local machine for development and testing purposes. The architecture of the project is microservices monorepo. Each service is in its own directory with its own dependencies. All the shared functionality and models are in the library crate `lib` in the root directory of the project.
 ### Prerequisites / Installations 👨🏽‍💻
 - [Rust](https://www.rust-lang.org/tools/install)
 - [SurrealDB](https://surrealdb.com/install)
 
 ### Running individual services on local 🏃🏽‍♂️
 - Clone the repo
-- Start SurrealDB using the command: `surreal start --log debug --user <username> --pass <password> file://./services/<service_directory>/db-file` in the root directory of the project.\
-e.g. `surreal start --log debug --user root --pass root123 file://./services/acl-service/db-file` will start the ACL service database.
+- Start SurrealDB using the command: `surreal start --log debug --bind 0.0.0.0:8000 surrealkv://./services/<service_directory>/db-file` in the root directory of the project.\
+e.g. `surreal start --log debug  --bind 0.0.0.0:8000 surrealkv://./services/acl-service/db-file` will start the ACL service database.
 - Ask the Lead Engineer for the `.env` file and place it in the root directory of the project. **N/B**: The `.env` file is not committed to the repository for security reasons. It has the database credentials and other sensitive information.
-- Run any service using the command: `cargo watch -x run --workdir services/<directory_of_the_service>` in the root directory. This will start the server and restart it whenever you make changes to the code.\
-e.g. `cargo watch -x run --workdir services/acl-service` will start the ACL service.\
+- Run any service using the command: `cd services/<service_directory> && bacon run-<service>` in the root directory of the project. This will start the server and restart it whenever you make changes to the code.\
+e.g. `cd services/acl-service && bacon run-acl` will start the ACL service.\
+**N/B**: The `bacon run-<service>` commands are in the `bacon.toml` file located in the root directory of the project.\
 Cargo will automatically install any dependencies that are missing.
 
 #### Testing the service endpoints 🧪(for individual services)
@@ -49,7 +50,7 @@ Every authorized contributor is allowed to contribute to the repository whether 
 
 - When you are done with your work, create a pull request to the `dev` branch. The pull request should be in the format: `feature/<feature_name>` or `bug/<bug_name>`
 
-- The Lead Engineer will review the pull request and merge it to the `dev` branch if it is approved. 
+- The Lead Engineer will review the pull request and merge it to the `dev` branch if it is approved.
 **N/B**: This might change in future because of automated code reviews or streamlined pipelines.
 - The Lead Engineer will merge the `dev` branch to the `main` branch when a new release is ready.
 

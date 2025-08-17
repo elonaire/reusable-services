@@ -141,7 +141,7 @@ pub async fn upload(
     }
 
     // Insert uploaded files into the database
-    match db
+    let db_query_result = db
         .query(
             "
             BEGIN TRANSACTION;
@@ -159,7 +159,7 @@ pub async fn upload(
                 system_filename: $system_filename,
                 is_free: $is_free
             });
-            RETURN $new_file;
+            RETURN $new_file[0];
             COMMIT TRANSACTION;
             ",
         )
@@ -169,22 +169,46 @@ pub async fn upload(
         .bind(("mime_type", mime_type))
         .bind(("is_free", is_free))
         .bind(("system_filename", format!("{}", system_filename)))
-        .await
-    {
-        Ok(_result) => (
+        .await;
+
+    if let Err(e) = &db_query_result {
+        tracing::error!("Failed to insert file into database: {}", e);
+        let _ = std::fs::remove_file(&filepath);
+
+        return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file").into_response();
+    } else {
+        let stored_file = db_query_result.unwrap().take(0);
+
+        if let Err(e) = stored_file {
+            tracing::error!("Failed to retrieve file from database: {}", e);
+            let _ = std::fs::remove_file(&filepath);
+
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file").into_response();
+        }
+
+        let stored_file: Option<UploadedFile> = stored_file.unwrap();
+
+        if stored_file.is_none() {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file").into_response();
+        }
+
+        let stored_file = stored_file.unwrap();
+
+        (
             StatusCode::CREATED,
             Json(UploadedFileResponse {
                 field_name,
-                file_id: system_filename.to_string(),
+                file_name: stored_file.system_filename,
+                file_id: stored_file
+                    .id
+                    .as_ref()
+                    .map(|t| &t.id)
+                    .unwrap()
+                    .to_raw()
+                    .clone(),
             }),
         )
-            .into_response(),
-        Err(e) => {
-            tracing::error!("Failed to insert file into database: {}", e);
-            let _ = std::fs::remove_file(&filepath);
-
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file").into_response()
-        }
+            .into_response()
     }
 }
 
