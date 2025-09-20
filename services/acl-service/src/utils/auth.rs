@@ -192,7 +192,14 @@ pub async fn initiate_auth_code_grant_flow(
             })?,
         )
         .set_revocation_url(
-            RevocationUrl::new("http://localhost:3007".to_string()).map_err(|e| {
+            RevocationUrl::new(env::var("GITHUB_OAUTH_REVOKE_TOKEN_URL").map_err(|e| {
+                tracing::error!(
+                    "Missing the GITHUB_OAUTH_REVOKE_TOKEN_URL environment variable.: {}",
+                    e
+                );
+                Error::new(ErrorKind::Other, "Server Error")
+            })?)
+            .map_err(|e| {
                 tracing::error!("Failed to create RevocationUrl.: {}", e);
                 Error::new(ErrorKind::Other, "Server Error")
             })?,
@@ -377,8 +384,13 @@ pub async fn confirm_authentication<T: Clone + AsSurrealClient>(
                                     } else {
                                         match cookies.get("oauth_user_roles_jwt") {
                                             Some(oauth_user_roles_jwt) => {
+                                                tracing::debug!(
+                                                    "oauth_user_roles_jwt: {oauth_user_roles_jwt}"
+                                                );
+
+                                                // The "Bearer" hack is for the purpose of uniformity for the 'decode_token' function
                                                 let token_claims = decode_token(
-                                                    &HeaderValue::from_str(oauth_user_roles_jwt)
+                                                    &HeaderValue::from_str(&format!("Bearer {oauth_user_roles_jwt}"))
                                                         .map_err(|e| {
                                                             tracing::error!("Failed to convert str to headervalue: {}", e);
                                                             Error::new(
@@ -445,8 +457,10 @@ pub async fn confirm_authentication<T: Clone + AsSurrealClient>(
                                                         //     current_role: claims.custom.roles[0].clone(),
                                                         // })
                                                     }
-                                                    Err(_err) => {
-                                                        tracing::error!("Failed to decode jwt!");
+                                                    Err(err) => {
+                                                        tracing::error!(
+                                                            "Failed to decode jwt! - {err}"
+                                                        );
                                                         Err(Error::new(
                                                             ErrorKind::PermissionDenied,
                                                             "Not Authorized!",
@@ -910,21 +924,11 @@ pub async fn verify_oauth_token<T: for<'de> Deserialize<'de> + std::fmt::Debug>(
                     Error::new(ErrorKind::Other, "OAuth request to GitHub failed")
                 })?;
 
-            // let response_text =
-            //     response.text().await.map_err(|e| {
-            //         tracing::debug!(
-            //             "Failed to read response body: {:?}",
-            //             e
-            //         );
-            //         Error::new(
-            //             ErrorKind::Other,
-            //             "Failed to read response body",
-            //         )
-            //     })?;
-            // tracing::debug!(
-            //     "Rate limit response: {}",
-            //     response_text
-            // );
+            // let response_text = response.text().await.map_err(|e| {
+            //     tracing::debug!("Failed to read response body: {:?}", e);
+            //     Error::new(ErrorKind::Other, "Failed to read response body")
+            // })?;
+            // tracing::debug!("Rate limit response: {}", response_text);
 
             let user_data = response.json::<T>().await.map_err(|e| {
                 tracing::error!("GitHub Token deserialization failed: {}", e);

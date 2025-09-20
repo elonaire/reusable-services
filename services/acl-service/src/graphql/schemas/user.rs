@@ -296,9 +296,12 @@ pub struct GithubUserProfile {
     pub repos_url: String,
     pub events_url: String,
     pub received_events_url: String,
+    #[serde(rename = "type")]
     pub r#type: String,
     pub site_admin: bool,
-    pub name: String,
+
+    // Optional user details (nullable in API)
+    pub name: Option<String>,
     pub company: Option<String>,
     pub blog: Option<String>,
     pub location: Option<String>,
@@ -306,19 +309,20 @@ pub struct GithubUserProfile {
     pub hireable: Option<bool>,
     pub bio: Option<String>,
     pub twitter_username: Option<String>,
+
+    // Stats
     pub public_repos: u64,
     pub public_gists: u64,
     pub followers: u64,
     pub following: u64,
+
+    // Dates
     pub created_at: String,
     pub updated_at: String,
-    pub private_gists: u64,
-    pub total_private_repos: u64,
-    pub owned_private_repos: u64,
-    pub disk_usage: u64,
-    pub collaborators: u64,
-    pub two_factor_authentication: bool,
-    pub plan: Plan,
+
+    // New fields not in your old struct
+    pub user_view_type: String,
+    pub notification_email: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]

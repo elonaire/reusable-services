@@ -131,7 +131,7 @@ pub async fn exchange_code_for_token(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    // // Now you can trade it for an access token.
+    // Now you can trade it for an access token.
     let token_result = oauth_client
         .exchange_code(auth_code)
         // Set the PKCE code verifier.
@@ -143,7 +143,17 @@ pub async fn exchange_code_for_token(
             StatusCode::FORBIDDEN
         })?;
 
-    let token = token_result.access_token().secret();
+    let borrowed_token_result = &token_result;
+
+    if let Some(refresh_token) = borrowed_token_result.refresh_token() {
+        let refresh_token_cookie = CookieBuilder::new("t", refresh_token.secret().to_owned())
+            .path("/")
+            .build();
+
+        cookie.add(refresh_token_cookie);
+    };
+
+    let token = borrowed_token_result.access_token().secret();
 
     let token_header = HeaderValue::from_str(&format!("Bearer {}", token)).map_err(|e| {
         tracing::error!("Failed to create token header: {}", e);
@@ -193,7 +203,7 @@ pub async fn exchange_code_for_token(
 
             Ok((AuthDetails {
                 url: None,
-                token: Some(token_str),
+                token: Some(token.to_owned()),
             })
             .into())
         }
@@ -239,7 +249,7 @@ pub async fn exchange_code_for_token(
 
             Ok((AuthDetails {
                 url: None,
-                token: Some(token_str),
+                token: Some(token.to_owned()),
             })
             .into())
         }
