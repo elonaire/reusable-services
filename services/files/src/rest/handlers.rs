@@ -64,6 +64,7 @@ pub async fn upload(
     let filepath = format!("{}{}", &upload_dir, system_filename);
     let mut field_name = String::new();
     let mut is_free = true;
+    let mut all_uploaded_files_response = Vec::new() as Vec<UploadedFileResponse>;
 
     // Ensure the directory exists
     if let Err(e) = std::fs::create_dir_all(&upload_dir) {
@@ -91,14 +92,11 @@ pub async fn upload(
             .map(|name| name.to_string())
             .unwrap_or_else(|| "unknown".to_string());
 
-        match field_name.as_str() {
-            "premium_file" => {
-                is_free = false;
-            }
-            _ => {
-                is_free = true;
-            }
-        }
+        if field_name.contains("premium") {
+            is_free = false;
+        } else {
+            is_free = true;
+        };
 
         // Create and open the file for writing
         let mut file = match File::create(&filepath) {
@@ -138,65 +136,64 @@ pub async fn upload(
             let _ = std::fs::remove_file(&filepath);
             return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file").into_response();
         }
-    }
 
-    // Insert uploaded files into the database
-    let db_query_result = db
-        .query(
-            "
-            BEGIN TRANSACTION;
-            LET $user = type::thing($user_id);
+        // Insert uploaded files into the database
+        let db_query_result = db
+            .query(
+                "
+                BEGIN TRANSACTION;
+                LET $user = type::thing($user_id);
 
-            IF !$user.exists() {
-                THROW 'Invalid Input';
-            };
+                IF !$user.exists() {
+                    THROW 'Invalid Input';
+                };
 
-            LET $new_file = (CREATE file CONTENT {
-               	owner: type::thing($user),
-               	name: $name,
-                size: $size,
-                mime_type: $mime_type,
-                system_filename: $system_filename,
-                is_free: $is_free
-            });
-            RETURN $new_file[0];
-            COMMIT TRANSACTION;
-            ",
-        )
-        .bind(("user_id", format!("user_id:{}", user_id_raw)))
-        .bind(("name", filename))
-        .bind(("size", total_size))
-        .bind(("mime_type", mime_type))
-        .bind(("is_free", is_free))
-        .bind(("system_filename", format!("{}", system_filename)))
-        .await;
+                LET $new_file = (CREATE file CONTENT {
+                   	owner: type::thing($user),
+                   	name: $name,
+                    size: $size,
+                    mime_type: $mime_type,
+                    system_filename: $system_filename,
+                    is_free: $is_free
+                });
+                RETURN $new_file[0];
+                COMMIT TRANSACTION;
+                ",
+            )
+            .bind(("user_id", format!("user_id:{}", user_id_raw)))
+            .bind(("name", filename))
+            .bind(("size", total_size))
+            .bind(("mime_type", mime_type))
+            .bind(("is_free", is_free))
+            .bind(("system_filename", format!("{}", system_filename)))
+            .await;
 
-    if let Err(e) = &db_query_result {
-        tracing::error!("Failed to insert file into database: {}", e);
-        let _ = std::fs::remove_file(&filepath);
-
-        return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file").into_response();
-    } else {
-        let stored_file = db_query_result.unwrap().take(0);
-
-        if let Err(e) = stored_file {
-            tracing::error!("Failed to retrieve file from database: {}", e);
+        if let Err(e) = &db_query_result {
+            tracing::error!("Failed to insert file into database: {}", e);
             let _ = std::fs::remove_file(&filepath);
 
             return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file").into_response();
-        }
+        } else {
+            let stored_file = db_query_result.unwrap().take(0);
 
-        let stored_file: Option<UploadedFile> = stored_file.unwrap();
+            if let Err(e) = stored_file {
+                tracing::error!("Failed to retrieve file from database: {}", e);
+                let _ = std::fs::remove_file(&filepath);
 
-        if stored_file.is_none() {
-            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file").into_response();
-        }
+                return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file")
+                    .into_response();
+            }
 
-        let stored_file = stored_file.unwrap();
+            let stored_file: Option<UploadedFile> = stored_file.unwrap();
 
-        (
-            StatusCode::CREATED,
-            Json(UploadedFileResponse {
+            if stored_file.is_none() {
+                return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file")
+                    .into_response();
+            }
+
+            let stored_file = stored_file.unwrap();
+
+            all_uploaded_files_response.push(UploadedFileResponse {
                 field_name,
                 file_name: stored_file.system_filename,
                 file_id: stored_file
@@ -206,10 +203,11 @@ pub async fn upload(
                     .unwrap()
                     .to_raw()
                     .clone(),
-            }),
-        )
-            .into_response()
+            });
+        }
     }
+
+    (StatusCode::CREATED, Json(all_uploaded_files_response)).into_response()
 }
 
 pub async fn download_file(
