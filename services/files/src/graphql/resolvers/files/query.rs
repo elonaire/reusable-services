@@ -16,11 +16,7 @@ impl FileQuery {
     pub async fn fetch_file_id(&self, ctx: &Context<'_>, file_name: String) -> Result<String> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
-            ExtendedError::new(
-                "Server Error",
-                Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
-            )
-            .build()
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
 
         let file_id_res = get_file_id(db, file_name).await;
@@ -40,11 +36,7 @@ impl FileQuery {
     pub async fn fetch_file_name(&self, ctx: &Context<'_>, file_id: String) -> Result<String> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
-            ExtendedError::new(
-                "Server Error",
-                Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
-            )
-            .build()
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
 
         let file_name_res = get_system_filename(db, file_id).await;
@@ -65,11 +57,7 @@ impl FileQuery {
     pub async fn serve_md_files(&self, _ctx: &Context<'_>, file_name: String) -> Result<String> {
         let files_service = env::var("FILES_SERVICE").map_err(|e| {
             tracing::error!("Missing the FILES_SERVICE environment variable.: {}", e);
-            ExtendedError::new(
-                "Server Error",
-                Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
-            )
-            .build()
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
 
         let file_url = format!("{}/view/{}", files_service, file_name);
@@ -84,7 +72,7 @@ impl FileQuery {
                         tracing::error!("Error serving MD file: {:?}", e);
                         ExtendedError::new(
                             "Server Error",
-                            Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
+                            StatusCode::INTERNAL_SERVER_ERROR.as_str(),
                         )
                         .build()
                     })?)

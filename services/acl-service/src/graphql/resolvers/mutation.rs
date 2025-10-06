@@ -54,11 +54,7 @@ impl Mutation {
         // User signup
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
-            ExtendedError::new(
-                "Server Error",
-                Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
-            )
-            .build()
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
 
         let response: Option<User> = create_user(db, user).await.map_err(|e| {
@@ -212,11 +208,7 @@ impl Mutation {
     ) -> Result<SystemRole> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
-            ExtendedError::new(
-                "Server Error",
-                Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
-            )
-            .build()
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
         let header_map = ctx.data_opt::<HeaderMap>();
 
@@ -239,11 +231,9 @@ impl Mutation {
             confirm_authorization(db, &authenticated, authorization_constraint).await?;
 
         if !authorized {
-            return Err(ExtendedError::new(
-                "Unauthorized",
-                Some(StatusCode::UNAUTHORIZED.as_u16()),
-            )
-            .build());
+            return Err(
+                ExtendedError::new("Unauthorized", StatusCode::UNAUTHORIZED.as_str()).build(),
+            );
         }
 
         let is_admin = match role_metadata.role_type {
@@ -353,11 +343,8 @@ impl Mutation {
             None => {
                 let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
                     tracing::error!("Error extracting Surreal Client: {:?}", e);
-                    ExtendedError::new(
-                        "Server Error",
-                        Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
-                    )
-                    .build()
+                    ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str())
+                        .build()
                 })?;
 
                 let verified_credentials = verify_login_credentials(db, &raw_user_details).await;
@@ -368,7 +355,7 @@ impl Mutation {
                             tracing::error!("Error extracting Surreal Client: {:?}", e);
                             ExtendedError::new(
                                 "Server Error",
-                                Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
+                                StatusCode::INTERNAL_SERVER_ERROR.as_str(),
                             )
                             .build()
                         })?;
@@ -400,11 +387,8 @@ impl Mutation {
                                 .ok_or("Invalid ID")
                                 .map_err(|e| {
                                     tracing::error!("{}", e);
-                                    ExtendedError::new(
-                                        "Forbidden",
-                                        Some(StatusCode::FORBIDDEN.as_u16()),
-                                    )
-                                    .build()
+                                    ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str())
+                                        .build()
                                 })?
                                 .to_raw(),
                         )
@@ -413,7 +397,7 @@ impl Mutation {
                             tracing::error!("Failed to sign Access Token: {}", e);
                             ExtendedError::new(
                                 "Internal Server Error",
-                                Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
+                                StatusCode::INTERNAL_SERVER_ERROR.as_str(),
                             )
                             .build()
                         })?;
@@ -428,11 +412,8 @@ impl Mutation {
                                 .ok_or("Invalid ID")
                                 .map_err(|e| {
                                     tracing::error!("{}", e);
-                                    ExtendedError::new(
-                                        "Forbidden",
-                                        Some(StatusCode::FORBIDDEN.as_u16()),
-                                    )
-                                    .build()
+                                    ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str())
+                                        .build()
                                 })?
                                 .to_raw(),
                         )
@@ -441,7 +422,7 @@ impl Mutation {
                             tracing::error!("Failed to sign Refresh Token: {}", e);
                             ExtendedError::new(
                                 "Internal Server Error",
-                                Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
+                                StatusCode::INTERNAL_SERVER_ERROR.as_str(),
                             )
                             .build()
                         })?;
@@ -496,7 +477,7 @@ impl Mutation {
                         tracing::error!("Error signing in: {}", e);
                         Err(ExtendedError::new(
                             "Invalid credentials",
-                            Some(StatusCode::UNAUTHORIZED.as_u16()),
+                            StatusCode::UNAUTHORIZED.as_str(),
                         )
                         .build())
                     }
@@ -519,22 +500,16 @@ impl Mutation {
     ) -> Result<User> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
-            ExtendedError::new(
-                "Server Error",
-                Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
-            )
-            .build()
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
         let header_map = ctx.data_opt::<HeaderMap>();
 
         let check_auth = confirm_authentication(header_map, db).await?;
 
         if check_auth.sub != user_id {
-            return Err(ExtendedError::new(
-                "Unauthorized",
-                Some(StatusCode::UNAUTHORIZED.as_u16()),
-            )
-            .build());
+            return Err(
+                ExtendedError::new("Unauthorized", StatusCode::UNAUTHORIZED.as_str()).build(),
+            );
         }
 
         if user.password.is_some() {
@@ -559,9 +534,9 @@ impl Mutation {
 
         match response {
             Some(user) => Ok(user),
-            None => Err(
-                ExtendedError::new("User not found", Some(StatusCode::NOT_FOUND.as_u16())).build(),
-            ),
+            None => {
+                Err(ExtendedError::new("User not found", StatusCode::NOT_FOUND.as_str()).build())
+            }
         }
     }
 }
