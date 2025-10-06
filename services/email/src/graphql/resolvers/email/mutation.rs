@@ -16,11 +16,10 @@ impl EmailMutation {
             Ok(send_email_res) => Ok(send_email_res),
             Err(e) => {
                 tracing::error!("Error sending email: {}", e);
-                Err(ExtendedError::new(
-                    "Error sending email",
-                    Some(StatusCode::BAD_REQUEST.as_u16()),
+                Err(
+                    ExtendedError::new("Error sending email", StatusCode::BAD_REQUEST.as_str())
+                        .build(),
                 )
-                .build())
             }
         }
     }

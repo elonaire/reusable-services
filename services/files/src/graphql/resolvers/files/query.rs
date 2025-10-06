@@ -29,11 +29,10 @@ impl FileQuery {
             Ok(file_id) => Ok(file_id),
             Err(e) => {
                 tracing::error!("Error fetching file ID: {}", e);
-                Err(ExtendedError::new(
-                    "Error fetching file ID",
-                    Some(StatusCode::BAD_REQUEST.as_u16()),
+                Err(
+                    ExtendedError::new("Error fetching file ID", StatusCode::BAD_REQUEST.as_str())
+                        .build(),
                 )
-                .build())
             }
         }
     }
@@ -56,7 +55,7 @@ impl FileQuery {
                 tracing::error!("Error fetching file name: {}", e);
                 Err(ExtendedError::new(
                     "Error fetching file name",
-                    Some(StatusCode::BAD_REQUEST.as_u16()),
+                    StatusCode::BAD_REQUEST.as_str(),
                 )
                 .build())
             }

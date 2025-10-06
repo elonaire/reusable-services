@@ -36,14 +36,14 @@ impl Mutation {
     async fn sign_up(&self, ctx: &Context<'_>, mut user: User) -> Result<User> {
         user.password = bcrypt::hash(user.password, bcrypt::DEFAULT_COST).map_err(|e| {
             tracing::error!("Bcrypt Error: {}", e);
-            ExtendedError::new("Failed to sign up", Some(StatusCode::BAD_REQUEST.as_u16())).build()
+            ExtendedError::new("Failed to sign up", StatusCode::BAD_REQUEST.as_str()).build()
         })?;
 
         user.dob = match &user.dob {
             Some(ref date_str) => Some(
                 (chrono::DateTime::parse_from_rfc3339(date_str).map_err(|e| {
                     tracing::error!("Parse from rfc3339 error: {}", e);
-                    ExtendedError::new("Failed to sign up", Some(StatusCode::BAD_REQUEST.as_u16()))
+                    ExtendedError::new("Failed to sign up", StatusCode::BAD_REQUEST.as_str())
                         .build()
                 })?)
                 .to_rfc3339(),
@@ -63,7 +63,7 @@ impl Mutation {
 
         let response: Option<User> = create_user(db, user).await.map_err(|e| {
             tracing::error!("Error creating user: {}", e);
-            ExtendedError::new("Failed to sign up", Some(StatusCode::BAD_REQUEST.as_u16())).build()
+            ExtendedError::new("Failed to sign up", StatusCode::BAD_REQUEST.as_str()).build()
         })?;
 
         match response {
@@ -198,11 +198,9 @@ impl Mutation {
                 }
                 Ok(user)
             }
-            None => Err(ExtendedError::new(
-                "Failed to sign up",
-                Some(StatusCode::BAD_REQUEST.as_u16()),
-            )
-            .build()),
+            None => Err(
+                ExtendedError::new("Failed to sign up", StatusCode::BAD_REQUEST.as_str()).build(),
+            ),
         }
     }
 
@@ -256,11 +254,9 @@ impl Mutation {
         if (role_metadata.department.is_some() && role_metadata.department_is_under.is_none())
             || (role_metadata.department.is_none() && role_metadata.department_is_under.is_some())
         {
-            return Err(ExtendedError::new(
-                "Invalid Input",
-                Some(StatusCode::BAD_REQUEST.as_u16()),
-            )
-            .build());
+            return Err(
+                ExtendedError::new("Invalid Input", StatusCode::BAD_REQUEST.as_str()).build(),
+            );
         };
 
         let mut create_role_query = db
@@ -318,25 +314,21 @@ impl Mutation {
                 tracing::error!("Error creating role: {}", e);
                 ExtendedError::new(
                     "Failed to create role",
-                    Some(StatusCode::BAD_REQUEST.as_u16()),
+                    StatusCode::BAD_REQUEST.as_str(),
                 )
                 .build()
             })?;
 
         let user_role: Option<SystemRole> = create_role_query.take(0).map_err(|e| {
             tracing::error!("Failed to create role: {}", e);
-            ExtendedError::new(
-                "Failed to create role",
-                Some(StatusCode::BAD_REQUEST.as_u16()),
-            )
-            .build()
+            ExtendedError::new("Failed to create role", StatusCode::BAD_REQUEST.as_str()).build()
         })?;
 
         match user_role {
             Some(role) => Ok(role),
             None => Err(ExtendedError::new(
                 "Failed to create role",
-                Some(StatusCode::BAD_REQUEST.as_u16()),
+                StatusCode::BAD_REQUEST.as_str(),
             )
             .build()),
         }
@@ -549,7 +541,7 @@ impl Mutation {
             user.password = Some(
                 bcrypt::hash(user.password.unwrap(), bcrypt::DEFAULT_COST).map_err(|e| {
                     tracing::error!("Bcrypt Error: {}", e);
-                    ExtendedError::new("Failed to sign up", Some(StatusCode::BAD_REQUEST.as_u16()))
+                    ExtendedError::new("Failed to sign up", StatusCode::BAD_REQUEST.as_str())
                         .build()
                 })?,
             );
@@ -561,11 +553,8 @@ impl Mutation {
             .await
             .map_err(|e| {
                 tracing::debug!("Failed to update user: {}", e);
-                ExtendedError::new(
-                    "Failed to update user",
-                    Some(StatusCode::BAD_REQUEST.as_u16()),
-                )
-                .build()
+                ExtendedError::new("Failed to update user", StatusCode::BAD_REQUEST.as_str())
+                    .build()
             })?;
 
         match response {

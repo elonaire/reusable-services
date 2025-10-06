@@ -24,11 +24,7 @@ impl Query {
 
         let response: Vec<UserOutput> = db.select("user").await.map_err(|e| {
             tracing::error!("Error fetching users: {}", e);
-            ExtendedError::new(
-                "Error fetching users",
-                Some(StatusCode::BAD_REQUEST.as_u16()),
-            )
-            .build()
+            ExtendedError::new("Error fetching users", StatusCode::BAD_REQUEST.as_str()).build()
         })?;
 
         Ok(response)
@@ -46,11 +42,7 @@ impl Query {
 
         let user: Option<UserOutput> = db.select(("user", id.as_str())).await.map_err(|e| {
             tracing::error!("Error fetching user: {}", e);
-            ExtendedError::new(
-                "Error fetching user",
-                Some(StatusCode::BAD_REQUEST.as_u16()),
-            )
-            .build()
+            ExtendedError::new("Error fetching user", StatusCode::BAD_REQUEST.as_str()).build()
         })?;
 
         match user {
