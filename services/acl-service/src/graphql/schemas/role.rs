@@ -1,4 +1,5 @@
 use async_graphql::{Enum, InputObject, SimpleObject};
+use lib::utils::models::RoleType;
 use serde::{Deserialize, Serialize};
 use surrealdb::sql::Thing;
 
@@ -71,24 +72,4 @@ pub struct SystemRole {
     #[graphql(skip)]
     pub id: Option<Thing>,
     pub role_name: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum AdminPrivilege {
-    Admin,
-    SuperAdmin,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct AuthorizationConstraint {
-    pub roles: Vec<String>,
-    pub privilege: Option<AdminPrivilege>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
-pub enum RoleType {
-    #[graphql(name = "Admin")]
-    Admin,
-    #[graphql(name = "Other")]
-    Other,
 }

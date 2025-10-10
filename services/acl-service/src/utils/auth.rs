@@ -1,5 +1,6 @@
 use axum::http::HeaderValue;
 use jwt_simple::prelude::*;
+use lib::utils::models::{AdminPrivilege, AuthorizationConstraint};
 use lib::utils::{
     auth::AuthClaim, cookie_parser::parse_cookies, custom_traits::AsSurrealClient,
     models::AuthStatus,
@@ -29,11 +30,10 @@ use oauth2::{
 use serde::{Deserialize, Serialize};
 
 use crate::graphql::schemas::role::SystemRole;
-use crate::graphql::schemas::user::{GoogleUserInfo, OAuthUser, SurrealRelationQueryResponse};
-use crate::graphql::schemas::{
-    role::{AdminPrivilege, AuthorizationConstraint},
-    user::{AccountStatus, GithubUserProfile, User, UserLogins, UserOutput},
+use crate::graphql::schemas::user::{
+    AccountStatus, GithubUserProfile, User, UserLogins, UserOutput,
 };
+use crate::graphql::schemas::user::{GoogleUserInfo, OAuthUser, SurrealRelationQueryResponse};
 use crate::utils::user::create_user;
 
 pub type OAuthClientInstance = Client<

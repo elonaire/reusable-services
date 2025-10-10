@@ -1,4 +1,4 @@
-use async_graphql::{InputObject, SimpleObject};
+use async_graphql::{Enum, InputObject, SimpleObject};
 use serde::{Deserialize, Serialize};
 use surrealdb::sql::Thing;
 
@@ -25,34 +25,6 @@ pub struct AuthStatus {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
-#[graphql(input_name = "UserLoginsInput")]
-pub struct UserLogins {
-    #[serde(rename = "userName")]
-    pub user_name: Option<String>,
-    #[graphql(secret)]
-    pub password: Option<String>,
-    // pub oauth_client: Option<OAuthClientName>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
-pub struct AuthDetails {
-    // pub url: Option<String>,
-    pub token: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct SignInResponse {
-    #[serde(rename = "signIn")]
-    pub sign_in: AuthDetails,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct UserLoginsVar {
-    #[serde(rename = "rawUserDetails")]
-    pub raw_user_details: UserLogins,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
 pub struct EmailUser {
     #[serde(rename = "fullName")]
     pub full_name: Option<String>,
@@ -68,16 +40,6 @@ pub struct Email {
     pub title: String,
     pub body: String,
 }
-#[derive(Debug, Serialize, Deserialize)]
-pub struct SendEmailVar {
-    pub email: Email,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct SendEmailResponse {
-    #[serde(rename = "sendEmail")]
-    pub send_email: String,
-}
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
 pub struct PurchaseFileDetails {
@@ -91,4 +53,45 @@ pub struct EmailMQTTPayload<'a> {
     pub subject: &'a str,
     pub title: &'a str,
     pub template: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AdminPrivilege {
+    Admin,
+    SuperAdmin,
+}
+
+impl TryFrom<i32> for AdminPrivilege {
+    type Error = &'static str;
+
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(AdminPrivilege::Admin),
+            1 => Ok(AdminPrivilege::SuperAdmin),
+            _ => Err("Invalid status"),
+        }
+    }
+}
+
+impl From<AdminPrivilege> for i32 {
+    fn from(status: AdminPrivilege) -> Self {
+        match status {
+            AdminPrivilege::Admin => 0,
+            AdminPrivilege::SuperAdmin => 1,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AuthorizationConstraint {
+    pub roles: Vec<String>,
+    pub privilege: Option<AdminPrivilege>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
+pub enum RoleType {
+    #[graphql(name = "Admin")]
+    Admin,
+    #[graphql(name = "Other")]
+    Other,
 }

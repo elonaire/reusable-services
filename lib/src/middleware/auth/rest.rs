@@ -1,7 +1,9 @@
 use std::env;
 
 use crate::{
-    integration::grpc::clients::acl_service::{acl_client::AclClient, Empty},
+    integration::grpc::clients::acl_service::{
+        acl_client::AclClient, ConfirmAuthenticationRequest,
+    },
     utils::grpc::{create_grpc_client, AuthMetaData},
 };
 use axum::{extract::Request, http::StatusCode, middleware::Next, response::Response};
@@ -15,9 +17,9 @@ pub async fn handle_auth_with_refresh(
     let auth_header = req.headers().get(AUTHORIZATION);
     let cookie_header = req.headers().get(COOKIE);
 
-    let mut request = tonic::Request::new(Empty {});
+    let mut request = tonic::Request::new(ConfirmAuthenticationRequest {});
 
-    let auth_metadata: AuthMetaData<Empty> = AuthMetaData {
+    let auth_metadata: AuthMetaData<ConfirmAuthenticationRequest> = AuthMetaData {
         auth_header,
         cookie_header,
         constructed_grpc_request: Some(&mut request),
@@ -29,16 +31,17 @@ pub async fn handle_auth_with_refresh(
         );
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    let mut acl_grpc_client = create_grpc_client::<Empty, AclClient<Channel>>(
-        &acl_service_grpc,
-        true,
-        Some(auth_metadata),
-    )
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to connect to ACL service: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let mut acl_grpc_client =
+        create_grpc_client::<ConfirmAuthenticationRequest, AclClient<Channel>>(
+            &acl_service_grpc,
+            true,
+            Some(auth_metadata),
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to connect to ACL service: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     let response = acl_grpc_client.confirm_authentication(request).await;
 

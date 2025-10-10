@@ -8,7 +8,9 @@ use tonic::transport::Channel;
 use tonic::Status;
 use tonic_middleware::{Middleware, ServiceBound};
 
-use crate::integration::grpc::clients::acl_service::{acl_client::AclClient, Empty};
+use crate::integration::grpc::clients::acl_service::{
+    acl_client::AclClient, ConfirmAuthenticationRequest,
+};
 use crate::utils::grpc::{create_grpc_client, AuthMetaData};
 
 #[derive(Default, Clone)]
@@ -31,9 +33,9 @@ where
         let auth_header = req.headers().get(AUTHORIZATION);
         let cookie_header = req.headers().get(COOKIE);
 
-        let mut request = tonic::Request::new(Empty {});
+        let mut request = tonic::Request::new(ConfirmAuthenticationRequest {});
 
-        let auth_metadata: AuthMetaData<Empty> = AuthMetaData {
+        let auth_metadata: AuthMetaData<ConfirmAuthenticationRequest> = AuthMetaData {
             auth_header,
             cookie_header,
             constructed_grpc_request: Some(&mut request),
@@ -47,11 +49,10 @@ where
             Status::internal("Server Error")
         })?;
 
-        let mut acl_grpc_client = create_grpc_client::<Empty, AclClient<Channel>>(
-            &acl_service_grpc,
-            true,
-            Some(auth_metadata),
-        )
+        let mut acl_grpc_client = create_grpc_client::<
+            ConfirmAuthenticationRequest,
+            AclClient<Channel>,
+        >(&acl_service_grpc, true, Some(auth_metadata))
         .await
         .map_err(|e| {
             tracing::error!("Failed to connect to ACL service: {}", e);

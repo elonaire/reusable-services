@@ -4,18 +4,24 @@ use axum::http::HeaderValue;
 use hyper::header::{AUTHORIZATION, COOKIE};
 use hyper::HeaderMap;
 use jwt_simple::prelude::*;
+use lib::integration::grpc::clients::acl_service::{
+    ConfirmAuthenticationRequest, ConfirmAuthenticationResponse, ConfirmAuthorizationRequest,
+    ConfirmAuthorizationResponse, SignInAsServiceRequest, SignInAsServiceResponse,
+};
 use lib::utils::auth::AuthClaim;
+use lib::utils::models::{AuthStatus, AuthorizationConstraint};
 use surrealdb::engine::remote::ws::Client;
 use surrealdb::Surreal;
 use tonic::{Request, Response, Status};
 
 use crate::graphql::schemas::user::UserLogins;
 use crate::utils::auth::{
-    confirm_authentication, get_user_email, sign_jwt, verify_login_credentials,
+    confirm_authentication, confirm_authorization, get_user_email, sign_jwt,
+    verify_login_credentials,
 };
 
 use lib::integration::grpc::clients::acl_service::{
-    acl_server::Acl, AuthDetails, AuthStatus, Empty, GetUserEmailRequest, GetUserEmailResponse,
+    acl_server::Acl, GetUserEmailRequest, GetUserEmailResponse,
 };
 
 // #[derive(Default)]
@@ -33,8 +39,8 @@ impl AclServiceImplementation {
 impl Acl for AclServiceImplementation {
     async fn confirm_authentication(
         &self,
-        request: Request<Empty>,
-    ) -> Result<Response<AuthStatus>, Status> {
+        request: Request<ConfirmAuthenticationRequest>,
+    ) -> Result<Response<ConfirmAuthenticationResponse>, Status> {
         let metadata = request.metadata();
         let token = metadata
             .get("authorization")
@@ -54,14 +60,17 @@ impl Acl for AclServiceImplementation {
 
         match confirm_authentication(Some(&header_map), &self.db).await {
             Ok(auth_status) => Ok(Response::new(auth_status.into())),
-            Err(_e) => Err(Status::unauthenticated("Unauthorized")),
+            Err(e) => {
+                tracing::error!("Authentication failed: {}", e);
+                Err(Status::unauthenticated("Unauthorized"))
+            }
         }
     }
 
     async fn sign_in_as_service(
         &self,
-        _request: Request<Empty>,
-    ) -> Result<Response<AuthDetails>, Status> {
+        _request: Request<SignInAsServiceRequest>,
+    ) -> Result<Response<SignInAsServiceResponse>, Status> {
         let username = env::var("INTERNAL_USER").map_err(|e| {
             tracing::error!("Missing the INTERNAL_USER environment variable.: {}", e);
             Status::internal("Server Error")
@@ -94,17 +103,23 @@ impl Acl for AclServiceImplementation {
                         .map(|t| &t.id)
                         .ok_or("Unauthorized")
                         .map_err(|e| {
-                            tracing::error!("{}", e);
+                            tracing::error!("Failed to get user ID: {}", e);
                             Status::unauthenticated("Unauthorized")
                         })?
                         .to_raw(),
                 )
                 .await
-                .map_err(|_e| Status::unauthenticated("Unauthorized"))?;
+                .map_err(|e| {
+                    tracing::error!("Failed to sign JWT: {}", e);
+                    Status::unauthenticated("Unauthorized")
+                })?;
 
-                Ok(Response::new(AuthDetails { token: signed_jwt }))
+                Ok(Response::new(SignInAsServiceResponse { token: signed_jwt }))
             }
-            Err(_e) => Err(Status::unauthenticated("Unauthorized")),
+            Err(e) => {
+                tracing::error!("Authentication failed: {}", e);
+                Err(Status::unauthenticated("Unauthorized"))
+            }
         }
     }
 
@@ -116,7 +131,41 @@ impl Acl for AclServiceImplementation {
 
         match get_user_email(&self.db, user_id.as_str()).await {
             Ok(email) => Ok(Response::new(GetUserEmailResponse { email })),
-            Err(_e) => Err(Status::not_found("User not found")),
+            Err(e) => {
+                tracing::error!("Failed to get user email: {}", e);
+                Err(Status::not_found("User not found"))
+            }
+        }
+    }
+
+    async fn confirm_authorization(
+        &self,
+        request: Request<ConfirmAuthorizationRequest>,
+    ) -> Result<Response<ConfirmAuthorizationResponse>, Status> {
+        let request_body = request.into_inner();
+        let auth_status = request_body.auth_status;
+        let authorization_constraint = request_body.authorization_constraint;
+
+        if auth_status.is_none() {
+            return Err(Status::unauthenticated("Unauthenticated!"));
+        }
+
+        if authorization_constraint.is_none() {
+            return Err(Status::invalid_argument(
+                "Authorization constraint not supported!",
+            ));
+        }
+
+        let auth_status: AuthStatus = auth_status.unwrap().into();
+        let authorization_constraint: AuthorizationConstraint =
+            authorization_constraint.unwrap().into();
+
+        match confirm_authorization(&self.db, &auth_status, authorization_constraint).await {
+            Ok(res) => Ok(Response::new(ConfirmAuthorizationResponse { is_auth: res })),
+            Err(e) => {
+                tracing::error!("Failed to confirm authorization: {}", e);
+                Err(Status::permission_denied("Failed to confirm authorization"))
+            }
         }
     }
 }

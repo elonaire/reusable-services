@@ -2,19 +2,48 @@ syntax = "proto3";
 package acl;
 
 service Acl {
-    rpc ConfirmAuthentication(Empty) returns (AuthStatus);
-    rpc SignInAsService(Empty) returns (AuthDetails);
+    rpc ConfirmAuthentication(ConfirmAuthenticationRequest) returns (ConfirmAuthenticationResponse);
+    rpc SignInAsService(SignInAsServiceRequest) returns (SignInAsServiceResponse);
     rpc GetUserEmail(GetUserEmailRequest) returns (GetUserEmailResponse);
+    rpc ConfirmAuthorization(ConfirmAuthorizationRequest) returns (ConfirmAuthorizationResponse);
+}
+
+message ConfirmAuthorizationRequest {
+    AuthStatus auth_status = 1;
+    AuthorizationConstraint authorization_constraint = 2;
 }
 
 message AuthStatus {
     bool is_auth = 1;
     string sub = 2;
+    string current_role = 3;
 }
 
-message Empty {}
+enum AdminPrivilege {
+  ADMIN = 0;
+  SUPER_ADMIN = 1;
+}
 
-message AuthDetails {
+message AuthorizationConstraint {
+  repeated string roles = 1;
+  optional AdminPrivilege privilege = 2;
+}
+
+message ConfirmAuthorizationResponse {
+    bool is_auth = 1;
+}
+
+message ConfirmAuthenticationResponse {
+    bool is_auth = 1;
+    string sub = 2;
+    string current_role = 3;
+}
+
+message ConfirmAuthenticationRequest {}
+
+message SignInAsServiceRequest {}
+
+message SignInAsServiceResponse {
     string token = 1;
 }
 

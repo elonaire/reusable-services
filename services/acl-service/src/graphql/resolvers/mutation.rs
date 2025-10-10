@@ -5,7 +5,11 @@ use axum::Extension;
 use base64::{engine::general_purpose, Engine as _engine};
 use hyper::{header::SET_COOKIE, HeaderMap, StatusCode};
 use jwt_simple::prelude::*;
-use lib::utils::{auth::AuthClaim, custom_error::ExtendedError, models::EmailMQTTPayload};
+use lib::utils::{
+    auth::AuthClaim,
+    custom_error::ExtendedError,
+    models::{AdminPrivilege, AuthorizationConstraint, EmailMQTTPayload, RoleType},
+};
 use rsa::{pkcs8::DecodePublicKey, Pkcs1v15Encrypt, RsaPublicKey};
 use rumqttc::v5::mqttbytes::QoS;
 use surrealdb::{engine::remote::ws::Client, Surreal};
@@ -13,9 +17,7 @@ use tokio::fs;
 
 use crate::{
     graphql::schemas::{
-        role::{
-            AdminPrivilege, AuthorizationConstraint, RoleInput, RoleMetadata, RoleType, SystemRole,
-        },
+        role::{RoleInput, RoleMetadata, SystemRole},
         user::{AuthDetails, User, UserLogins, UserUpdate},
     },
     utils::{

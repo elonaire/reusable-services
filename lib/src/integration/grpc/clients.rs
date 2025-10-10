@@ -1,4 +1,4 @@
-use crate::utils;
+use crate::utils::{self, models::AdminPrivilege};
 
 // should match the package name in the .proto file
 pub mod acl_service {
@@ -16,11 +16,39 @@ pub mod files_service {
 }
 
 /// For easy conversion to protobuf
-impl From<utils::models::AuthStatus> for acl_service::AuthStatus {
+impl From<utils::models::AuthStatus> for acl_service::ConfirmAuthenticationResponse {
     fn from(auth_status: utils::models::AuthStatus) -> Self {
         Self {
             sub: auth_status.sub,
             is_auth: auth_status.is_auth,
+            current_role: auth_status.current_role,
+        }
+    }
+}
+
+/// For easy conversion to protobuf
+impl From<acl_service::AuthStatus> for utils::models::AuthStatus {
+    fn from(auth_status: acl_service::AuthStatus) -> Self {
+        Self {
+            sub: auth_status.sub,
+            is_auth: auth_status.is_auth,
+            current_role: auth_status.current_role,
+        }
+    }
+}
+
+/// For easy conversion to protobuf
+impl From<acl_service::AuthorizationConstraint> for utils::models::AuthorizationConstraint {
+    fn from(authorization_constraint: acl_service::AuthorizationConstraint) -> Self {
+        Self {
+            roles: authorization_constraint.roles,
+            privilege: Some(
+                authorization_constraint
+                    .privilege
+                    .unwrap()
+                    .try_into()
+                    .unwrap(),
+            ),
         }
     }
 }
@@ -36,8 +64,8 @@ impl From<email_service::EmailUser> for utils::models::EmailUser {
 }
 
 /// For easy conversion to protobuf
-impl From<email_service::Email> for utils::models::Email {
-    fn from(email: email_service::Email) -> Self {
+impl From<email_service::SendEmailRequest> for utils::models::Email {
+    fn from(email: email_service::SendEmailRequest) -> Self {
         Self {
             recipient: email.recipient.map_or_else(
                 || utils::models::EmailUser {
@@ -53,8 +81,8 @@ impl From<email_service::Email> for utils::models::Email {
     }
 }
 
-impl From<files_service::PurchaseFileDetails> for utils::models::PurchaseFileDetails {
-    fn from(file_details: files_service::PurchaseFileDetails) -> Self {
+impl From<files_service::PurchaseFileRequest> for utils::models::PurchaseFileDetails {
+    fn from(file_details: files_service::PurchaseFileRequest) -> Self {
         Self {
             file_id: file_details.file_id, // Ensuring `Option<String>`
             buyer_id: file_details.buyer_id,
