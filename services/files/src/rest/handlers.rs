@@ -58,10 +58,8 @@ pub async fn upload(
 
     let mut total_size: u64 = 0;
     let mut filename = String::new();
-    let system_filename = Uuid::new_v4();
     let mut mime_type = String::new();
     let upload_dir = upload_dir.unwrap();
-    let filepath = format!("{}{}", &upload_dir, system_filename);
     let mut field_name = String::new();
     let mut is_free = true;
     let mut all_uploaded_files_response = Vec::new() as Vec<UploadedFileResponse>;
@@ -73,6 +71,8 @@ pub async fn upload(
     }
 
     while let Some(field) = multipart.next_field().await.unwrap_or_else(|_| None) {
+        let system_filename = Uuid::new_v4();
+        let filepath = format!("{}{}", &upload_dir, system_filename);
         let mut field = field;
 
         // Extract field name and filename
@@ -231,7 +231,7 @@ pub async fn download_file(
         let mut file_details_query = db
             .query(
                 "
-                SELECT * FROM file WHERE system_filename=$file_name
+                SELECT * FROM ONLY file WHERE system_filename=$file_name LIMIT 1
                 ",
             )
             .bind(("file_name", file_name.clone()))
@@ -363,7 +363,7 @@ pub async fn get_image(
         let mut file_details_query = db
             .query(
                 "
-                SELECT * FROM file WHERE system_filename=$file_name
+                SELECT * FROM ONLY file WHERE system_filename=$file_name LIMIT 1
                 ",
             )
             .bind(("file_name", file_name.clone()))
