@@ -17,7 +17,7 @@ use tokio::fs;
 
 use crate::{
     graphql::schemas::{
-        role::{RoleInput, RoleMetadata, SystemRole},
+        role::{AdminPermission, RoleInput, RoleMetadata, SystemRole},
         user::{AuthDetails, User, UserLogins, UserUpdate},
     },
     utils::{
@@ -202,7 +202,7 @@ impl Mutation {
         }
     }
 
-    async fn create_user_role(
+    async fn create_system_role(
         &self,
         ctx: &Context<'_>,
         role: RoleInput,
@@ -216,8 +216,15 @@ impl Mutation {
 
         let authenticated = confirm_authentication(header_map, db).await?;
 
-        // TODO: Evaluate admin permissions here to restrict the Admin from giving Superadmin privileges. Constraint is already effected in the database.
-        let authorization_constraint = if role_metadata.organization.is_some() {
+        // Evaluate admin permissions here to restrict the Admin from giving Superadmin privileges. Constraint is already effected in the database.
+        let authorization_constraint = if role_metadata.organization.is_some()
+            || (role_metadata.admin_permissions.is_some()
+                && role_metadata
+                    .admin_permissions
+                    .as_ref()
+                    .unwrap()
+                    .contains(&AdminPermission::CreateOrganization))
+        {
             AuthorizationConstraint {
                 roles: vec![],
                 privilege: Some(AdminPrivilege::SuperAdmin),
@@ -233,9 +240,7 @@ impl Mutation {
             confirm_authorization(db, &authenticated, authorization_constraint).await?;
 
         if !authorized {
-            return Err(
-                ExtendedError::new("Unauthorized", StatusCode::UNAUTHORIZED.as_str()).build(),
-            );
+            return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
         }
 
         let is_admin = match role_metadata.role_type {
@@ -509,9 +514,7 @@ impl Mutation {
         let check_auth = confirm_authentication(header_map, db).await?;
 
         if check_auth.sub != user_id {
-            return Err(
-                ExtendedError::new("Unauthorized", StatusCode::UNAUTHORIZED.as_str()).build(),
-            );
+            return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
         }
 
         if user.password.is_some() {
@@ -539,6 +542,76 @@ impl Mutation {
             None => {
                 Err(ExtendedError::new("User not found", StatusCode::NOT_FOUND.as_str()).build())
             }
+        }
+    }
+
+    async fn assign_system_role(
+        &self,
+        ctx: &Context<'_>,
+        role_id: String,
+        user_id: String,
+    ) -> Result<SystemRole> {
+        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
+            tracing::error!("Error extracting Surreal Client: {:?}", e);
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
+        })?;
+        let header_map = ctx.data_opt::<HeaderMap>();
+
+        let authenticated = confirm_authentication(header_map, db).await?;
+
+        let authorization_constraint = AuthorizationConstraint {
+            roles: vec![],
+            privilege: Some(AdminPrivilege::Admin),
+        };
+
+        let authorized =
+            confirm_authorization(db, &authenticated, authorization_constraint).await?;
+
+        if !authorized {
+            return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
+        }
+
+        let mut assign_role_query = db
+            .query(
+                "
+                BEGIN TRANSACTION;
+                LET $role = type::thing('role', $role_id);
+                LET $user = type::thing('user', $user_id);
+
+                IF !$role.exists() OR !$user.exists() {
+                    THROW 'Invalid Input';
+                };
+
+                RELATE $user->assigned->$role CONTENT {
+                  is_default: false
+                };
+
+                LET $role = SELECT * FROM ONLY $role LIMIT 1;
+                RETURN $role;
+                COMMIT TRANSACTION;
+                ",
+            )
+            .bind(("role_id", role_id))
+            .bind(("user_id", user_id))
+            .await
+            .map_err(|e| {
+                tracing::error!("Error assigning role: {}", e);
+                ExtendedError::new("Failed to assign role", StatusCode::BAD_REQUEST.as_str())
+                    .build()
+            })?;
+
+        let user_role: Option<SystemRole> = assign_role_query.take(0).map_err(|e| {
+            tracing::error!("Failed to assign role: {}", e);
+            ExtendedError::new("Failed to assign role", StatusCode::BAD_REQUEST.as_str()).build()
+        })?;
+
+        match user_role {
+            Some(role) => Ok(role),
+            None => Err(ExtendedError::new(
+                "Failed to assign role",
+                StatusCode::BAD_REQUEST.as_str(),
+            )
+            .build()),
         }
     }
 }
