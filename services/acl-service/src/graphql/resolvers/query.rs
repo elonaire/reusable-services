@@ -111,7 +111,7 @@ impl Query {
                 let authorized =
                     confirm_authorization(db, &authenticated, authorization_constraint).await?;
 
-                if !authorized || authenticated.sub != user_id {
+                if !authorized && authenticated.sub != user_id {
                     return Err(
                         ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build(),
                     );
