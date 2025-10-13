@@ -102,6 +102,8 @@ pub struct UserOutput {
     pub email: String,
     pub country: Option<String>,
     pub phone: Option<String>,
+    #[graphql(secret)]
+    pub password: Option<String>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
     pub status: Option<AccountStatus>,

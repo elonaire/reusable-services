@@ -2,7 +2,10 @@ use std::sync::Arc;
 
 use async_graphql::{Context, Error, Object, Result};
 use axum::Extension;
-use hyper::{HeaderMap, StatusCode};
+use hyper::{
+    header::{AUTHORIZATION, COOKIE},
+    HeaderMap, StatusCode,
+};
 use lib::utils::{
     custom_error::ExtendedError,
     models::{AdminPrivilege, AuthStatus, AuthorizationConstraint},
@@ -54,31 +57,88 @@ impl Query {
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
 
-        let header_map = ctx.data_opt::<HeaderMap>();
+        match ctx.data_opt::<HeaderMap>() {
+            Some(header_map) => {
+                let auth_header = header_map.get(AUTHORIZATION);
+                let cookie_header = header_map.get(COOKIE);
 
-        let authenticated = confirm_authentication(header_map, db).await?;
+                if auth_header.is_none() || cookie_header.is_none() {
+                    let mut user_query = db
+                        .query(
+                            "
+                            BEGIN TRANSACTION;
+                            LET $user_id = type::thing('user', $user_id);
+                            LET $user = (SELECT id, first_name, middle_name, last_name, full_name, dob, email, country, profile_picture, bio, website, address FROM ONLY $user_id LIMIT 1);
+                            RETURN $user;
+                            COMMIT TRANSACTION;
+                            "
+                        )
+                        .bind(("user_id", user_id))
+                        .await
+                        .map_err(|e| {
+                        tracing::error!("Error fetching user: {}", e);
+                        ExtendedError::new("Error fetching user", StatusCode::BAD_REQUEST.as_str()).build()
+                    })?;
 
-        let authorization_constraint = AuthorizationConstraint {
-            roles: vec![],
-            privilege: Some(AdminPrivilege::Admin),
-        };
+                    let user: Option<UserOutput> = user_query.take(0).map_err(|e| {
+                        tracing::debug!("UserOutput deserialization error: {}", e);
+                        ExtendedError::new(
+                            "Server Error",
+                            StatusCode::INTERNAL_SERVER_ERROR.as_str(),
+                        )
+                        .build()
+                    })?;
 
-        let authorized =
-            confirm_authorization(db, &authenticated, authorization_constraint).await?;
+                    match user {
+                        Some(user) => return Ok(user),
+                        None => {
+                            return Err(ExtendedError::new(
+                                "User not found",
+                                StatusCode::NOT_FOUND.as_str(),
+                            )
+                            .build())
+                        }
+                    }
+                }
 
-        if !authorized || authenticated.sub != user_id {
-            return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
-        }
+                let authenticated = confirm_authentication(Some(header_map), db).await?;
 
-        let user: Option<UserOutput> = db.select(("user", user_id)).await.map_err(|e| {
-            tracing::error!("Error fetching user: {}", e);
-            ExtendedError::new("Error fetching user", StatusCode::BAD_REQUEST.as_str()).build()
-        })?;
+                let authorization_constraint = AuthorizationConstraint {
+                    roles: vec![],
+                    privilege: Some(AdminPrivilege::Admin),
+                };
 
-        match user {
-            Some(user) => Ok(user),
+                let authorized =
+                    confirm_authorization(db, &authenticated, authorization_constraint).await?;
+
+                if !authorized || authenticated.sub != user_id {
+                    return Err(
+                        ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build(),
+                    );
+                }
+
+                let user: Option<UserOutput> = db.select(("user", user_id)).await.map_err(|e| {
+                    tracing::error!("Error fetching user: {}", e);
+                    ExtendedError::new("Error fetching user", StatusCode::BAD_REQUEST.as_str())
+                        .build()
+                })?;
+
+                match user {
+                    Some(user) => Ok(user),
+                    None => Err(ExtendedError::new(
+                        "User not found",
+                        StatusCode::NOT_FOUND.as_str(),
+                    )
+                    .build()),
+                }
+            }
             None => {
-                Err(ExtendedError::new("User not found", StatusCode::NOT_FOUND.as_str()).build())
+                tracing::error!("Malformed request!");
+                return Err(ExtendedError::new(
+                    "Malformed request",
+                    StatusCode::BAD_REQUEST.as_str(),
+                )
+                .build());
             }
         }
     }
