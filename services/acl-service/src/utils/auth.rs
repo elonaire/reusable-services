@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::graphql::schemas::role::SystemRole;
 use crate::graphql::schemas::user::{
-    AccountStatus, GithubUserProfile, User, UserLogins, UserOutput,
+    AccountStatus, GithubUserProfile, User, UserInput, UserLogins,
 };
 use crate::graphql::schemas::user::{GoogleUserInfo, OAuthUser, SurrealRelationQueryResponse};
 use crate::utils::user::create_user;
@@ -648,12 +648,17 @@ pub async fn verify_login_credentials<T: Clone + AsSurrealClient>(
 
     match response {
         Some(user) => {
-            if bcrypt::verify(&user_details.password.unwrap(), &user.password.as_str()).map_err(
-                |e| {
-                    tracing::error!("Failed to verify user credentials: {}", e);
-                    Error::new(ErrorKind::PermissionDenied, "Invalid username or password")
-                },
-            )? && user.status == AccountStatus::Active
+            let existing_password = user.password.clone();
+            if existing_password.is_none() {
+                tracing::error!("Cannot update password for user with no password");
+                return Err(Error::new(ErrorKind::Other, "Invalid user details!"));
+            }
+            let existing_password = existing_password.unwrap();
+
+            if bcrypt::verify(&user_details.password.unwrap(), &existing_password).map_err(|e| {
+                tracing::error!("Failed to verify user credentials: {}", e);
+                Error::new(ErrorKind::PermissionDenied, "Invalid username or password")
+            })? && user.status == Some(AccountStatus::Active)
             {
                 Ok(user)
             } else {
@@ -693,14 +698,14 @@ pub async fn get_user_email<T: Clone + AsSurrealClient>(
     db: &T,
     user_id: &str,
 ) -> Result<String, Error> {
-    let result: Option<UserOutput> =
-        db.as_client()
-            .select(("user", user_id))
-            .await
-            .map_err(|e| {
-                tracing::error!("{}", e);
-                Error::new(ErrorKind::Other, "Database query failed")
-            })?;
+    let result: Option<User> = db
+        .as_client()
+        .select(("user", user_id))
+        .await
+        .map_err(|e| {
+            tracing::error!("{}", e);
+            Error::new(ErrorKind::Other, "Database query failed")
+        })?;
 
     match result {
         Some(user) => Ok(user.email),
@@ -963,7 +968,7 @@ pub async fn create_oauth_user_if_not_exists<T: Clone + AsSurrealClient>(
                         Error::new(ErrorKind::Other, "Internal Server error")
                     })?;
 
-                let existing_user: Option<UserOutput> = db_query.take(0).map_err(|e| {
+                let existing_user: Option<User> = db_query.take(0).map_err(|e| {
                     tracing::error!("Deserialization Error: {}", e);
                     Error::new(ErrorKind::Other, "Internal Server error")
                 })?;
@@ -981,12 +986,12 @@ pub async fn create_oauth_user_if_not_exists<T: Clone + AsSurrealClient>(
                             return Err(Error::new(ErrorKind::Other, "No primary email found"));
                         }
 
-                        let user = User {
+                        let user = UserInput {
                             email: email.unwrap().value.clone(),
                             oauth_client: Some(OAuthClientName::Google),
                             oauth_user_id: Some(google_user.resource_name.clone()),
                             status: AccountStatus::Active,
-                            ..User::default()
+                            ..UserInput::default()
                         };
 
                         let _created_user = create_user(db, user).await?;
@@ -1017,7 +1022,7 @@ pub async fn create_oauth_user_if_not_exists<T: Clone + AsSurrealClient>(
                         Error::new(ErrorKind::Other, "Internal Server error")
                     })?;
 
-                let existing_user: Option<UserOutput> = db_query.take(0).map_err(|e| {
+                let existing_user: Option<User> = db_query.take(0).map_err(|e| {
                     tracing::error!("Deserialization Error: {}", e);
                     Error::new(ErrorKind::Other, "Internal Server error")
                 })?;
@@ -1031,12 +1036,12 @@ pub async fn create_oauth_user_if_not_exists<T: Clone + AsSurrealClient>(
                             tracing::error!("No primary email found");
                             return Err(Error::new(ErrorKind::Other, "No primary email found"));
                         }
-                        let user = User {
+                        let user = UserInput {
                             email: email.unwrap().to_owned(),
                             oauth_client: Some(OAuthClientName::Github),
                             oauth_user_id: Some(github_user.id.to_string()),
                             status: AccountStatus::Active,
-                            ..User::default()
+                            ..UserInput::default()
                         };
 
                         let _created_user = create_user(db, user).await?;

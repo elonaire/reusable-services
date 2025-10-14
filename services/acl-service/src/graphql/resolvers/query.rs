@@ -13,7 +13,7 @@ use lib::utils::{
 use surrealdb::{engine::remote::ws::Client, Surreal};
 
 use crate::{
-    graphql::schemas::{role::SystemRole, user::UserOutput},
+    graphql::schemas::{role::SystemRole, user::User},
     utils::auth::{confirm_authentication, confirm_authorization},
 };
 
@@ -21,7 +21,7 @@ pub struct Query;
 
 #[Object]
 impl Query {
-    async fn fetch_all_users(&self, ctx: &Context<'_>) -> Result<Vec<UserOutput>> {
+    async fn fetch_all_users(&self, ctx: &Context<'_>) -> Result<Vec<User>> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
@@ -43,7 +43,7 @@ impl Query {
             return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
         }
 
-        let response: Vec<UserOutput> = db.select("user").await.map_err(|e| {
+        let response: Vec<User> = db.select("user").await.map_err(|e| {
             tracing::error!("Error fetching users: {}", e);
             ExtendedError::new("Error fetching users", StatusCode::BAD_REQUEST.as_str()).build()
         })?;
@@ -51,7 +51,7 @@ impl Query {
         Ok(response)
     }
 
-    async fn fetch_single_user(&self, ctx: &Context<'_>, user_id: String) -> Result<UserOutput> {
+    async fn fetch_single_user(&self, ctx: &Context<'_>, user_id: String) -> Result<User> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
@@ -80,8 +80,8 @@ impl Query {
                         ExtendedError::new("Error fetching user", StatusCode::BAD_REQUEST.as_str()).build()
                     })?;
 
-                    let user: Option<UserOutput> = user_query.take(0).map_err(|e| {
-                        tracing::debug!("UserOutput deserialization error: {}", e);
+                    let user: Option<User> = user_query.take(0).map_err(|e| {
+                        tracing::debug!("User deserialization error: {}", e);
                         ExtendedError::new(
                             "Server Error",
                             StatusCode::INTERNAL_SERVER_ERROR.as_str(),
@@ -117,7 +117,7 @@ impl Query {
                     );
                 }
 
-                let user: Option<UserOutput> = db.select(("user", user_id)).await.map_err(|e| {
+                let user: Option<User> = db.select(("user", user_id)).await.map_err(|e| {
                     tracing::error!("Error fetching user: {}", e);
                     ExtendedError::new("Error fetching user", StatusCode::BAD_REQUEST.as_str())
                         .build()

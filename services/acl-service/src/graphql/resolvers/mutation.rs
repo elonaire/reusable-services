@@ -18,7 +18,7 @@ use tokio::fs;
 use crate::{
     graphql::schemas::{
         role::{AdminPermission, RoleInput, RoleMetadata, SystemRole},
-        user::{AuthDetails, User, UserLogins, UserUpdate},
+        user::{AuthDetails, User, UserInput, UserLogins, UserUpdate},
     },
     utils::{
         auth::{
@@ -35,7 +35,7 @@ pub struct Mutation;
 
 #[Object]
 impl Mutation {
-    async fn sign_up(&self, ctx: &Context<'_>, mut user: User) -> Result<User> {
+    async fn sign_up(&self, ctx: &Context<'_>, mut user: UserInput) -> Result<User> {
         user.password = bcrypt::hash(user.password, bcrypt::DEFAULT_COST).map_err(|e| {
             tracing::error!("Bcrypt Error: {}", e);
             ExtendedError::new("Failed to sign up", StatusCode::BAD_REQUEST.as_str()).build()

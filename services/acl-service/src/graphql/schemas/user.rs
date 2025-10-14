@@ -28,10 +28,9 @@ pub enum AccountStatus {
     Deleted,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject, Default)]
-#[graphql(input_name = "UserInput")]
+#[derive(Clone, Debug, Serialize, Deserialize, InputObject, Default)]
 #[graphql(complex)]
-pub struct User {
+pub struct UserInput {
     #[graphql(skip)]
     pub id: Option<Thing>,
     pub user_name: Option<String>,
@@ -45,8 +44,6 @@ pub struct User {
     pub phone: Option<String>,
     #[graphql(secret)]
     pub password: String,
-    pub created_at: Option<String>,
-    pub updated_at: Option<String>,
     #[graphql(skip)]
     pub status: AccountStatus,
     #[graphql(skip)]
@@ -59,38 +56,9 @@ pub struct User {
     pub address: Option<String>,
 }
 
-#[ComplexObject]
-impl User {
-    async fn id(&self) -> String {
-        self.id.as_ref().map(|t| &t.id).expect("id").to_raw()
-    }
-
-    async fn full_name(&self) -> String {
-        format!(
-            "{} {} {}",
-            self.first_name.as_ref().unwrap_or(&"".to_string()),
-            self.middle_name.as_ref().unwrap_or(&"".to_string()),
-            self.last_name.as_ref().unwrap_or(&"".to_string())
-        )
-    }
-
-    async fn age(&self) -> Option<u32> {
-        // calculate age from &self.dob
-        match &self.dob.as_ref() {
-            Some(dob) => {
-                let dob = DateTime::parse_from_rfc3339(dob).ok()?;
-                let from_ymd = NaiveDate::from_ymd_opt(dob.year(), dob.month(), dob.day())?;
-                let today = Utc::now().date_naive();
-                today.years_since(from_ymd)
-            }
-            None => None,
-        }
-    }
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
 #[graphql(complex)]
-pub struct UserOutput {
+pub struct User {
     #[graphql(skip)]
     pub id: Option<Thing>,
     pub user_name: Option<String>,
@@ -116,7 +84,7 @@ pub struct UserOutput {
 }
 
 #[ComplexObject]
-impl UserOutput {
+impl User {
     async fn id(&self) -> String {
         self.id.as_ref().map(|t| &t.id).expect("id").to_raw()
     }
