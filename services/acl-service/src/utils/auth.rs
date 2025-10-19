@@ -1068,31 +1068,22 @@ pub async fn fetch_default_user_roles<T: Clone + AsSurrealClient>(
         .as_client()
         .query(
             "
-            SELECT ->(assigned WHERE is_default=true)->role.* AS roles FROM ONLY user WHERE id = type::thing('user', $user_id) OR oauth_user_id = $user_id LIMIT 1
+            (SELECT ->(assigned WHERE is_default=true)->role.* AS roles FROM ONLY user WHERE id = type::thing('user', $user_id) OR oauth_user_id = $user_id LIMIT 1)['roles']
         ",
         )
         .bind(("user_id", owned_user_id))
         .await
         .map_err(|_e| Error::new(ErrorKind::Other, "DB Query failed: Get Roles"))?;
-    let user_roles: Option<SurrealRelationQueryResponse<SystemRole>> =
-        user_roles_res.take(0).map_err(|e| {
-            tracing::error!("Failed to get roles: {}", e);
-            Error::new(ErrorKind::Other, "Failed to get roles")
-        })?;
+    let user_roles: Vec<SystemRole> = user_roles_res.take(0).map_err(|e| {
+        tracing::error!("Failed to get roles: {}", e);
+        Error::new(ErrorKind::Other, "Failed to get roles")
+    })?;
 
-    match user_roles {
-        Some(roles) => Ok(roles
-            .get("roles")
-            .unwrap_or(&vec![] as &Vec<SystemRole>)
-            .into_iter()
-            .map(|role| {
-                let name_str = format!("{}", role.role_name);
-                name_str
-            })
-            .collect()),
-        None => {
-            tracing::error!("Cannot get authenticated without roles");
-            Err(Error::new(ErrorKind::PermissionDenied, "Forbidden"))
-        }
-    }
+    Ok(user_roles
+        .into_iter()
+        .map(|role| {
+            let name_str = format!("{}", role.role_name);
+            name_str
+        })
+        .collect())
 }

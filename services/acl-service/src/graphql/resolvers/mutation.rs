@@ -17,7 +17,10 @@ use tokio::fs;
 
 use crate::{
     graphql::schemas::{
-        role::{AdminPermission, RoleInput, RoleMetadata, SystemRole},
+        role::{
+            AdminPermission, Department, DepartmentInput, DepartmentInputMetadata, Organization,
+            OrganizationInput, RoleInput, RoleMetadata, SystemRole,
+        },
         user::{AuthDetails, User, UserInput, UserLogins, UserUpdate},
     },
     utils::{
@@ -205,7 +208,7 @@ impl Mutation {
     async fn create_system_role(
         &self,
         ctx: &Context<'_>,
-        role: RoleInput,
+        mut role_input: RoleInput,
         role_metadata: RoleMetadata,
     ) -> Result<SystemRole> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
@@ -216,28 +219,16 @@ impl Mutation {
 
         let authenticated = confirm_authentication(header_map, db).await?;
 
+        let authenticated_ref = &authenticated;
+
         // Evaluate admin permissions here to restrict the Admin from giving Superadmin privileges. Constraint is already effected in the database.
-        let authorization_constraint = if role_metadata.organization.is_some()
-            || (role_metadata.admin_permissions.is_some()
-                && role_metadata
-                    .admin_permissions
-                    .as_ref()
-                    .unwrap()
-                    .contains(&AdminPermission::CreateOrganization))
-        {
-            AuthorizationConstraint {
-                roles: vec![],
-                privilege: Some(AdminPrivilege::SuperAdmin),
-            }
-        } else {
-            AuthorizationConstraint {
-                roles: vec![],
-                privilege: Some(AdminPrivilege::Admin),
-            }
+        let authorization_constraint = AuthorizationConstraint {
+            roles: vec![],
+            privilege: Some(AdminPrivilege::Admin),
         };
 
         let authorized =
-            confirm_authorization(db, &authenticated, authorization_constraint).await?;
+            confirm_authorization(db, authenticated_ref, authorization_constraint).await?;
 
         if !authorized {
             return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
@@ -248,13 +239,8 @@ impl Mutation {
             RoleType::Other => false,
         };
 
-        if (role_metadata.department.is_some() && role_metadata.department_is_under.is_none())
-            || (role_metadata.department.is_none() && role_metadata.department_is_under.is_some())
-        {
-            return Err(
-                ExtendedError::new("Invalid Input", StatusCode::BAD_REQUEST.as_str()).build(),
-            );
-        };
+        role_input.created_by = format!("user:{}", authenticated_ref.sub);
+        role_input.is_admin = is_admin;
 
         let mut create_role_query = db
             .query(
@@ -265,55 +251,41 @@ impl Mutation {
                     THROW 'Invalid Input';
                 };
 
-                LET $created_role = (CREATE role CONTENT {
-                    role_name: $role_input.role_name,
-                    created_by: $user,
-                    is_admin: type::bool($is_admin),
-                    admin_permissions: $role_metadata.admin_permissions
-                } RETURN AFTER);
-                LET $role_id = (SELECT VALUE id FROM $created_role);
-                IF $role_metadata.organization IS NOT NONE {
-                    RELATE $role_id -> organization -> $role_id CONTENT {
-                        org_name: $role_metadata.organization.org_name
-                    };
+                IF ($role_metadata.organization_id IS NONE AND $role_metadata.department_id IS NONE) OR ($role_metadata.organization_id IS NOT NONE AND $role_metadata.department_id IS NOT NONE) {
+                    THROW 'Invalid Input';
                 };
 
-                IF $role_metadata.department IS NOT NONE {
-                    IF $role_metadata.department_is_under.body = 'Organization' {
-                        LET $org = type::thing('organization', $role_metadata.department_is_under.id);
-                        IF !$org.exists() {
-                            THROW 'Invalid Input';
-                        };
-                        LET $created_department = (SELECT VALUE id FROM (CREATE department CONTENT $role_metadata.department RETURN AFTER));
-                        RELATE $created_department -> is_under -> $org;
-                    } ELSE IF $role_metadata.department_is_under.body = 'Department' {
-                        LET $dep = type::thing('department', $role_metadata.department_is_under.id);
-                        IF !$dep.exists() {
-                            THROW 'Invalid Input';
-                        };
-                        LET $created_department = (SELECT VALUE id FROM (CREATE department CONTENT $role_metadata.department RETURN AFTER));
-                        RELATE $created_department -> is_under -> $dep;
-                    } ELSE {
+                LET $created_role = (CREATE role CONTENT $role_input RETURN AFTER);
+                LET $role_record_id = (SELECT VALUE id FROM $created_role);
+                IF $role_metadata.organization_id IS NOT NONE {
+                    LET $organization = type::thing('organization', $role_metadata.organization_id);
+                    IF !$organization.exists() {
                         THROW 'Invalid Input';
                     };
+                    RELATE $role_record_id -> is_under -> $organization;
+                };
+
+                IF $role_metadata.department_id IS NOT NONE {
+                    LET $department = type::thing('department', $role_metadata.department_id);
+                    IF !$department.exists() {
+                        THROW 'Invalid Input';
+                    };
+                    RELATE $role_record_id -> is_under -> $department;
                 };
 
                 RETURN $created_role;
                 COMMIT TRANSACTION;
                 ",
             )
-            .bind(("role_input", role))
+            .bind(("role_input", role_input))
             .bind(("role_metadata", role_metadata))
-            .bind(("user_id", authenticated.sub.clone()))
+            .bind(("user_id", authenticated_ref.sub.to_owned()))
             .bind(("is_admin", is_admin))
             .await
             .map_err(|e| {
                 tracing::error!("Error creating role: {}", e);
-                ExtendedError::new(
-                    "Failed to create role",
-                    StatusCode::BAD_REQUEST.as_str(),
-                )
-                .build()
+                ExtendedError::new("Failed to create role", StatusCode::BAD_REQUEST.as_str())
+                    .build()
             })?;
 
         let user_role: Option<SystemRole> = create_role_query.take(0).map_err(|e| {
@@ -609,6 +581,169 @@ impl Mutation {
             Some(role) => Ok(role),
             None => Err(ExtendedError::new(
                 "Failed to assign role",
+                StatusCode::BAD_REQUEST.as_str(),
+            )
+            .build()),
+        }
+    }
+
+    async fn create_organization(
+        &self,
+        ctx: &Context<'_>,
+        mut organization_input: OrganizationInput,
+    ) -> Result<Organization> {
+        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
+            tracing::error!("Error extracting Surreal Client: {:?}", e);
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
+        })?;
+        let header_map = ctx.data_opt::<HeaderMap>();
+
+        let authenticated = confirm_authentication(header_map, db).await?;
+
+        let authorization_constraint = AuthorizationConstraint {
+            roles: vec![],
+            privilege: Some(AdminPrivilege::Admin),
+        };
+
+        let authenticated_ref = &authenticated;
+
+        let authorized =
+            confirm_authorization(db, authenticated_ref, authorization_constraint).await?;
+
+        if !authorized {
+            return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
+        }
+
+        organization_input.created_by = format!("user:{}", authenticated_ref.sub);
+
+        let mut create_organization_query = db
+            .query(
+                "
+                BEGIN TRANSACTION;
+                LET $organization = (SELECT * FROM ONLY (CREATE organization CONTENT $organization_input) LIMIT 1);
+
+                RETURN $organization;
+                COMMIT TRANSACTION;
+                ",
+            )
+            .bind(("organization_input", organization_input))
+            .await
+            .map_err(|e| {
+                tracing::error!("Error creating organization: {}", e);
+                ExtendedError::new(
+                    "Failed to create organization",
+                    StatusCode::BAD_REQUEST.as_str(),
+                )
+                .build()
+            })?;
+
+        let organization_response: Option<Organization> =
+            create_organization_query.take(0).map_err(|e| {
+                tracing::error!("Failed to create organization: {}", e);
+                ExtendedError::new(
+                    "Failed to create organization",
+                    StatusCode::BAD_REQUEST.as_str(),
+                )
+                .build()
+            })?;
+
+        match organization_response {
+            Some(organization) => Ok(organization),
+            None => Err(ExtendedError::new(
+                "Failed to create organization",
+                StatusCode::BAD_REQUEST.as_str(),
+            )
+            .build()),
+        }
+    }
+
+    async fn create_department(
+        &self,
+        ctx: &Context<'_>,
+        mut department_input: DepartmentInput,
+        department_input_metadata: DepartmentInputMetadata,
+    ) -> Result<Department> {
+        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
+            tracing::error!("Error extracting Surreal Client: {:?}", e);
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
+        })?;
+        let header_map = ctx.data_opt::<HeaderMap>();
+
+        let authenticated = confirm_authentication(header_map, db).await?;
+
+        let authorization_constraint = AuthorizationConstraint {
+            roles: vec![],
+            privilege: Some(AdminPrivilege::Admin),
+        };
+
+        let authenticated_ref = &authenticated;
+
+        let authorized =
+            confirm_authorization(db, authenticated_ref, authorization_constraint).await?;
+
+        if !authorized {
+            return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
+        }
+
+        department_input.created_by = format!("user:{}", authenticated_ref.sub);
+
+        let mut create_department_query = db
+            .query(
+                "
+                BEGIN TRANSACTION;
+                IF $department_input_metadata.organization_id {
+                    LET $org = type::thing('organization', $department_input_metadata.organization_id);
+                    IF !$org.exists() {
+                        THROW 'Invalid Input';
+                    };
+                    LET $created_department = (CREATE department CONTENT $department_input RETURN AFTER);
+                    LET $department_id = (SELECT VALUE id FROM ONLY $created_department LIMIT 1);
+                    RELATE $department_id -> is_under -> $org;
+
+                    RETURN $created_department;
+                } ELSE IF $department_input_metadata.department_id {
+                    LET $dep = type::thing('department', $department_input_metadata.department_id);
+                    IF !$dep.exists() {
+                        THROW 'Invalid Input';
+                    };
+                    LET $created_department = (CREATE department CONTENT $department_input RETURN AFTER);
+                    LET $department_id = (SELECT VALUE id FROM ONLY $created_department LIMIT 1);
+                    RELATE $department_id -> is_under -> $dep;
+
+                    RETURN $created_department;
+                } ELSE {
+                    THROW 'Invalid Input';
+                };
+
+                COMMIT TRANSACTION;
+                ",
+            )
+            .bind(("department_input", department_input))
+            .bind(("department_input_metadata", department_input_metadata))
+            .await
+            .map_err(|e| {
+                tracing::error!("Error creating department: {}", e);
+                ExtendedError::new(
+                    "Failed to create department",
+                    StatusCode::BAD_REQUEST.as_str(),
+                )
+                .build()
+            })?;
+
+        let department_response: Option<Department> =
+            create_department_query.take(0).map_err(|e| {
+                tracing::error!("Failed to create department: {}", e);
+                ExtendedError::new(
+                    "Failed to create department",
+                    StatusCode::BAD_REQUEST.as_str(),
+                )
+                .build()
+            })?;
+
+        match department_response {
+            Some(department) => Ok(department),
+            None => Err(ExtendedError::new(
+                "Failed to create department",
                 StatusCode::BAD_REQUEST.as_str(),
             )
             .build()),

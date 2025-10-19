@@ -21,6 +21,7 @@ pub struct Query;
 
 #[Object]
 impl Query {
+    // TODO: Important! Enforce checks so that fetching users respects hierarchy. e.g. ADMINs cannot view SUPER_ADMIN
     async fn fetch_all_users(&self, ctx: &Context<'_>) -> Result<Vec<User>> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
@@ -51,6 +52,7 @@ impl Query {
         Ok(response)
     }
 
+    // TODO: Important! Enforce checks so that fetching a single user respects hierarchy. e.g. ADMINs cannot view SUPER_ADMIN
     async fn fetch_single_user(&self, ctx: &Context<'_>, user_id: String) -> Result<User> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
@@ -155,6 +157,7 @@ impl Query {
             .map_err(Error::from)
     }
 
+    // TODO: Important! Enforce checks so that fetching system roles respects hierarchy. e.g. ADMINs cannot view SUPER_ADMIN
     async fn fetch_system_roles(
         &self,
         ctx: &Context<'_>,

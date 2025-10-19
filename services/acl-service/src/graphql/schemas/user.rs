@@ -29,10 +29,7 @@ pub enum AccountStatus {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, InputObject, Default)]
-#[graphql(complex)]
 pub struct UserInput {
-    #[graphql(skip)]
-    pub id: Option<Thing>,
     pub user_name: Option<String>,
     pub first_name: Option<String>,
     pub middle_name: Option<String>,
