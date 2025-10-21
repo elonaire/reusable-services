@@ -33,7 +33,7 @@ use crate::graphql::schemas::role::SystemRole;
 use crate::graphql::schemas::user::{
     AccountStatus, GithubUserProfile, User, UserInput, UserLogins,
 };
-use crate::graphql::schemas::user::{GoogleUserInfo, OAuthUser, SurrealRelationQueryResponse};
+use crate::graphql::schemas::user::{GoogleUserInfo, OAuthUser};
 use crate::utils::user::create_user;
 
 pub type OAuthClientInstance = Client<
@@ -355,8 +355,9 @@ pub async fn confirm_authentication<T: Clone + AsSurrealClient>(
                     // Check if Cookie header is present
                     match headers.get(COOKIE) {
                         Some(cookie_header) => {
-                            let cookies_str = cookie_header.to_str().map_err(|_| {
-                                Error::new(ErrorKind::InvalidData, "Invalid cookie format")
+                            let cookies_str = cookie_header.to_str().map_err(|e| {
+                                tracing::error!("Invalid cookie format: {:?}", e);
+                                Error::new(ErrorKind::InvalidData, "Invalid request!")
                             })?;
                             let cookies = parse_cookies(cookies_str);
 
@@ -368,6 +369,13 @@ pub async fn confirm_authentication<T: Clone + AsSurrealClient>(
 
                                         match &token_claims {
                                             Ok(claims) => {
+                                                if claims.custom.roles.len() == 0 {
+                                                    tracing::error!("Token role claims are empty");
+                                                    return Err(Error::new(
+                                                        ErrorKind::InvalidData,
+                                                        "Unauthorized!",
+                                                    ));
+                                                }
                                                 // Token verification successful
                                                 Ok(AuthStatus {
                                                     is_auth: true,
@@ -541,16 +549,7 @@ async fn handle_refresh_token<T: Clone + AsSurrealClient>(
                             let _token = sign_jwt(
                                 &auth_claim,
                                 token_expiry_duration,
-                                &user
-                                    .id
-                                    .as_ref()
-                                    .map(|t| &t.id)
-                                    .ok_or("Invalid ID")
-                                    .map_err(|e| {
-                                        tracing::error!("{}", e);
-                                        Error::new(ErrorKind::PermissionDenied, "Unauthorized")
-                                    })?
-                                    .to_raw(),
+                                &user.id.key().to_string(),
                             )
                             .await
                             .map_err(|e| {
@@ -568,16 +567,7 @@ async fn handle_refresh_token<T: Clone + AsSurrealClient>(
 
                             return Ok(AuthStatus {
                                 is_auth: true,
-                                sub: user
-                                    .id
-                                    .as_ref()
-                                    .map(|t| &t.id)
-                                    .ok_or("Invalid ID")
-                                    .map_err(|e| {
-                                        tracing::error!("{}", e);
-                                        Error::new(ErrorKind::PermissionDenied, "Unauthorized")
-                                    })?
-                                    .to_raw(),
+                                sub: user.id.key().to_string(),
                                 current_role: refresh_claims.custom.roles[0].clone(),
                             });
                         }
@@ -1058,32 +1048,64 @@ pub async fn create_oauth_user_if_not_exists<T: Clone + AsSurrealClient>(
     }
 }
 
-pub async fn fetch_default_user_roles<T: Clone + AsSurrealClient>(
+pub async fn fetch_user_roles<T: Clone + AsSurrealClient>(
     db: &T,
     user_id: &str,
+    role_id: Option<&str>,
 ) -> Result<Vec<String>, Error> {
     let owned_user_id = user_id.to_string();
+    let owned_role_id = role_id.unwrap_or("").to_owned();
 
     let mut user_roles_res = db
         .as_client()
         .query(
             "
-            (SELECT ->(assigned WHERE is_default=true)->role.* AS roles FROM ONLY user WHERE id = type::thing('user', $user_id) OR oauth_user_id = $user_id LIMIT 1)['roles']
-        ",
+            BEGIN TRANSACTION;
+            LET $user = type::thing('user', $user_id);
+            IF !$user.exists() {
+          		THROW 'User does not exist';
+           	};
+
+            LET $roles = (SELECT ->(assigned WHERE is_default=true)->role.* AS roles FROM ONLY user WHERE id = $user OR oauth_user_id = $user_id LIMIT 1)['roles'];
+            RETURN $roles;
+            COMMIT TRANSACTION;
+            "
+        )
+        // Apparently SurrealDB formats the query string before executing it. It may result in unexpected behavior.
+        .query(
+            "
+            BEGIN TRANSACTION;
+            LET $role = type::thing('role', $role_id);
+            LET $user = type::thing('user', $user_id);
+            IF !$role.exists() {
+          		THROW 'Role does not exist';
+           	};
+            IF !$user.exists() {
+          		THROW 'User does not exist';
+           	};
+
+            LET $roles = (SELECT ->assigned->(role WHERE id = $role)[*] AS roles FROM ONLY user WHERE id = $user OR oauth_user_id = $user_id LIMIT 1)['roles'];
+            RETURN $roles;
+            COMMIT TRANSACTION;
+            "
         )
         .bind(("user_id", owned_user_id))
+        .bind(("role_id", owned_role_id))
         .await
-        .map_err(|_e| Error::new(ErrorKind::Other, "DB Query failed: Get Roles"))?;
-    let user_roles: Vec<SystemRole> = user_roles_res.take(0).map_err(|e| {
-        tracing::error!("Failed to get roles: {}", e);
-        Error::new(ErrorKind::Other, "Failed to get roles")
-    })?;
+        .map_err(|e| {
+            tracing::error!("Failed to get roles: {}", e);
+            Error::new(ErrorKind::Other, "DB Query failed: Get Roles")
+        })?;
+    let user_roles: Vec<String> = match role_id {
+        Some(_) => user_roles_res.take((1, "role_name")).map_err(|e| {
+            tracing::error!("Failed to deserialize roles(take(1)): {}", e);
+            Error::new(ErrorKind::Other, "Failed to fetch roles")
+        })?,
+        None => user_roles_res.take((0, "role_name")).map_err(|e| {
+            tracing::error!("Failed to deserialize roles(take(0)): {}", e);
+            Error::new(ErrorKind::Other, "Failed to fetch roles")
+        })?,
+    };
 
-    Ok(user_roles
-        .into_iter()
-        .map(|role| {
-            let name_str = format!("{}", role.role_name);
-            name_str
-        })
-        .collect())
+    Ok(user_roles)
 }

@@ -13,7 +13,10 @@ use lib::utils::{
 use surrealdb::{engine::remote::ws::Client, Surreal};
 
 use crate::{
-    graphql::schemas::{role::SystemRole, user::User},
+    graphql::schemas::{
+        role::SystemRole,
+        user::{FetchUsersQueryFilters, User},
+    },
     utils::auth::{confirm_authentication, confirm_authorization},
 };
 
@@ -22,7 +25,11 @@ pub struct Query;
 #[Object]
 impl Query {
     // TODO: Important! Enforce checks so that fetching users respects hierarchy. e.g. ADMINs cannot view SUPER_ADMIN
-    async fn fetch_all_users(&self, ctx: &Context<'_>) -> Result<Vec<User>> {
+    async fn fetch_users(
+        &self,
+        ctx: &Context<'_>,
+        filters: Option<FetchUsersQueryFilters>,
+    ) -> Result<Vec<User>> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
@@ -32,21 +39,83 @@ impl Query {
 
         let authenticated = confirm_authentication(header_map, db).await?;
 
+        let authenticated_ref = &authenticated;
+
         let authorization_constraint = AuthorizationConstraint {
             roles: vec![],
             privilege: Some(AdminPrivilege::Admin),
         };
 
         let authorized =
-            confirm_authorization(db, &authenticated, authorization_constraint).await?;
+            confirm_authorization(db, authenticated_ref, authorization_constraint).await?;
 
         if !authorized {
             return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
         }
 
-        let response: Vec<User> = db.select("user").await.map_err(|e| {
+        let mut fetch_users_query = db
+            .query(
+                "
+                BEGIN TRANSACTION;
+
+                LET $user = type::thing('user', $user_id);
+
+                IF !$user.exists() {
+                    THROW 'Invalid Input';
+                };
+
+                IF filters IS NOT NONE {
+                    IF filters.organization_id IS NOT NONE {
+                        LET $organization = type::thing('organization', filters.organization_id);
+                        IF !$organization.exists() {
+                            THROW 'Invalid Input';
+                        };
+                        LET $users = (SELECT <set>(<-is_under<-role<-assigned<-user[*]) AS subordinates FROM ONLY organization WHERE created_by = $user AND id = $organization LIMIT 1)['subordinates'];
+                        RETURN $users;
+                    };
+
+                    IF filters.role_id IS NOT NONE {
+                        LET $role = type::thing('role', filters.role_id);
+                        IF !$role.exists() {
+                            THROW 'Invalid Input';
+                        };
+                        LET $users = (SELECT <set>(<-is_under<-role<-assigned<-user[*]) AS subordinates FROM ONLY role WHERE created_by = $user AND id = $role LIMIT 1)['subordinates'];
+                        RETURN $users;
+                    };
+
+                    IF filters.department_id IS NOT NONE {
+                        LET $department = type::thing('department', filters.department_id);
+                        IF !$department.exists() {
+                            THROW 'Invalid Input';
+                        };
+                        LET $users = (SELECT <set>(<-is_under<-department<-assigned<-user[*]) AS subordinates FROM ONLY department WHERE created_by = $user AND id = $department LIMIT 1)['subordinates'];
+                        RETURN $users;
+                    };
+
+                    IF filters.status IS NOT NONE {
+                        LET $users = (SELECT <set>(<-is_under<-status<-assigned<-(SELECT * FROM user WHERE status = $status)) AS subordinates FROM ONLY organization WHERE created_by = $user LIMIT 1)['subordinates'];
+                        RETURN $users;
+                    };
+                };
+
+                LET $users = (SELECT <set>(<-is_under<-role<-assigned<-user[*]) AS subordinates FROM ONLY organization WHERE created_by = $user LIMIT 1)['subordinates'];
+
+                RETURN $users;
+
+                COMMIT TRANSACTION;
+                "
+            )
+            .bind(("user_id", authenticated_ref.sub.to_owned()))
+            .bind(("filters", filters))
+            .await
+            .map_err(|e| {
             tracing::error!("Error fetching users: {}", e);
             ExtendedError::new("Error fetching users", StatusCode::BAD_REQUEST.as_str()).build()
+        })?;
+
+        let response: Vec<User> = fetch_users_query.take(0).map_err(|e| {
+            tracing::debug!("Users deserialization error: {}", e);
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
 
         Ok(response)
@@ -152,9 +221,12 @@ impl Query {
         })?;
         let header_map = ctx.data_opt::<HeaderMap>();
 
-        confirm_authentication(header_map, db)
-            .await
-            .map_err(Error::from)
+        let auth_status = confirm_authentication(header_map, db).await.map_err(|e| {
+            tracing::error!("Error confirming authentication: {:?}", e);
+            ExtendedError::new("Unauthorized!", StatusCode::UNAUTHORIZED.as_str()).build()
+        })?;
+
+        Ok(auth_status)
     }
 
     // TODO: Important! Enforce checks so that fetching system roles respects hierarchy. e.g. ADMINs cannot view SUPER_ADMIN

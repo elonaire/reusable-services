@@ -97,16 +97,7 @@ impl Acl for AclServiceImplementation {
                 let signed_jwt = sign_jwt(
                     &auth_claim,
                     service_token_expiry_duration,
-                    &user
-                        .id
-                        .as_ref()
-                        .map(|t| &t.id)
-                        .ok_or("Unauthorized")
-                        .map_err(|e| {
-                            tracing::error!("Failed to get user ID: {}", e);
-                            Status::unauthenticated("Unauthorized")
-                        })?
-                        .to_raw(),
+                    &user.id.key().to_string(),
                 )
                 .await
                 .map_err(|e| {

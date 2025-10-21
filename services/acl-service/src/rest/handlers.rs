@@ -20,7 +20,7 @@ use tokio::fs;
 use crate::{
     graphql::schemas::user::{AuthDetails, GithubUserProfile, GoogleUserInfo, OAuthUser},
     utils::auth::{
-        create_oauth_user_if_not_exists, decode_token_string, fetch_default_user_roles,
+        create_oauth_user_if_not_exists, decode_token_string, fetch_user_roles,
         initiate_auth_code_grant_flow, sign_jwt, verify_oauth_token, OAuthClientName,
     },
 };
@@ -177,7 +177,7 @@ pub async fn exchange_code_for_token(
             )
             .await;
 
-            let user_roles = fetch_default_user_roles(&db, &user.resource_name)
+            let user_roles = fetch_user_roles(&db, &user.resource_name, None)
                 .await
                 .map_err(|e| {
                     tracing::error!("Failed to fetch default roles: {}", e);
@@ -223,7 +223,7 @@ pub async fn exchange_code_for_token(
             )
             .await;
 
-            let user_roles = fetch_default_user_roles(&db, &user.id.to_string())
+            let user_roles = fetch_user_roles(&db, &user.id.to_string(), None)
                 .await
                 .map_err(|e| {
                     tracing::error!("Failed to fetch user roles: {}", e);

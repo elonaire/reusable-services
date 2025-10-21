@@ -1,7 +1,7 @@
 use async_graphql::{ComplexObject, Enum, InputObject, SimpleObject};
 use lib::utils::models::RoleType;
 use serde::{Deserialize, Serialize};
-use surrealdb::sql::Thing;
+use surrealdb::RecordId;
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
 pub struct RoleInput {
@@ -24,7 +24,6 @@ pub struct RoleMetadata {
     pub organization_id: Option<String>,
     pub department_id: Option<String>,
     pub admin_permissions: Option<Vec<AdminPermission>>,
-    // pub department_is_under: Option<DepartmentUnder>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
@@ -58,10 +57,10 @@ pub struct OrganizationInput {
 #[graphql(complex)]
 pub struct Organization {
     #[graphql(skip)]
-    pub id: Option<Thing>,
+    pub id: RecordId,
     pub org_name: String,
     #[graphql(skip)]
-    pub created_by: Option<Thing>,
+    pub created_by: RecordId,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
 }
@@ -69,15 +68,11 @@ pub struct Organization {
 #[ComplexObject]
 impl Organization {
     async fn id(&self) -> String {
-        self.id.as_ref().map(|t| &t.id).expect("id").to_raw()
+        self.id.key().to_string()
     }
 
     async fn created_by(&self) -> String {
-        self.created_by
-            .as_ref()
-            .map(|t| &t.id)
-            .expect("created_by")
-            .to_raw()
+        self.created_by.key().to_string()
     }
 }
 
@@ -98,10 +93,10 @@ pub struct DepartmentInputMetadata {
 #[graphql(complex)]
 pub struct Department {
     #[graphql(skip)]
-    pub id: Option<Thing>,
+    pub id: RecordId,
     pub dep_name: String,
     #[graphql(skip)]
-    pub created_by: Option<Thing>,
+    pub created_by: RecordId,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
 }
@@ -109,15 +104,11 @@ pub struct Department {
 #[ComplexObject]
 impl Department {
     async fn id(&self) -> String {
-        self.id.as_ref().map(|t| &t.id).expect("id").to_raw()
+        self.id.key().to_string()
     }
 
     async fn created_by(&self) -> String {
-        self.created_by
-            .as_ref()
-            .map(|t| &t.id)
-            .expect("created_by")
-            .to_raw()
+        self.created_by.key().to_string()
     }
 }
 
@@ -125,23 +116,24 @@ impl Department {
 #[graphql(complex)]
 pub struct SystemRole {
     #[graphql(skip)]
-    pub id: Option<Thing>,
+    pub id: RecordId,
     pub role_name: String,
     #[graphql(skip)]
-    pub created_by: Option<Thing>,
+    pub created_by: RecordId,
+    pub created_at: Option<String>,
+    pub is_admin: Option<bool>,
+    pub is_default: Option<bool>,
+    pub is_super_admin: Option<bool>,
+    pub updated_at: Option<String>,
 }
 
 #[ComplexObject]
 impl SystemRole {
     async fn id(&self) -> String {
-        self.id.as_ref().map(|t| &t.id).expect("id").to_raw()
+        self.id.key().to_string()
     }
 
     async fn created_by(&self) -> String {
-        self.created_by
-            .as_ref()
-            .map(|t| &t.id)
-            .expect("created_by")
-            .to_raw()
+        self.created_by.key().to_string()
     }
 }

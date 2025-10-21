@@ -3,10 +3,14 @@ use std::{env, sync::Arc};
 use async_graphql::{Context, Object, Result};
 use axum::Extension;
 use base64::{engine::general_purpose, Engine as _engine};
-use hyper::{header::SET_COOKIE, HeaderMap, StatusCode};
+use hyper::{
+    header::{COOKIE, SET_COOKIE},
+    HeaderMap, StatusCode,
+};
 use jwt_simple::prelude::*;
 use lib::utils::{
     auth::AuthClaim,
+    cookie_parser::parse_cookies,
     custom_error::ExtendedError,
     models::{AdminPrivilege, AuthorizationConstraint, EmailMQTTPayload, RoleType},
 };
@@ -25,7 +29,7 @@ use crate::{
     },
     utils::{
         auth::{
-            confirm_authentication, confirm_authorization, fetch_default_user_roles,
+            confirm_authentication, confirm_authorization, fetch_user_roles,
             initiate_auth_code_grant_flow, navigate_to_redirect_url, sign_jwt,
             verify_login_credentials,
         },
@@ -81,7 +85,7 @@ impl Mutation {
                 let auth_claim = AuthClaim { roles: vec![] };
                 let token_duration = Duration::from_secs(15 * 60); // minutes by 60 seconds;
 
-                let user_id = user.id.as_ref().map(|t| &t.id).unwrap().to_raw();
+                let user_id = user.id.key().to_string();
 
                 let signed_jwt = sign_jwt(&auth_claim, token_duration, &user_id).await;
 
@@ -342,34 +346,15 @@ impl Mutation {
                         let refresh_token_expiry_duration = Duration::from_secs(30 * 24 * 60 * 60); // days by hours by minutes by 60 seconds
                         let access_token_expiry_duration = Duration::from_secs(15 * 60); // minutes by 60 seconds
 
-                        let user_roles = fetch_default_user_roles(
-                            db,
-                            user.id
-                                .clone()
-                                .as_ref()
-                                .map(|t| &t.id)
-                                .unwrap()
-                                .to_raw()
-                                .as_str(),
-                        )
-                        .await?;
+                        let user_roles =
+                            fetch_user_roles(db, &user.id.key().to_string(), None).await?;
 
                         let auth_claim = AuthClaim { roles: user_roles };
 
                         let token_str = sign_jwt(
                             &auth_claim,
                             access_token_expiry_duration,
-                            &user
-                                .id
-                                .as_ref()
-                                .map(|t| &t.id)
-                                .ok_or("Invalid ID")
-                                .map_err(|e| {
-                                    tracing::error!("{}", e);
-                                    ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str())
-                                        .build()
-                                })?
-                                .to_raw(),
+                            &user.id.key().to_string(),
                         )
                         .await
                         .map_err(|e| {
@@ -384,17 +369,7 @@ impl Mutation {
                         let refresh_token_str = sign_jwt(
                             &auth_claim,
                             refresh_token_expiry_duration,
-                            &user
-                                .id
-                                .as_ref()
-                                .map(|t| &t.id)
-                                .ok_or("Invalid ID")
-                                .map_err(|e| {
-                                    tracing::error!("{}", e);
-                                    ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str())
-                                        .build()
-                                })?
-                                .to_raw(),
+                            &user.id.key().to_string(),
                         )
                         .await
                         .map_err(|e| {
@@ -409,28 +384,21 @@ impl Mutation {
                         match ctx.data_opt::<HeaderMap>() {
                             Some(headers) => {
                                 // Check if Host header is present
-                                let mut g_host: String = "127.0.0.1".to_string();
-                                match headers.get("Origin") {
+                                let g_host = match headers.get("Origin") {
                                     Some(host) => {
-                                        // g_host = host.to_str().unwrap().to_string();
                                         // remove http:// or https:// and port(:port_number)
-                                        g_host = host
-                                            .to_str()
-                                            .unwrap()
-                                            .split("//")
-                                            .collect::<Vec<&str>>()[1]
+                                        host.to_str().unwrap().split("//").collect::<Vec<&str>>()[1]
                                             .split(":")
                                             .collect::<Vec<&str>>()[0]
-                                            .to_string();
                                     }
-                                    None => {}
-                                }
+                                    None => "127.0.0.1",
+                                };
 
                                 ctx.insert_http_header(
                                     SET_COOKIE,
                                     format!(
                                         "oauth_client=; SameSite=Strict; Secure; Domain={}; HttpOnly; Path=/",
-                                        g_host.as_str()
+                                        g_host
                                     ),
                                 );
 
@@ -440,7 +408,7 @@ impl Mutation {
                                         "t={}; Max-Age={}; SameSite=Strict; Secure; Domain={}; HttpOnly; Path=/",
                                         refresh_token_str,
                                         refresh_token_expiry_duration.as_secs(),
-                                        g_host.as_str()
+                                        g_host
                                     ),
                                 );
                             }
@@ -747,6 +715,149 @@ impl Mutation {
                 StatusCode::BAD_REQUEST.as_str(),
             )
             .build()),
+        }
+    }
+
+    async fn switch_role(&self, ctx: &Context<'_>, role_id: String) -> Result<AuthDetails> {
+        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
+            tracing::error!("Error extracting Surreal Client: {:?}", e);
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
+        })?;
+        let header_map = ctx.data_opt::<HeaderMap>();
+
+        let authenticated = confirm_authentication(header_map, db).await?;
+
+        let authenticated_ref = &authenticated;
+
+        match header_map {
+            Some(headers) => {
+                match headers.get(COOKIE) {
+                    Some(cookie_header) => {
+                        let cookies_str = cookie_header.to_str().map_err(|e| {
+                            tracing::error!("Error parsing cookie header: {}", e);
+                            ExtendedError::new(
+                                "Malformed request",
+                                StatusCode::BAD_REQUEST.as_str(),
+                            )
+                            .build()
+                        })?;
+                        let cookies = parse_cookies(cookies_str);
+
+                        let user_roles =
+                            fetch_user_roles(db, authenticated_ref.sub.as_str(), Some(&role_id))
+                                .await
+                                .map_err(|e| {
+                                    tracing::error!("Failed to fetch default roles: {}", e);
+                                    ExtendedError::new(
+                                        "Unauthorized",
+                                        StatusCode::UNAUTHORIZED.as_str(),
+                                    )
+                                    .build()
+                                })?;
+
+                        let auth_claim = AuthClaim {
+                            roles: user_roles.to_vec(),
+                        };
+
+                        let refresh_token_expiry_duration = Duration::from_secs(30 * 24 * 60 * 60); // days by hours by minutes by 60 seconds
+
+                        let refresh_token_str = sign_jwt(
+                            &auth_claim,
+                            refresh_token_expiry_duration,
+                            authenticated_ref.sub.as_str(),
+                        )
+                        .await
+                        .map_err(|e| {
+                            tracing::error!("Failed to sign access token: {}", e);
+                            ExtendedError::new("Unauthorized", StatusCode::UNAUTHORIZED.as_str())
+                                .build()
+                        })?;
+
+                        // Check if Host header is present
+                        let g_host = match headers.get("Origin") {
+                            Some(host) => {
+                                // remove http:// or https:// and port(:port_number)
+                                host.to_str().unwrap().split("//").collect::<Vec<&str>>()[1]
+                                    .split(":")
+                                    .collect::<Vec<&str>>()[0]
+                            }
+                            None => "127.0.0.1",
+                        };
+
+                        // Check if oauth_client cookie is present
+                        match cookies.get("oauth_client") {
+                            Some(oauth_client) => {
+                                if oauth_client.is_empty() {
+                                    tracing::debug!("auth_claim: {:?}", auth_claim);
+
+                                    let access_token_expiry_duration =
+                                        Duration::from_secs(5 * 24 * 60 * 60); // days by hours by minutes by 60 seconds
+
+                                    let access_token_str = sign_jwt(
+                                        &auth_claim,
+                                        access_token_expiry_duration,
+                                        authenticated_ref.sub.as_str(),
+                                    )
+                                    .await
+                                    .map_err(|e| {
+                                        tracing::error!("Failed to sign access token: {}", e);
+                                        ExtendedError::new(
+                                            "Unauthorized",
+                                            StatusCode::UNAUTHORIZED.as_str(),
+                                        )
+                                        .build()
+                                    })?;
+
+                                    // Set the refresh token cookie
+                                    ctx.append_http_header(
+                                        SET_COOKIE,
+                                        format!(
+                                            "t={}; Max-Age={}; SameSite=Strict; Secure; Domain={}; HttpOnly; Path=/",
+                                            refresh_token_str,
+                                            refresh_token_expiry_duration.as_secs(),
+                                            g_host
+                                        ),
+                                    );
+
+                                    Ok(AuthDetails {
+                                        token: Some(access_token_str),
+                                        url: None,
+                                    })
+                                } else {
+                                    // Set the refresh token cookie
+                                    ctx.append_http_header(
+                                        SET_COOKIE,
+                                        format!(
+                                            "oauth_user_roles_jwt={}; Max-Age={}; SameSite=Strict; Secure; Domain={}; HttpOnly; Path=/",
+                                            refresh_token_str,
+                                            refresh_token_expiry_duration.as_secs(),
+                                            g_host
+                                        ),
+                                    );
+
+                                    Ok(AuthDetails {
+                                        token: None,
+                                        url: None,
+                                    })
+                                }
+                            }
+                            None => Err(ExtendedError::new(
+                                "Malformed request",
+                                StatusCode::BAD_REQUEST.as_str(),
+                            )
+                            .build()),
+                        }
+                    }
+                    None => Err(ExtendedError::new(
+                        "Malformed request",
+                        StatusCode::BAD_REQUEST.as_str(),
+                    )
+                    .build()),
+                }
+            }
+            None => Err(
+                ExtendedError::new("Malformed request", StatusCode::BAD_REQUEST.as_str()).build(),
+            ),
         }
     }
 }

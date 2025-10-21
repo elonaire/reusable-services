@@ -1,11 +1,11 @@
 use async_graphql::{Enum, InputObject, SimpleObject};
 use serde::{Deserialize, Serialize};
-use surrealdb::sql::Thing;
+use surrealdb::RecordId;
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
 pub struct User {
     #[graphql(skip)]
-    pub id: Option<Thing>,
+    pub id: RecordId,
     pub user_id: String,
 }
 

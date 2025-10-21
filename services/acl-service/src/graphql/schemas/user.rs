@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use async_graphql::{ComplexObject, Enum, InputObject, SimpleObject};
 use chrono::{DateTime, Datelike, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
-use surrealdb::sql::Thing;
+use surrealdb::RecordId;
 
 use crate::utils::auth::OAuthClientName;
 
@@ -57,7 +57,7 @@ pub struct UserInput {
 #[graphql(complex)]
 pub struct User {
     #[graphql(skip)]
-    pub id: Option<Thing>,
+    pub id: RecordId,
     pub user_name: Option<String>,
     pub first_name: Option<String>,
     pub middle_name: Option<String>,
@@ -83,7 +83,7 @@ pub struct User {
 #[ComplexObject]
 impl User {
     async fn id(&self) -> String {
-        self.id.as_ref().map(|t| &t.id).expect("id").to_raw()
+        self.id.key().to_string()
     }
 
     async fn full_name(&self) -> String {
@@ -107,6 +107,14 @@ impl User {
             None => None,
         }
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, InputObject, Default)]
+pub struct FetchUsersQueryFilters {
+    pub organization_id: Option<String>,
+    pub department_id: Option<String>,
+    pub role_id: Option<String>,
+    pub status: Option<AccountStatus>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
@@ -343,5 +351,3 @@ pub struct UserUpdate {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub address: Option<String>,
 }
-
-pub type SurrealRelationQueryResponse<T> = HashMap<String, Vec<T>>;

@@ -39,16 +39,7 @@ pub async fn get_file_id<T: Clone + AsSurrealClient>(
     })?;
 
     match response {
-        Some(file) => Ok(file
-            .id
-            .as_ref()
-            .map(|t| &t.id)
-            .ok_or("Not Found!")
-            .map_err(|e| {
-                tracing::error!("Invalid ID: {}", e);
-                Error::new(ErrorKind::InvalidData, "Not Found!")
-            })?
-            .to_raw()),
+        Some(file) => Ok(file.id.key().to_string()),
         None => Err(Error::new(ErrorKind::InvalidData, "Not Found!")),
     }
 }

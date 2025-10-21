@@ -48,13 +48,7 @@ pub async fn upload(
         return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
     }
 
-    let user_id_raw = user_fk
-        .unwrap()
-        .id
-        .as_ref()
-        .map(|t| &t.id)
-        .expect("id")
-        .to_raw();
+    let user_id_raw = user_fk.unwrap().id.key().to_string();
 
     let mut total_size: u64 = 0;
     let mut filename = String::new();
@@ -196,13 +190,7 @@ pub async fn upload(
             all_uploaded_files_response.push(UploadedFileResponse {
                 field_name,
                 file_name: stored_file.system_filename,
-                file_id: stored_file
-                    .id
-                    .as_ref()
-                    .map(|t| &t.id)
-                    .unwrap()
-                    .to_raw()
-                    .clone(),
+                file_id: stored_file.id.key().to_string(),
             });
         }
     }
