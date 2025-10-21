@@ -723,14 +723,16 @@ pub async fn confirm_authorization<T: Clone + AsSurrealClient>(
                     BEGIN TRANSACTION;
                     LET $user = type::thing('user', $user_id);
                     IF !$user.exists() {{
-                        THROW 'Invalid Input';
-                    }};
-                    LET $existing_roles = (SELECT <-(assigned WHERE in = $user) as admin_roles FROM role WHERE (role_name = $current_role_name AND is_admin = true) OR is_super_admin = true)[0]['admin_roles'];
-                    IF $existing_roles IS NOT NONE AND array::len($existing_roles) > 0 {{
-                        RETURN $existing_roles.map(|$existing_role: any| record::id($existing_role));
-                    }} ELSE {{
-                        RETURN [];
-                    }};
+                  		THROW 'Invalid Input';
+                   	}};
+
+                    LET $existing_roles = (SELECT ->assigned->(role WHERE (role_name = $current_role_name AND is_admin) OR is_super_admin) AS admin_roles FROM ONLY $user)['admin_roles'];
+                    IF $existing_roles != NONE AND array::len($existing_roles) > 0 {{
+                  		RETURN $existing_roles.map(|$existing_role: any| record::id($existing_role));
+                   	}} ELSE {{
+                  		RETURN [];
+                   	}};
+
                     COMMIT TRANSACTION;
                     "
                 ),
@@ -739,14 +741,15 @@ pub async fn confirm_authorization<T: Clone + AsSurrealClient>(
                     BEGIN TRANSACTION;
                     LET $user = type::thing('user', $user_id);
                     IF !$user.exists() {{
-                        THROW 'Invalid Input';
-                    }};
-                    LET $existing_roles = (SELECT <-(assigned WHERE in = $user) AS super_admin_roles FROM role WHERE is_super_admin = true AND role_name = $current_role_name)[0]['super_admin_roles'];
-                    IF $existing_roles IS NOT NONE AND array::len($existing_roles) > 0 {{
-                        RETURN $existing_roles.map(|$existing_role: any| record::id($existing_role));
-                    }} ELSE {{
-                        RETURN [];
-                    }};
+                  		THROW 'Invalid Input';
+                   	}};
+                    LET $existing_roles = (SELECT ->assigned->(role WHERE role_name = $current_role_name AND is_super_admin) AS super_admin_roles FROM ONLY $user)['super_admin_roles'];
+                    IF $existing_roles != NONE AND array::len($existing_roles) > 0 {{
+                  		RETURN $existing_roles.map(|$existing_role: any| record::id($existing_role));
+                   	}} ELSE {{
+                  		RETURN [];
+                   	}};
+
                     COMMIT TRANSACTION;
                     "
                 ),
@@ -781,15 +784,17 @@ pub async fn confirm_authorization<T: Clone + AsSurrealClient>(
                 "
                 BEGIN TRANSACTION;
                 LET $user = type::thing('user', $user_id);
-                IF !$user.exists() {
-                    THROW 'Invalid Input';
-                };
-                LET $existing_roles = (SELECT <-(assigned WHERE in = $user) AS user_roles FROM role WHERE role_name IN $role_constraints AND $current_role_name IN $role_constraints)[0]['user_roles'];
-                IF $existing_roles IS NOT NONE AND array::len($existing_roles) > 0 {{
-                    RETURN $existing_roles.map(|$existing_role: any| record::id($existing_role));
-                }} ELSE {{
-                    RETURN [];
-                }};
+                IF !$user.exists() {{
+              		THROW 'Invalid Input';
+               	}};
+
+                LET $existing_roles = (SELECT ->assigned->(role WHERE role_name INSIDE $role_constraints AND $current_role_name INSIDE $role_constraints) AS user_roles FROM ONLY $user)['user_roles'];
+                IF $existing_roles != NONE AND array::len($existing_roles) > 0 {{
+              		RETURN $existing_roles.map(|$existing_role: any| record::id($existing_role));
+               	}} ELSE {{
+              		RETURN [];
+               	}};
+
                 COMMIT TRANSACTION;
                 "
             )
