@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use async_graphql::{Context, Error, Object, Result};
+use async_graphql::{Context, Object, Result};
 use axum::Extension;
 use hyper::{
     header::{AUTHORIZATION, COOKIE},
@@ -24,7 +24,7 @@ pub struct Query;
 
 #[Object]
 impl Query {
-    // TODO: Important! Enforce checks so that fetching users respects hierarchy. e.g. ADMINs cannot view SUPER_ADMIN
+    /// Fetches a list of users based on hierarchy(default) or the provided filters.
     async fn fetch_users(
         &self,
         ctx: &Context<'_>,
@@ -55,55 +55,67 @@ impl Query {
 
         let mut fetch_users_query = db
             .query(
-                "
+                r#"
                 BEGIN TRANSACTION;
-
                 LET $user = type::thing('user', $user_id);
+                IF !$user.exists()
+               	{
+              		THROW 'Invalid Input';
+               	}
+                                ;
+                                RETURN IF $filters != NONE
+               	{
+              		RETURN IF $filters.organization_id != NONE
+             			{
 
-                IF !$user.exists() {
-                    THROW 'Invalid Input';
-                };
+                				LET $organization = type::thing('organization', $filters.organization_id);
 
-                IF filters IS NOT NONE {
-                    IF filters.organization_id IS NOT NONE {
-                        LET $organization = type::thing('organization', filters.organization_id);
-                        IF !$organization.exists() {
-                            THROW 'Invalid Input';
-                        };
-                        LET $users = (SELECT <set>(<-is_under<-role<-assigned<-user[*]) AS subordinates FROM ONLY organization WHERE created_by = $user AND id = $organization LIMIT 1)['subordinates'];
-                        RETURN $users;
-                    };
+                				IF !$organization.exists()
+               					{
+              						THROW 'Invalid Input';
+               					}
+                				;
 
-                    IF filters.role_id IS NOT NONE {
-                        LET $role = type::thing('role', filters.role_id);
-                        IF !$role.exists() {
-                            THROW 'Invalid Input';
-                        };
-                        LET $users = (SELECT <set>(<-is_under<-role<-assigned<-user[*]) AS subordinates FROM ONLY role WHERE created_by = $user AND id = $role LIMIT 1)['subordinates'];
-                        RETURN $users;
-                    };
+                				(SELECT * FROM user WHERE ->assigned->role->is_under->(organization WHERE id = $organization AND created_by = $user));
 
-                    IF filters.department_id IS NOT NONE {
-                        LET $department = type::thing('department', filters.department_id);
-                        IF !$department.exists() {
-                            THROW 'Invalid Input';
-                        };
-                        LET $users = (SELECT <set>(<-is_under<-department<-assigned<-user[*]) AS subordinates FROM ONLY department WHERE created_by = $user AND id = $department LIMIT 1)['subordinates'];
-                        RETURN $users;
-                    };
+                                }
+              		ELSE IF $filters.role_id != NONE
+             			{
 
-                    IF filters.status IS NOT NONE {
-                        LET $users = (SELECT <set>(<-is_under<-status<-assigned<-(SELECT * FROM user WHERE status = $status)) AS subordinates FROM ONLY organization WHERE created_by = $user LIMIT 1)['subordinates'];
-                        RETURN $users;
-                    };
-                };
+                				LET $role = type::thing('role', $filters.role_id);
 
-                LET $users = (SELECT <set>(<-is_under<-role<-assigned<-user[*]) AS subordinates FROM ONLY organization WHERE created_by = $user LIMIT 1)['subordinates'];
+                				IF !$role.exists()
+               					{
+              						THROW 'Invalid Input';
+               					}
+                				;
 
-                RETURN $users;
+                				(SELECT * FROM user WHERE ->assigned->(role WHERE id = $role AND created_by = $user));
 
+                                }
+              		ELSE IF $filters.department_id != NONE
+             			{
+
+                				LET $department = type::thing('department', $filters.department_id);
+
+                				IF !$department.exists()
+               					{
+              						THROW 'Invalid Input';
+               					}
+                				;
+
+                				(SELECT * FROM user WHERE ->assigned->role->is_under->(department WHERE id = $department AND created_by = $user));
+
+                                }
+              		ELSE IF $filters.status != NONE
+             			{ (SELECT * FROM user WHERE ->assigned->role->is_under->(organization WHERE created_by = $user) AND status = $filters.status) }
+              		;
+               	}
+                                ELSE
+               	{ <set>array::flatten([(SELECT * FROM user WHERE ->assigned->role->is_under->(organization WHERE created_by = $user)), (SELECT * FROM user WHERE ->assigned->role->is_under->(department WHERE created_by = $user)), (SELECT * FROM user WHERE ->assigned->role->is_under->department->is_under->(organization WHERE created_by = $user)), (SELECT * FROM user WHERE ->assigned->role->is_under->department->is_under->(department WHERE created_by = $user))]) }
+                ;
                 COMMIT TRANSACTION;
-                "
+                "#
             )
             .bind(("user_id", authenticated_ref.sub.to_owned()))
             .bind(("filters", filters))
@@ -244,6 +256,8 @@ impl Query {
 
         let authenticated = confirm_authentication(header_map, db).await?;
 
+        let authenticated_ref = &authenticated;
+
         let authorization_constraint = AuthorizationConstraint {
             roles: vec![],
             privilege: Some(AdminPrivilege::Admin),
@@ -259,9 +273,35 @@ impl Query {
                 );
             }
 
-            let response: Vec<SystemRole> = db.select("role").await.map_err(|e| {
+            let mut fetch_user_roles_query = db
+                .query(
+                    "
+                    BEGIN TRANSACTION;
+                    LET $user = type::thing('user', $user_id);
+                    IF !$user.exists()
+                   	{
+                  		THROW 'Invalid Input';
+                   	};
+                    LET $roles = array::flatten([
+                   	(SELECT * FROM role WHERE ->is_under->(organization WHERE created_by = $user)),
+                   	(SELECT * FROM role WHERE ->is_under->(department WHERE created_by = $user)),
+                   	(SELECT * FROM role WHERE ->is_under->department->is_under->(organization WHERE created_by = $user)),
+                   	(SELECT * FROM role WHERE ->is_under->department->is_under->(department WHERE created_by = $user))
+                    ]);
+                    RETURN $roles;
+                    COMMIT TRANSACTION;
+                    "
+                )
+                .bind(("user_id", authenticated_ref.sub.to_owned()))
+                .await.map_err(|e| {
                 tracing::error!("Error fetching roles: {}", e);
                 ExtendedError::new("Error fetching roles", StatusCode::BAD_REQUEST.as_str()).build()
+            })?;
+
+            let response: Vec<SystemRole> = fetch_user_roles_query.take(0).map_err(|e| {
+                tracing::debug!("SystemRole deserialization error: {}", e);
+                ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str())
+                    .build()
             })?;
 
             Ok(response)
