@@ -112,7 +112,7 @@ impl Query {
               		;
                	}
                                 ELSE
-               	{ <set>array::flatten([(SELECT * FROM user WHERE ->assigned->role->is_under->(organization WHERE created_by = $user)), (SELECT * FROM user WHERE ->assigned->role->is_under->(department WHERE created_by = $user)), (SELECT * FROM user WHERE ->assigned->role->is_under->department->is_under->(organization WHERE created_by = $user)), (SELECT * FROM user WHERE ->assigned->role->is_under->department->is_under->(department WHERE created_by = $user))]) }
+               	{ <set>array::flatten([(SELECT * FROM user WHERE ->assigned->role->is_under->(organization WHERE created_by = $user)), (SELECT * FROM user WHERE ->assigned->role->is_under->(department WHERE created_by = $user)), (SELECT * FROM user WHERE ->assigned->role->is_under->department->is_under->(organization WHERE created_by = $user)), (SELECT * FROM user WHERE ->assigned->role->is_under->department->is_under->(department WHERE created_by = $user)), (SELECT * FROM user WHERE ->assigned->(role WHERE created_by = $user))]) }
                 ;
                 COMMIT TRANSACTION;
                 "#
@@ -133,7 +133,7 @@ impl Query {
         Ok(response)
     }
 
-    // TODO: Important! Enforce checks so that fetching a single user respects hierarchy. e.g. ADMINs cannot view SUPER_ADMIN
+    /// Fetch a single user by ID. Respects hierarchy and permissions.
     async fn fetch_single_user(&self, ctx: &Context<'_>, user_id: String) -> Result<User> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
@@ -150,9 +150,9 @@ impl Query {
                         .query(
                             "
                             BEGIN TRANSACTION;
-                            LET $user_id = type::thing('user', $user_id);
-                            LET $user = (SELECT id, first_name, middle_name, last_name, full_name, dob, email, country, profile_picture, bio, website, address FROM ONLY $user_id LIMIT 1);
-                            RETURN $user;
+                            LET $user = type::thing('user', $user_id);
+                            LET $found_user = (SELECT id, first_name, middle_name, last_name, full_name, dob, email, country, profile_picture, bio, website, address FROM ONLY $user LIMIT 1);
+                            RETURN $found_user;
                             COMMIT TRANSACTION;
                             "
                         )
@@ -186,6 +186,8 @@ impl Query {
 
                 let authenticated = confirm_authentication(Some(header_map), db).await?;
 
+                let authenticated_ref = &authenticated;
+
                 let authorization_constraint = AuthorizationConstraint {
                     roles: vec![],
                     privilege: Some(AdminPrivilege::Admin),
@@ -193,18 +195,61 @@ impl Query {
 
                 let authorized =
                     confirm_authorization(db, &authenticated, authorization_constraint).await?;
+                let is_owner = authenticated_ref.sub.to_owned() == user_id;
 
-                if !authorized && authenticated.sub != user_id {
+                if !authorized && !is_owner {
                     return Err(
                         ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build(),
                     );
                 }
 
-                let user: Option<User> = db.select(("user", user_id)).await.map_err(|e| {
+                let mut user_query = db
+                    .query(
+                        "
+                        BEGIN TRANSACTION;
+                        LET $user = type::thing('user', $user_id);
+                        LET $found_user = (SELECT * FROM ONLY $user LIMIT 1);
+                        RETURN $found_user;
+                        COMMIT TRANSACTION;
+                        "
+                    )
+                    .query(
+                        "
+                        BEGIN TRANSACTION;
+                        LET $user = type::thing('user', $user_id);
+                        LET $auth_user = type::thing('user', $auth_sub);
+                        LET $found_user = (SELECT * FROM ONLY $user WHERE (->assigned->(role WHERE created_by = $auth_user) OR ->assigned->role->is_under->(organization WHERE created_by = $auth_user) OR ->assigned->role->is_under->(department WHERE created_by = $auth_user) OR ->assigned->role->is_under->department->is_under->(organization WHERE created_by = $auth_user) OR ->assigned->role->is_under->department->is_under->(department WHERE created_by = $auth_user)));
+                        RETURN $found_user;
+                        COMMIT TRANSACTION;
+                        "
+                    )
+                    .bind(("user_id", user_id))
+                    .bind(("auth_sub", authenticated_ref.sub.to_owned()))
+                    .await.map_err(|e| {
                     tracing::error!("Error fetching user: {}", e);
                     ExtendedError::new("Error fetching user", StatusCode::BAD_REQUEST.as_str())
                         .build()
                 })?;
+
+                let user: Option<User> = if is_owner {
+                    user_query.take(0).map_err(|e| {
+                        tracing::debug!("User deserialization error: {}", e);
+                        ExtendedError::new(
+                            "Server Error",
+                            StatusCode::INTERNAL_SERVER_ERROR.as_str(),
+                        )
+                        .build()
+                    })?
+                } else {
+                    user_query.take(1).map_err(|e| {
+                        tracing::debug!("User deserialization error: {}", e);
+                        ExtendedError::new(
+                            "Server Error",
+                            StatusCode::INTERNAL_SERVER_ERROR.as_str(),
+                        )
+                        .build()
+                    })?
+                };
 
                 match user {
                     Some(user) => Ok(user),
@@ -241,7 +286,7 @@ impl Query {
         Ok(auth_status)
     }
 
-    // TODO: Important! Enforce checks so that fetching system roles respects hierarchy. e.g. ADMINs cannot view SUPER_ADMIN
+    /// Fetches system roles assigned to a given user or under organization created by the user or under department created by the user
     async fn fetch_system_roles(
         &self,
         ctx: &Context<'_>,
