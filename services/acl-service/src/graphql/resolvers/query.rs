@@ -14,7 +14,7 @@ use surrealdb::{engine::remote::ws::Client, Surreal};
 
 use crate::{
     graphql::schemas::{
-        role::SystemRole,
+        role::{Department, Organization, SystemRole},
         user::{FetchUsersQueryFilters, User},
     },
     utils::auth::{confirm_authentication, confirm_authorization},
@@ -388,5 +388,129 @@ impl Query {
 
             Ok(response)
         }
+    }
+
+    /// Fetch all organizations where the user is assigned an admin role and is allowed to create roles/assign roles/create a department
+    async fn fetch_organizations(&self, ctx: &Context<'_>) -> Result<Vec<Organization>> {
+        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
+            tracing::error!("Error extracting Surreal Client: {:?}", e);
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
+        })?;
+
+        let header_map = ctx.data_opt::<HeaderMap>();
+
+        let authenticated = confirm_authentication(header_map, db).await?;
+
+        let authenticated_ref = &authenticated;
+
+        let authorization_constraint = AuthorizationConstraint {
+            roles: vec![],
+            privilege: Some(AdminPrivilege::Admin),
+        };
+
+        let authorized =
+            confirm_authorization(db, &authenticated, authorization_constraint).await?;
+
+        if !authorized {
+            return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
+        }
+
+        let mut fetch_user_orgs_query = db
+            .query(
+                "
+                BEGIN TRANSACTION;
+                LET $user = type::thing('user', $user_id);
+                IF !$user.exists()
+               	{
+              		THROW 'Invalid Input';
+               	};
+                LET $organizations = <set> array::flatten([
+                   	(SELECT * FROM organization WHERE created_by = $user),
+                   	(SELECT * FROM organization WHERE <-is_under<-(role WHERE (is_admin OR is_super_admin) AND admin_permissions CONTAINSANY [
+                  		'CreateDepartment',
+                  		'CreateRole',
+                  		'AssignRole'
+                   	])<-assigned<-(user WHERE id = $user))
+                ]);
+                RETURN $organizations;
+                COMMIT TRANSACTION;
+                ",
+            )
+            .bind(("user_id", authenticated_ref.sub.to_owned()))
+            .await
+            .map_err(|e| {
+                tracing::error!("Error fetching roles: {}", e);
+                ExtendedError::new("Error fetching roles", StatusCode::BAD_REQUEST.as_str()).build()
+            })?;
+
+        let response: Vec<Organization> = fetch_user_orgs_query.take(0).map_err(|e| {
+            tracing::debug!("SystemRole deserialization error: {}", e);
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
+        })?;
+
+        Ok(response)
+    }
+
+    /// Fetch all departments where the user is assigned an admin role and is allowed to create roles/assign roles/create a department
+    async fn fetch_departments(&self, ctx: &Context<'_>) -> Result<Vec<Department>> {
+        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
+            tracing::error!("Error extracting Surreal Client: {:?}", e);
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
+        })?;
+
+        let header_map = ctx.data_opt::<HeaderMap>();
+
+        let authenticated = confirm_authentication(header_map, db).await?;
+
+        let authenticated_ref = &authenticated;
+
+        let authorization_constraint = AuthorizationConstraint {
+            roles: vec![],
+            privilege: Some(AdminPrivilege::Admin),
+        };
+
+        let authorized =
+            confirm_authorization(db, &authenticated, authorization_constraint).await?;
+
+        if !authorized {
+            return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
+        }
+
+        let mut fetch_user_departments_query = db
+            .query(
+                "
+                BEGIN TRANSACTION;
+                LET $user = type::thing('user', $user_id);
+                IF !$user.exists()
+               	{
+              		THROW 'Invalid Input';
+               	};
+                LET $departments = array::flatten([
+                   	(SELECT * FROM department WHERE created_by = $user),
+                   	(SELECT * FROM department WHERE <-is_under<-(role WHERE (is_admin OR is_super_admin) AND admin_permissions CONTAINSANY [
+                  		'CreateDepartment',
+                  		'CreateRole',
+                  		'AssignRole'
+                   	])<-assigned<-(user WHERE id = $user)),
+                    (SELECT * FROM department WHERE ->is_under->(organization WHERE created_by = $user)),
+                    (SELECT * FROM department WHERE ->is_under->(department WHERE created_by = $user))
+                ]);
+                RETURN $departments;
+                COMMIT TRANSACTION;
+                ",
+            )
+            .bind(("user_id", authenticated_ref.sub.to_owned()))
+            .await
+            .map_err(|e| {
+                tracing::error!("Error fetching roles: {}", e);
+                ExtendedError::new("Error fetching roles", StatusCode::BAD_REQUEST.as_str()).build()
+            })?;
+
+        let response: Vec<Department> = fetch_user_departments_query.take(0).map_err(|e| {
+            tracing::debug!("SystemRole deserialization error: {}", e);
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
+        })?;
+
+        Ok(response)
     }
 }

@@ -313,15 +313,6 @@ pub enum OAuthUser {
     Github(GithubUserProfile),
 }
 
-// #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
-// #[graphql(input_name = "ProfessionInput")]
-// pub struct Profession {
-//     pub user_id: String,
-//     pub occupation: String,
-//     pub description: String,
-//     pub start_date: String,
-// }
-
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
 #[graphql(input_name = "UserUpdateInput")]
 pub struct UserUpdate {

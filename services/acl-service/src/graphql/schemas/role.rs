@@ -10,12 +10,7 @@ pub struct RoleInput {
     pub created_by: String,
     #[graphql(skip)]
     pub is_admin: bool,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
-pub struct DepartmentUnder {
-    pub id: String,
-    pub body: DepartmentUnderBody,
+    pub admin_permissions: Option<Vec<AdminPermission>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
@@ -23,7 +18,6 @@ pub struct RoleMetadata {
     pub role_type: RoleType,
     pub organization_id: Option<String>,
     pub department_id: Option<String>,
-    pub admin_permissions: Option<Vec<AdminPermission>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
@@ -36,14 +30,6 @@ pub enum AdminPermission {
     CreateRole,
     #[graphql(name = "AssignRole")]
     AssignRole,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
-pub enum DepartmentUnderBody {
-    #[graphql(name = "Organization")]
-    Organization,
-    #[graphql(name = "Department")]
-    Department,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
