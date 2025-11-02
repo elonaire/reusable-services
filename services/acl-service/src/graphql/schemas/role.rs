@@ -1,4 +1,4 @@
-use async_graphql::{ComplexObject, Enum, InputObject, SimpleObject};
+use async_graphql::{ComplexObject, InputObject, SimpleObject};
 use lib::utils::models::RoleType;
 use serde::{Deserialize, Serialize};
 use surrealdb::RecordId;
@@ -10,7 +10,6 @@ pub struct RoleInput {
     pub created_by: String,
     #[graphql(skip)]
     pub is_admin: bool,
-    pub admin_permissions: Option<Vec<AdminPermission>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
@@ -18,18 +17,7 @@ pub struct RoleMetadata {
     pub role_type: RoleType,
     pub organization_id: Option<String>,
     pub department_id: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
-pub enum AdminPermission {
-    #[graphql(name = "CreateOrganization")]
-    CreateOrganization,
-    #[graphql(name = "CreateDepartment")]
-    CreateDepartment,
-    #[graphql(name = "CreateRole")]
-    CreateRole,
-    #[graphql(name = "AssignRole")]
-    AssignRole,
+    pub permission_ids: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]

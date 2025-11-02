@@ -85,21 +85,39 @@ DEFINE EVENT enforce_one_super_admin_role ON TABLE role WHEN $event = 'CREATE' O
         };
     };
 };
+DEFINE EVENT enforce_either_admin_or_super_admin ON TABLE role WHEN $event = 'CREATE' OR $event = 'UPDATE' THEN {
+    IF $after.is_super_admin AND $after.is_admin {
+        THROW 'Has to be either admin or super_admin.';
+    };
+};
 DEFINE INDEX roleNameIndex ON TABLE role COLUMNS role_name UNIQUE;
 DEFINE FIELD created_by ON TABLE role VALUE <record<user>>$value;
-DEFINE FIELD admin_permissions ON TABLE role TYPE option<array<string>>
-  ASSERT $value ALLINSIDE ['CreateOrganization', 'CreateDepartment', 'CreateRole', 'AssignRole'];
-DEFINE EVENT evaluate_admin_permissions ON TABLE role WHEN $event = 'CREATE' OR $event = 'UPDATE' THEN {
-  IF (!$after.is_super_admin AND !$after.is_admin AND $after.admin_permissions IS NOT NONE AND $after.admin_permissions CONTAINSANY ['CreateOrganization', 'CreateDepartment', 'CreateRole', 'AssignRole']) {
-    THROW 'Not enough permissions.';
-  };
-};
 
 DEFINE FIELD created_at ON TABLE role TYPE datetime
   DEFAULT time::now() READONLY;
 DEFINE FIELD updated_at ON TABLE role TYPE datetime
   VALUE time::now();
 
+
+-- A schema-full permission table.
+DEFINE TABLE permission SCHEMAFULL TYPE NORMAL;
+DEFINE FIELD OVERWRITE name ON TABLE permission TYPE string
+      ASSERT string::matches($value, "^(read|write|delete|assign|grant):[A-Za-z0-9_-]+$");
+DEFINE EVENT enforce_either_admin_or_super_admin ON TABLE role WHEN $event = 'CREATE' OR $event = 'UPDATE' THEN {
+      IF $after.is_super_admin AND $after.is_admin {
+          THROW 'Has to be either admin or super_admin.';
+      };
+  };
+DEFINE FIELD OVERWRITE resource ON TABLE permission VALUE string::split(name, ':')[1];
+DEFINE FIELD created_by ON TABLE permission VALUE <record<user>>$value;
+DEFINE INDEX permissionNameIndex on TABLE permission COLUMNS name UNIQUE;
+DEFINE FIELD is_admin ON TABLE permission TYPE bool
+      DEFAULT false;
+DEFINE FIELD is_super_admin ON TABLE permission TYPE bool
+      DEFAULT false;
+
+-- Relationship between permissions and roles
+DEFINE TABLE granted SCHEMAFULL TYPE RELATION IN role OUT permission;
 
 -- Relationship between user and roles
 DEFINE TABLE assigned SCHEMAFULL TYPE RELATION IN user OUT role;

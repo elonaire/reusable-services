@@ -151,7 +151,7 @@ impl Acl for AclServiceImplementation {
         let authorization_constraint: AuthorizationConstraint =
             authorization_constraint.unwrap().into();
 
-        match confirm_authorization(&self.db, &auth_status, authorization_constraint).await {
+        match confirm_authorization(&self.db, &auth_status, &authorization_constraint).await {
             Ok(res) => Ok(Response::new(ConfirmAuthorizationResponse { is_auth: res })),
             Err(e) => {
                 tracing::error!("Failed to confirm authorization: {}", e);

@@ -22,8 +22,8 @@ use tokio::fs;
 use crate::{
     graphql::schemas::{
         role::{
-            AdminPermission, Department, DepartmentInput, DepartmentInputMetadata, Organization,
-            OrganizationInput, RoleInput, RoleMetadata, SystemRole,
+            Department, DepartmentInput, DepartmentInputMetadata, Organization, OrganizationInput,
+            RoleInput, RoleMetadata, SystemRole,
         },
         user::{AuthDetails, User, UserInput, UserLogins, UserUpdate},
     },
@@ -227,12 +227,12 @@ impl Mutation {
 
         // Evaluate admin permissions here to restrict the Admin from giving Superadmin privileges. Constraint is already effected in the database.
         let authorization_constraint = AuthorizationConstraint {
-            roles: vec![],
+            permissions: vec!["write:role".into()],
             privilege: Some(AdminPrivilege::Admin),
         };
 
         let authorized =
-            confirm_authorization(db, authenticated_ref, authorization_constraint).await?;
+            confirm_authorization(db, authenticated_ref, &authorization_constraint).await?;
 
         if !authorized {
             return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
@@ -252,19 +252,27 @@ impl Mutation {
                 BEGIN TRANSACTION;
                 LET $user = type::thing('user', $user_id);
                 IF !$user.exists() {
-                    THROW 'Invalid Input';
+                    THROW 'Invalid Input: User not found!';
                 };
 
                 IF ($role_metadata.organization_id IS NONE AND $role_metadata.department_id IS NONE) OR ($role_metadata.organization_id IS NOT NONE AND $role_metadata.department_id IS NOT NONE) {
-                    THROW 'Invalid Input';
+                    THROW 'Invalid Input: Check organization_id and/or department_id!';
                 };
 
                 LET $created_role = (CREATE role CONTENT $role_input RETURN AFTER);
                 LET $role_record_id = (SELECT VALUE id FROM $created_role);
+                FOR $permission_id IN $role_metadata.permission_ids {
+                    LET $permission = type::thing('permission', $permission_id);
+                    IF !$permission.exists() {
+                        THROW 'Invalid Input: Permission not found!';
+                    };
+
+                    RELATE $role_record_id -> granted -> $permission;
+                };
                 IF $role_metadata.organization_id IS NOT NONE {
                     LET $organization = type::thing('organization', $role_metadata.organization_id);
                     IF !$organization.exists() {
-                        THROW 'Invalid Input';
+                        THROW 'Invalid Input: Organization not found!';
                     };
                     RELATE $role_record_id -> is_under -> $organization;
                 };
@@ -272,7 +280,7 @@ impl Mutation {
                 IF $role_metadata.department_id IS NOT NONE {
                     LET $department = type::thing('department', $role_metadata.department_id);
                     IF !$department.exists() {
-                        THROW 'Invalid Input';
+                        THROW 'Invalid Input: Department not found!';
                     };
                     RELATE $role_record_id -> is_under -> $department;
                 };
@@ -439,31 +447,51 @@ impl Mutation {
         Ok(true)
     }
 
-    async fn update_user(
-        &self,
-        ctx: &Context<'_>,
-        mut user: UserUpdate,
-        user_id: String,
-    ) -> Result<User> {
+    async fn update_user(&self, ctx: &Context<'_>, mut user: UserUpdate) -> Result<User> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
         let header_map = ctx.data_opt::<HeaderMap>();
 
-        let check_auth = confirm_authentication(header_map, db).await?;
+        let authenticated = confirm_authentication(header_map, db).await?;
 
-        if check_auth.sub != user_id {
+        let authenticated_ref = &authenticated;
+
+        // Evaluate admin permissions here to restrict the Admin from giving Superadmin privileges. Constraint is already effected in the database.
+        let authorization_constraint = AuthorizationConstraint {
+            permissions: vec!["write:user".into()],
+            privilege: None,
+        };
+
+        let authorized =
+            confirm_authorization(db, authenticated_ref, &authorization_constraint).await?;
+        let user_ref = &mut user;
+
+        if user_ref.id.is_none() {
+            tracing::error!("User ID was not provided in request body!");
+            return Err(
+                ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build(),
+            );
+        }
+
+        let user_id = user_ref.id.as_ref().unwrap().to_owned();
+        user_ref.id = None;
+
+        if authenticated_ref.sub != user_id && !authorized {
+            tracing::error!("User is neither admin nor resource owner!");
             return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
         }
 
-        if user.password.is_some() {
-            user.password = Some(
-                bcrypt::hash(user.password.unwrap(), bcrypt::DEFAULT_COST).map_err(|e| {
-                    tracing::error!("Bcrypt Error: {}", e);
-                    ExtendedError::new("Failed to sign up", StatusCode::BAD_REQUEST.as_str())
-                        .build()
-                })?,
+        if user_ref.password.is_some() {
+            user_ref.password = Some(
+                bcrypt::hash(user_ref.password.as_ref().unwrap(), bcrypt::DEFAULT_COST).map_err(
+                    |e| {
+                        tracing::error!("Bcrypt Error: {}", e);
+                        ExtendedError::new("Failed to sign up", StatusCode::BAD_REQUEST.as_str())
+                            .build()
+                    },
+                )?,
             );
         }
 
@@ -500,12 +528,12 @@ impl Mutation {
         let authenticated = confirm_authentication(header_map, db).await?;
 
         let authorization_constraint = AuthorizationConstraint {
-            roles: vec![],
+            permissions: vec!["assign:role".into()],
             privilege: Some(AdminPrivilege::Admin),
         };
 
         let authorized =
-            confirm_authorization(db, &authenticated, authorization_constraint).await?;
+            confirm_authorization(db, &authenticated, &authorization_constraint).await?;
 
         if !authorized {
             return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
@@ -569,14 +597,14 @@ impl Mutation {
         let authenticated = confirm_authentication(header_map, db).await?;
 
         let authorization_constraint = AuthorizationConstraint {
-            roles: vec![],
+            permissions: vec!["write:organization".into()],
             privilege: Some(AdminPrivilege::Admin),
         };
 
         let authenticated_ref = &authenticated;
 
         let authorized =
-            confirm_authorization(db, authenticated_ref, authorization_constraint).await?;
+            confirm_authorization(db, authenticated_ref, &authorization_constraint).await?;
 
         if !authorized {
             return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
@@ -640,14 +668,14 @@ impl Mutation {
         let authenticated = confirm_authentication(header_map, db).await?;
 
         let authorization_constraint = AuthorizationConstraint {
-            roles: vec![],
+            permissions: vec!["write:department".into()],
             privilege: Some(AdminPrivilege::Admin),
         };
 
         let authenticated_ref = &authenticated;
 
         let authorized =
-            confirm_authorization(db, authenticated_ref, authorization_constraint).await?;
+            confirm_authorization(db, authenticated_ref, &authorization_constraint).await?;
 
         if !authorized {
             return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());

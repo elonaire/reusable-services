@@ -710,10 +710,10 @@ pub async fn get_user_email<T: Clone + AsSurrealClient>(
 pub async fn confirm_authorization<T: Clone + AsSurrealClient>(
     db: &T,
     auth_status: &AuthStatus,
-    auth_constraint: AuthorizationConstraint,
+    auth_constraint: &AuthorizationConstraint,
 ) -> Result<bool, Error> {
     let mut is_admin_privileged = false;
-    let mut is_role_privileged = false;
+    let mut is_granted_permissions = false;
 
     match &auth_constraint.privilege {
         Some(privilege) => {
@@ -726,9 +726,9 @@ pub async fn confirm_authorization<T: Clone + AsSurrealClient>(
                   		THROW 'Invalid Input';
                    	}};
 
-                    LET $existing_roles = (SELECT ->assigned->(role WHERE (role_name = $current_role_name AND is_admin) OR is_super_admin) AS admin_roles FROM ONLY $user)['admin_roles'];
-                    IF $existing_roles != NONE AND array::len($existing_roles) > 0 {{
-                  		RETURN $existing_roles.map(|$existing_role: any| record::id($existing_role));
+                    LET $matching_roles = (SELECT ->assigned->(role WHERE (role_name = $current_role_name AND (is_admin OR is_super_admin) AND ->granted->(permission WHERE is_admin OR is_super_admin).name CONTAINSALL $permission_constraints)) AS admin_roles FROM ONLY $user)['admin_roles'];
+                    IF $matching_roles != NONE AND array::len($matching_roles) > 0 {{
+                  		RETURN $matching_roles.map(|$matching_role: any| record::id($matching_role));
                    	}} ELSE {{
                   		RETURN [];
                    	}};
@@ -743,9 +743,9 @@ pub async fn confirm_authorization<T: Clone + AsSurrealClient>(
                     IF !$user.exists() {{
                   		THROW 'Invalid Input';
                    	}};
-                    LET $existing_roles = (SELECT ->assigned->(role WHERE role_name = $current_role_name AND is_super_admin) AS super_admin_roles FROM ONLY $user)['super_admin_roles'];
-                    IF $existing_roles != NONE AND array::len($existing_roles) > 0 {{
-                  		RETURN $existing_roles.map(|$existing_role: any| record::id($existing_role));
+                    LET $matching_roles = (SELECT ->assigned->(role WHERE role_name = $current_role_name AND is_super_admin AND ->granted->(permission WHERE is_super_admin).name CONTAINSALL $permission_constraints) AS super_admin_roles FROM ONLY $user)['super_admin_roles'];
+                    IF $matching_roles != NONE AND array::len($matching_roles) > 0 {{
+                  		RETURN $matching_roles.map(|$matching_role: any| record::id($matching_role));
                    	}} ELSE {{
                   		RETURN [];
                    	}};
@@ -758,8 +758,12 @@ pub async fn confirm_authorization<T: Clone + AsSurrealClient>(
             let mut admin_privilege_check_query = db
                 .as_client()
                 .query(formated_query.as_str())
-                .bind(("user_id", auth_status.sub.clone()))
-                .bind(("current_role_name", auth_status.current_role.clone()))
+                .bind(("user_id", auth_status.sub.to_owned()))
+                .bind(("current_role_name", auth_status.current_role.to_owned()))
+                .bind((
+                    "permission_constraints",
+                    auth_constraint.permissions.to_vec(),
+                ))
                 .await
                 .map_err(|e| {
                     tracing::error!("{}", e);
@@ -777,7 +781,7 @@ pub async fn confirm_authorization<T: Clone + AsSurrealClient>(
         None => {}
     };
 
-    if auth_constraint.roles.len() > 0 {
+    if auth_constraint.permissions.len() > 0 {
         let mut role_privilege_check_query = db
             .as_client()
             .query(
@@ -788,9 +792,9 @@ pub async fn confirm_authorization<T: Clone + AsSurrealClient>(
               		THROW 'Invalid Input';
                	}};
 
-                LET $existing_roles = (SELECT ->assigned->(role WHERE role_name INSIDE $role_constraints AND $current_role_name INSIDE $role_constraints) AS user_roles FROM ONLY $user)['user_roles'];
-                IF $existing_roles != NONE AND array::len($existing_roles) > 0 {{
-              		RETURN $existing_roles.map(|$existing_role: any| record::id($existing_role));
+                LET $matching_roles = (SELECT ->assigned->(role WHERE role_name = $current_role_name AND ->granted->permission.name CONTAINSALL $permission_constraints) AS user_roles FROM ONLY $user)['user_roles'];
+                IF $matching_roles != NONE AND array::len($matching_roles) > 0 {{
+              		RETURN $matching_roles.map(|$matching_role: any| record::id($matching_role));
                	}} ELSE {{
               		RETURN [];
                	}};
@@ -798,9 +802,9 @@ pub async fn confirm_authorization<T: Clone + AsSurrealClient>(
                 COMMIT TRANSACTION;
                 "
             )
-            .bind(("user_id", auth_status.sub.clone()))
-            .bind(("role_constraints", auth_constraint.roles.iter().map(|role| role.to_uppercase()).collect::<Vec<String>>()))
-            .bind(("current_role_name", auth_status.current_role.clone()))
+            .bind(("user_id", auth_status.sub.to_owned()))
+            .bind(("permission_constraints", auth_constraint.permissions.to_vec()))
+            .bind(("current_role_name", auth_status.current_role.to_owned()))
             .await
             .map_err(|e| {
                 tracing::error!("{}", e);
@@ -813,17 +817,25 @@ pub async fn confirm_authorization<T: Clone + AsSurrealClient>(
             Error::new(ErrorKind::Other, "Database query deserialization failed")
         })?;
 
-        is_role_privileged = response.len() > 0;
+        tracing::debug!("response: {:?}", response);
+
+        is_granted_permissions = response.len() > 0;
     };
 
-    Ok((auth_constraint.roles.len() > 0
-        && is_role_privileged
+    tracing::debug!(
+        "is_admin_privileged: {}, is_granted_permissions: {}",
+        is_admin_privileged,
+        is_granted_permissions
+    );
+
+    Ok((auth_constraint.permissions.len() > 0
+        && is_granted_permissions
         && auth_constraint.privilege.is_some()
         && is_admin_privileged)
-        || (auth_constraint.roles.len() > 0
-            && is_role_privileged
+        || (auth_constraint.permissions.len() > 0
+            && is_granted_permissions
             && auth_constraint.privilege.is_none())
-        || (auth_constraint.roles.len() == 0
+        || (auth_constraint.permissions.len() == 0
             && auth_constraint.privilege.is_some()
             && is_admin_privileged))
 }

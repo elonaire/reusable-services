@@ -2,21 +2,21 @@ syntax = "proto3";
 package acl;
 
 service Acl {
-    rpc ConfirmAuthentication(ConfirmAuthenticationRequest) returns (ConfirmAuthenticationResponse);
-    rpc SignInAsService(SignInAsServiceRequest) returns (SignInAsServiceResponse);
-    rpc GetUserEmail(GetUserEmailRequest) returns (GetUserEmailResponse);
-    rpc ConfirmAuthorization(ConfirmAuthorizationRequest) returns (ConfirmAuthorizationResponse);
+  rpc ConfirmAuthentication(ConfirmAuthenticationRequest) returns (ConfirmAuthenticationResponse);
+  rpc SignInAsService(SignInAsServiceRequest) returns (SignInAsServiceResponse);
+  rpc GetUserEmail(GetUserEmailRequest) returns (GetUserEmailResponse);
+  rpc ConfirmAuthorization(ConfirmAuthorizationRequest) returns (ConfirmAuthorizationResponse);
 }
 
 message ConfirmAuthorizationRequest {
-    AuthStatus auth_status = 1;
-    AuthorizationConstraint authorization_constraint = 2;
+  AuthStatus auth_status = 1;
+  AuthorizationConstraint authorization_constraint = 2;
 }
 
 message AuthStatus {
-    bool is_auth = 1;
-    string sub = 2;
-    string current_role = 3;
+  bool is_auth = 1;
+  string sub = 2;
+  string current_role = 3;
 }
 
 enum AdminPrivilege {
@@ -25,18 +25,18 @@ enum AdminPrivilege {
 }
 
 message AuthorizationConstraint {
-  repeated string roles = 1;
+  repeated string permissions = 1;
   optional AdminPrivilege privilege = 2;
 }
 
 message ConfirmAuthorizationResponse {
-    bool is_auth = 1;
+  bool is_auth = 1;
 }
 
 message ConfirmAuthenticationResponse {
-    bool is_auth = 1;
-    string sub = 2;
-    string current_role = 3;
+  bool is_auth = 1;
+  string sub = 2;
+  string current_role = 3;
 }
 
 message ConfirmAuthenticationRequest {}
@@ -44,13 +44,13 @@ message ConfirmAuthenticationRequest {}
 message SignInAsServiceRequest {}
 
 message SignInAsServiceResponse {
-    string token = 1;
+  string token = 1;
 }
 
 message GetUserEmailRequest {
-    string user_id = 1;
+  string user_id = 1;
 }
 
 message GetUserEmailResponse {
-    string email = 1;
+  string email = 1;
 }

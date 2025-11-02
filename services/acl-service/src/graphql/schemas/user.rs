@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use async_graphql::{ComplexObject, Enum, InputObject, SimpleObject};
 use chrono::{DateTime, Datelike, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
@@ -316,6 +314,8 @@ pub enum OAuthUser {
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
 #[graphql(input_name = "UserUpdateInput")]
 pub struct UserUpdate {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub first_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

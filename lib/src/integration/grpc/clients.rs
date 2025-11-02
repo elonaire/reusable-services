@@ -1,4 +1,4 @@
-use crate::utils::{self, models::AdminPrivilege};
+use crate::utils;
 
 // should match the package name in the .proto file
 pub mod acl_service {
@@ -41,7 +41,7 @@ impl From<acl_service::AuthStatus> for utils::models::AuthStatus {
 impl From<acl_service::AuthorizationConstraint> for utils::models::AuthorizationConstraint {
     fn from(authorization_constraint: acl_service::AuthorizationConstraint) -> Self {
         Self {
-            roles: authorization_constraint.roles,
+            permissions: authorization_constraint.permissions,
             privilege: Some(
                 authorization_constraint
                     .privilege

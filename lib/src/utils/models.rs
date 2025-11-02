@@ -84,7 +84,7 @@ impl From<AdminPrivilege> for i32 {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AuthorizationConstraint {
-    pub roles: Vec<String>,
+    pub permissions: Vec<String>,
     pub privilege: Option<AdminPrivilege>,
 }
 

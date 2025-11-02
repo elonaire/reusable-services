@@ -42,12 +42,12 @@ impl Query {
         let authenticated_ref = &authenticated;
 
         let authorization_constraint = AuthorizationConstraint {
-            roles: vec![],
+            permissions: vec![],
             privilege: Some(AdminPrivilege::Admin),
         };
 
         let authorized =
-            confirm_authorization(db, authenticated_ref, authorization_constraint).await?;
+            confirm_authorization(db, authenticated_ref, &authorization_constraint).await?;
 
         if !authorized {
             return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
@@ -189,12 +189,12 @@ impl Query {
                 let authenticated_ref = &authenticated;
 
                 let authorization_constraint = AuthorizationConstraint {
-                    roles: vec![],
+                    permissions: vec![],
                     privilege: Some(AdminPrivilege::Admin),
                 };
 
                 let authorized =
-                    confirm_authorization(db, &authenticated, authorization_constraint).await?;
+                    confirm_authorization(db, &authenticated, &authorization_constraint).await?;
                 let is_owner = authenticated_ref.sub.to_owned() == user_id;
 
                 if !authorized && !is_owner {
@@ -304,12 +304,12 @@ impl Query {
         let authenticated_ref = &authenticated;
 
         let authorization_constraint = AuthorizationConstraint {
-            roles: vec![],
+            permissions: vec![],
             privilege: Some(AdminPrivilege::Admin),
         };
 
         let authorized =
-            confirm_authorization(db, &authenticated, authorization_constraint).await?;
+            confirm_authorization(db, &authenticated, &authorization_constraint).await?;
 
         if user_id.is_none() {
             if !authorized {
@@ -404,12 +404,12 @@ impl Query {
         let authenticated_ref = &authenticated;
 
         let authorization_constraint = AuthorizationConstraint {
-            roles: vec![],
+            permissions: vec![],
             privilege: Some(AdminPrivilege::Admin),
         };
 
         let authorized =
-            confirm_authorization(db, &authenticated, authorization_constraint).await?;
+            confirm_authorization(db, &authenticated, &authorization_constraint).await?;
 
         if !authorized {
             return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
@@ -465,12 +465,12 @@ impl Query {
         let authenticated_ref = &authenticated;
 
         let authorization_constraint = AuthorizationConstraint {
-            roles: vec![],
+            permissions: vec![],
             privilege: Some(AdminPrivilege::Admin),
         };
 
         let authorized =
-            confirm_authorization(db, &authenticated, authorization_constraint).await?;
+            confirm_authorization(db, &authenticated, &authorization_constraint).await?;
 
         if !authorized {
             return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
