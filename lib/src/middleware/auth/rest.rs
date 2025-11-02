@@ -47,9 +47,9 @@ pub async fn handle_auth_with_refresh(
 
     match response {
         Ok(response) => {
-            let current_user = response.into_inner().sub;
-            // Insert current user to the req extensions(response.sub)
-            req.extensions_mut().insert(current_user);
+            let auth_status = response.into_inner();
+            // Insert auth_status into the req extensions
+            req.extensions_mut().insert(auth_status);
             Ok(next.run(req).await)
         }
         Err(_e) => return Err(StatusCode::UNAUTHORIZED),
