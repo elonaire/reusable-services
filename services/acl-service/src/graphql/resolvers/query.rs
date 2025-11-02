@@ -42,7 +42,7 @@ impl Query {
         let authenticated_ref = &authenticated;
 
         let authorization_constraint = AuthorizationConstraint {
-            permissions: vec![],
+            permissions: vec!["read:user".into()],
             privilege: Some(AdminPrivilege::Admin),
         };
 
@@ -151,7 +151,7 @@ impl Query {
                             "
                             BEGIN TRANSACTION;
                             LET $user = type::thing('user', $user_id);
-                            LET $found_user = (SELECT id, first_name, middle_name, last_name, full_name, dob, email, country, profile_picture, bio, website, address FROM ONLY $user LIMIT 1);
+                            LET $found_user = (SELECT * OMIT password, user_name, status FROM ONLY $user LIMIT 1);
                             RETURN $found_user;
                             COMMIT TRANSACTION;
                             "
@@ -189,7 +189,7 @@ impl Query {
                 let authenticated_ref = &authenticated;
 
                 let authorization_constraint = AuthorizationConstraint {
-                    permissions: vec![],
+                    permissions: vec!["read:user".into()],
                     privilege: Some(AdminPrivilege::Admin),
                 };
 
@@ -304,7 +304,7 @@ impl Query {
         let authenticated_ref = &authenticated;
 
         let authorization_constraint = AuthorizationConstraint {
-            permissions: vec![],
+            permissions: vec!["read:role".into()],
             privilege: Some(AdminPrivilege::Admin),
         };
 
@@ -404,7 +404,7 @@ impl Query {
         let authenticated_ref = &authenticated;
 
         let authorization_constraint = AuthorizationConstraint {
-            permissions: vec![],
+            permissions: vec!["read:organization".into()],
             privilege: Some(AdminPrivilege::Admin),
         };
 
@@ -465,7 +465,7 @@ impl Query {
         let authenticated_ref = &authenticated;
 
         let authorization_constraint = AuthorizationConstraint {
-            permissions: vec![],
+            permissions: vec!["read:department".into()],
             privilege: Some(AdminPrivilege::Admin),
         };
 

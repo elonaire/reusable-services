@@ -1,6 +1,10 @@
 use async_graphql::{Context, Object, Result};
-use hyper::StatusCode;
-use lib::utils::{custom_error::ExtendedError, models::Email};
+use lib::{
+    middleware::auth::false_graphql::confirm_authentication,
+    utils::{custom_error::ExtendedError, models::Email},
+};
+
+use hyper::{HeaderMap, StatusCode};
 
 use crate::utils;
 
@@ -9,7 +13,14 @@ pub struct EmailMutation;
 
 #[Object]
 impl EmailMutation {
-    pub async fn send_email(&self, _ctx: &Context<'_>, email: Email) -> Result<&'static str> {
+    pub async fn send_email(&self, ctx: &Context<'_>, email: Email) -> Result<&'static str> {
+        let headers = ctx.data::<HeaderMap>().map_err(|e| {
+            tracing::error!("Error HeaderMap: {:?}", e);
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
+        })?;
+
+        let _authenticated = confirm_authentication(headers).await?;
+
         let send_email_res = utils::email::send_email(&email).await;
 
         match send_email_res {

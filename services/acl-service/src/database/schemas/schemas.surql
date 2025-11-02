@@ -102,7 +102,7 @@ DEFINE FIELD updated_at ON TABLE role TYPE datetime
 -- A schema-full permission table.
 DEFINE TABLE permission SCHEMAFULL TYPE NORMAL;
 DEFINE FIELD OVERWRITE name ON TABLE permission TYPE string
-      ASSERT string::matches($value, "^(read|write|delete|assign|grant):[A-Za-z0-9_-]+$");
+      ASSERT string::matches($value, "^(read|write|delete|assign|grant):[A-Za-z0-9_]+$");
 DEFINE EVENT enforce_either_admin_or_super_admin ON TABLE role WHEN $event = 'CREATE' OR $event = 'UPDATE' THEN {
       IF $after.is_super_admin AND $after.is_admin {
           THROW 'Has to be either admin or super_admin.';

@@ -89,3 +89,14 @@ impl From<files_service::PurchaseFileRequest> for utils::models::PurchaseFileDet
         }
     }
 }
+
+/// For easy conversion to protobuf
+impl From<acl_service::ConfirmAuthenticationResponse> for utils::models::AuthStatus {
+    fn from(auth_status: acl_service::ConfirmAuthenticationResponse) -> Self {
+        Self {
+            sub: auth_status.sub,
+            is_auth: auth_status.is_auth,
+            current_role: auth_status.current_role,
+        }
+    }
+}
