@@ -111,3 +111,35 @@ impl SystemRole {
         self.created_by.key().to_string()
     }
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
+pub struct PermissionInput {
+    pub name: String,
+    #[graphql(skip)]
+    pub created_by: String,
+    pub is_admin: Option<bool>,
+    pub is_super_admin: Option<bool>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
+#[graphql(complex)]
+pub struct Permission {
+    #[graphql(skip)]
+    pub id: RecordId,
+    pub name: String,
+    #[graphql(skip)]
+    pub created_by: RecordId,
+    pub is_admin: bool,
+    pub is_super_admin: bool,
+}
+
+#[ComplexObject]
+impl Permission {
+    async fn id(&self) -> String {
+        self.id.key().to_string()
+    }
+
+    async fn created_by(&self) -> String {
+        self.created_by.key().to_string()
+    }
+}

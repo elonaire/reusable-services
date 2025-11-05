@@ -55,7 +55,7 @@ pub struct EmailMQTTPayload<'a> {
     pub template: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum AdminPrivilege {
     Admin,
     SuperAdmin,

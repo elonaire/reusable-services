@@ -14,7 +14,7 @@ use surrealdb::{engine::remote::ws::Client, Surreal};
 
 use crate::{
     graphql::schemas::{
-        role::{Department, Organization, SystemRole},
+        role::{Department, Organization, Permission, SystemRole},
         user::{FetchUsersQueryFilters, User},
     },
     utils::auth::{confirm_authentication, confirm_authorization},
@@ -126,7 +126,7 @@ impl Query {
         })?;
 
         let response: Vec<User> = fetch_users_query.take(0).map_err(|e| {
-            tracing::debug!("Users deserialization error: {}", e);
+            tracing::error!("Users deserialization error: {}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
 
@@ -233,7 +233,7 @@ impl Query {
 
                 let user: Option<User> = if is_owner {
                     user_query.take(0).map_err(|e| {
-                        tracing::debug!("User deserialization error: {}", e);
+                        tracing::error!("User deserialization error: {}", e);
                         ExtendedError::new(
                             "Server Error",
                             StatusCode::INTERNAL_SERVER_ERROR.as_str(),
@@ -242,7 +242,7 @@ impl Query {
                     })?
                 } else {
                     user_query.take(1).map_err(|e| {
-                        tracing::debug!("User deserialization error: {}", e);
+                        tracing::error!("User deserialization error: {}", e);
                         ExtendedError::new(
                             "Server Error",
                             StatusCode::INTERNAL_SERVER_ERROR.as_str(),
@@ -344,7 +344,7 @@ impl Query {
             })?;
 
             let response: Vec<SystemRole> = fetch_user_roles_query.take(0).map_err(|e| {
-                tracing::debug!("SystemRole deserialization error: {}", e);
+                tracing::error!("SystemRole deserialization error: {}", e);
                 ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str())
                     .build()
             })?;
@@ -381,13 +381,102 @@ impl Query {
                 })?;
 
             let response: Vec<SystemRole> = fetch_user_roles_query.take(0).map_err(|e| {
-                tracing::debug!("SystemRole deserialization error: {}", e);
+                tracing::error!("SystemRole deserialization error: {}", e);
                 ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str())
                     .build()
             })?;
 
             Ok(response)
         }
+    }
+
+    /// Fetch all permissions that the logged in user's current role is granted.
+    async fn fetch_current_role_permissions(&self, ctx: &Context<'_>) -> Result<Vec<Permission>> {
+        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
+            tracing::error!("Error extracting Surreal Client: {:?}", e);
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
+        })?;
+
+        let header_map = ctx.data_opt::<HeaderMap>();
+
+        let authenticated = confirm_authentication(header_map, db).await?;
+
+        let authenticated_ref = &authenticated;
+
+        let mut fetch_role_permissions_query = db
+            .query(
+                "
+            BEGIN TRANSACTION;
+            LET $user = type::thing('user', $user_id);
+
+            IF !$user.exists() {
+                THROW 'Invalid Input';
+            };
+            LET $permissions = (SELECT ->assigned->(role WHERE role_name = $current_role_name)->granted->permission.* AS permissions FROM ONLY $user)['permissions'];
+            RETURN $permissions;
+            COMMIT TRANSACTION;
+            ",
+            )
+            .bind(("user_id", authenticated_ref.sub.to_owned()))
+            .bind(("current_role_name", authenticated_ref.current_role.to_owned()))
+            .await
+            .map_err(|e| {
+                tracing::error!("Error fetching permissions: {}", e);
+                ExtendedError::new("Error fetching permissions", StatusCode::BAD_REQUEST.as_str())
+                    .build()
+            })?;
+
+        let response: Vec<Permission> = fetch_role_permissions_query.take(0).map_err(|e| {
+            tracing::error!("SystemRole deserialization error: {}", e);
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
+        })?;
+
+        Ok(response)
+    }
+
+    // TODO: Revisit this to make sure all are aligned
+    /// Fetch all permissions that the logged in admin user is allowed to grant roles.
+    async fn fetch_grantable_permissions(&self, ctx: &Context<'_>) -> Result<Vec<Permission>> {
+        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
+            tracing::error!("Error extracting Surreal Client: {:?}", e);
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
+        })?;
+
+        let header_map = ctx.data_opt::<HeaderMap>();
+
+        let authenticated = confirm_authentication(header_map, db).await?;
+
+        let authenticated_ref = &authenticated;
+
+        let mut fetch_role_permissions_query = db
+            .query(
+                "
+            BEGIN TRANSACTION;
+            LET $user = type::thing('user', $user_id);
+
+            IF !$user.exists() {
+                THROW 'Invalid Input';
+            };
+            LET $permissions = (SELECT ->assigned->(role WHERE role_name = $current_role_name)->granted->permission.* AS permissions FROM ONLY $user)['permissions'];
+            RETURN $permissions;
+            COMMIT TRANSACTION;
+            ",
+            )
+            .bind(("user_id", authenticated_ref.sub.to_owned()))
+            .bind(("current_role_name", authenticated_ref.current_role.to_owned()))
+            .await
+            .map_err(|e| {
+                tracing::error!("Error fetching permissions: {}", e);
+                ExtendedError::new("Error fetching permissions", StatusCode::BAD_REQUEST.as_str())
+                    .build()
+            })?;
+
+        let response: Vec<Permission> = fetch_role_permissions_query.take(0).map_err(|e| {
+            tracing::error!("SystemRole deserialization error: {}", e);
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
+        })?;
+
+        Ok(response)
     }
 
     /// Fetch all organizations where the user is assigned an admin role and is allowed to create roles/assign roles/create a department
@@ -444,7 +533,7 @@ impl Query {
             })?;
 
         let response: Vec<Organization> = fetch_user_orgs_query.take(0).map_err(|e| {
-            tracing::debug!("SystemRole deserialization error: {}", e);
+            tracing::error!("SystemRole deserialization error: {}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
 
@@ -507,7 +596,7 @@ impl Query {
             })?;
 
         let response: Vec<Department> = fetch_user_departments_query.take(0).map_err(|e| {
-            tracing::debug!("SystemRole deserialization error: {}", e);
+            tracing::error!("SystemRole deserialization error: {}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
 

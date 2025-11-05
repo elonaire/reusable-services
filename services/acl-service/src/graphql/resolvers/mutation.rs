@@ -23,7 +23,7 @@ use crate::{
     graphql::schemas::{
         role::{
             Department, DepartmentInput, DepartmentInputMetadata, Organization, OrganizationInput,
-            RoleInput, RoleMetadata, SystemRole,
+            Permission, PermissionInput, RoleInput, RoleMetadata, SystemRole,
         },
         user::{AuthDetails, User, UserInput, UserLogins, UserUpdate},
     },
@@ -266,6 +266,11 @@ impl Mutation {
                     IF !$permission.exists() {
                         THROW 'Invalid Input: Permission not found!';
                     };
+                    LET $permission_is_admin = (SELECT VALUE is_admin FROM ONLY $permission);
+
+                    IF $permission_is_admin AND !$role_input.is_admin {
+                        THROW 'Invalid Input: An admin permission cannot be granted to a non-admin user!';
+                    };
 
                     RELATE $role_record_id -> granted -> $permission;
                 };
@@ -500,7 +505,7 @@ impl Mutation {
             .merge(user)
             .await
             .map_err(|e| {
-                tracing::debug!("Failed to update user: {}", e);
+                tracing::error!("Failed to update user: {}", e);
                 ExtendedError::new("Failed to update user", StatusCode::BAD_REQUEST.as_str())
                     .build()
             })?;
@@ -886,6 +891,83 @@ impl Mutation {
             None => Err(
                 ExtendedError::new("Malformed request", StatusCode::BAD_REQUEST.as_str()).build(),
             ),
+        }
+    }
+
+    async fn create_permission(
+        &self,
+        ctx: &Context<'_>,
+        mut permission_input: PermissionInput,
+    ) -> Result<Permission> {
+        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
+            tracing::error!("Error extracting Surreal Client: {:?}", e);
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
+        })?;
+        let header_map = ctx.data_opt::<HeaderMap>();
+
+        let authenticated = confirm_authentication(header_map, db).await?;
+
+        let authorization_constraint = AuthorizationConstraint {
+            permissions: vec!["write:permission".into()],
+            privilege: Some(AdminPrivilege::SuperAdmin),
+        };
+
+        let authenticated_ref = &authenticated;
+        let authorization_constraint_ref = &authorization_constraint;
+
+        let authorized =
+            confirm_authorization(db, authenticated_ref, authorization_constraint_ref).await?;
+
+        if !authorized {
+            return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
+        }
+
+        permission_input.created_by = format!("user:{}", authenticated_ref.sub);
+
+        tracing::debug!("permission_input: {:?}", permission_input);
+
+        let mut create_permission_query = db
+            .query(
+                "
+                BEGIN TRANSACTION;
+                LET $permission = (CREATE permission CONTENT $permission_input RETURN AFTER);
+                -- The Super Admin should be granted any permission being created automatically.
+                LET $permission_id = (SELECT VALUE id FROM ONLY $permission LIMIT 1);
+                LET $super_admin_roles = (SELECT VALUE id FROM role WHERE is_super_admin);
+                RELATE $super_admin_roles -> granted -> $permission_id;
+
+                RETURN $permission;
+                COMMIT TRANSACTION;
+                ",
+            )
+            .bind(("permission_input", permission_input))
+            .await
+            .map_err(|e| {
+                tracing::error!("Error creating permission: {}", e);
+                ExtendedError::new(
+                    "Failed to create permission",
+                    StatusCode::BAD_REQUEST.as_str(),
+                )
+                .build()
+            })?;
+
+        let permission_response: Option<Permission> =
+            create_permission_query.take(0).map_err(|e| {
+                tracing::error!("Failed to create permission: {}", e);
+                ExtendedError::new(
+                    "Failed to create permission",
+                    StatusCode::BAD_REQUEST.as_str(),
+                )
+                .build()
+            })?;
+
+        match permission_response {
+            Some(permission) => Ok(permission),
+            None => Err(ExtendedError::new(
+                "Failed to create permission",
+                StatusCode::BAD_REQUEST.as_str(),
+            )
+            .build()),
         }
     }
 }

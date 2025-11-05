@@ -743,7 +743,7 @@ pub async fn confirm_authorization<T: Clone + AsSurrealClient>(
                     IF !$user.exists() {{
                   		THROW 'Invalid Input';
                    	}};
-                    LET $matching_roles = (SELECT ->assigned->(role WHERE role_name = $current_role_name AND is_super_admin AND ->granted->(permission WHERE is_super_admin).name CONTAINSALL $permission_constraints) AS super_admin_roles FROM ONLY $user)['super_admin_roles'];
+                    LET $matching_roles = (SELECT ->assigned->(role WHERE role_name = $current_role_name AND is_super_admin AND ->granted->(permission WHERE is_super_admin OR is_admin).name CONTAINSALL $permission_constraints) AS super_admin_roles FROM ONLY $user)['super_admin_roles'];
                     IF $matching_roles != NONE AND array::len($matching_roles) > 0 {{
                   		RETURN $matching_roles.map(|$matching_role: any| record::id($matching_role));
                    	}} ELSE {{

@@ -6,7 +6,7 @@ use axum::{
 };
 use lib::{
     integration::foreign_key::add_foreign_key_if_not_exists,
-    utils::models::{ForeignKey, User},
+    utils::models::{AuthStatus, ForeignKey, User},
 };
 use uuid::Uuid;
 
@@ -25,7 +25,7 @@ use crate::graphql::schemas::general::{UploadedFile, UploadedFileResponse};
 
 pub async fn upload(
     Extension(db): Extension<Arc<Surreal<Client>>>,
-    Extension(current_user): Extension<String>,
+    Extension(auth_status): Extension<AuthStatus>,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
     let upload_dir = env::var("FILE_UPLOADS_DIR");
@@ -38,7 +38,7 @@ pub async fn upload(
     let user_fk_body = ForeignKey {
         table: "user_id".into(),
         column: "user_id".into(),
-        foreign_key: current_user,
+        foreign_key: auth_status.sub,
     };
 
     let user_fk =
@@ -200,7 +200,7 @@ pub async fn upload(
 
 pub async fn download_file(
     Extension(db): Extension<Arc<Surreal<Client>>>,
-    Extension(current_user): Extension<String>,
+    Extension(auth_status): Extension<AuthStatus>,
     AxumUrlParams(file_name): AxumUrlParams<String>,
 ) -> Result<Response, StatusCode> {
     let upload_dir = env::var("FILE_UPLOADS_DIR");
@@ -249,7 +249,7 @@ pub async fn download_file(
                             COMMIT TRANSACTION;
                             "
                         )
-                            .bind(("user_id", current_user.clone()))
+                            .bind(("user_id", auth_status.sub.clone()))
                             .bind(("file_name", file_name.clone()))
                             .await
                             .map_err(|e| {
@@ -281,7 +281,7 @@ pub async fn download_file(
                                     COMMIT TRANSACTION;
                                     "
                                 )
-                                    .bind(("user_id", current_user))
+                                    .bind(("user_id", auth_status.sub))
                                     .bind(("file_name", file_name.clone()))
                                     .await
                                     .map_err(|e| {

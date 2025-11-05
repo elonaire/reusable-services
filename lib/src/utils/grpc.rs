@@ -24,6 +24,35 @@ pub struct AuthMetaData<'a, T> {
     pub constructed_grpc_request: Option<&'a mut Request<T>>,
 }
 
+impl<'a, T> std::fmt::Debug for AuthMetaData<'a, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Safely format header values as strings
+        let auth_header = self
+            .auth_header
+            .map(|h| h.to_str().unwrap_or("<invalid UTF-8>"))
+            .unwrap_or("<none>");
+        let cookie_header = self
+            .cookie_header
+            .map(|h| h.to_str().unwrap_or("<invalid UTF-8>"))
+            .unwrap_or("<none>");
+
+        f.debug_struct("AuthMetaData")
+            .field("auth_header", &auth_header)
+            .field("cookie_header", &cookie_header)
+            // You can’t safely print a &mut Request<T> without borrowing it
+            // So just indicate its presence
+            .field(
+                "constructed_grpc_request",
+                &self
+                    .constructed_grpc_request
+                    .as_ref()
+                    .map(|_| "<some request>")
+                    .unwrap_or("<none>"),
+            )
+            .finish()
+    }
+}
+
 // Implement the trait for AclClient<Channel>
 #[async_trait]
 impl GrpcClient for AclClient<Channel> {
