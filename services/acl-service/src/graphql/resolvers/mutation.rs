@@ -563,8 +563,8 @@ impl Mutation {
                     THROW 'Invalid Input';
                 };
 
-                LET $role_is_under_user_org = array::len((SELECT * FROM role WHERE id = $role AND ->is_under->(organization WHERE created_by = $user))) > 0 || array::len((SELECT * FROM role WHERE id = $role AND ->is_under->department->is_under->(organization WHERE created_by = $user))) > 0;
-               	LET $role_is_under_user_dep = array::len((SELECT * FROM role WHERE id = $role AND ->is_under->(department WHERE created_by = $user))) > 0 || array::len((SELECT * FROM role WHERE id = $role AND ->is_under->department->is_under->(department WHERE created_by = $user))) > 0;
+                LET $role_is_under_user_org = array::len((SELECT * FROM role WHERE id = $role AND ->is_under->(organization WHERE created_by = $user))) > 0 || array::len((SELECT * FROM role WHERE id = $role AND @.{..}(->is_under->department)->is_under->(organization WHERE created_by = $user))) > 0;
+               	LET $role_is_under_user_dep = array::len((SELECT * FROM role WHERE id = $role AND ->is_under->(department WHERE created_by = $user))) > 0 || array::len((SELECT * FROM role WHERE id = $role AND @.{..}(->is_under->department)->is_under->(department WHERE created_by = $user))) > 0;
 
                 IF $role_creator != $user AND !$role_is_under_user_org AND !$role_is_under_user_dep {
                     THROW 'Forbidden!';
@@ -642,8 +642,8 @@ impl Mutation {
                     THROW 'Invalid Input';
                 };
 
-                LET $role_is_under_user_org = array::len((SELECT * FROM role WHERE id = $role AND ->is_under->(organization WHERE created_by = $user))) > 0 || array::len((SELECT * FROM role WHERE id = $role AND ->is_under->department->is_under->(organization WHERE created_by = $user))) > 0;
-               	LET $role_is_under_user_dep = array::len((SELECT * FROM role WHERE id = $role AND ->is_under->(department WHERE created_by = $user))) > 0 || array::len((SELECT * FROM role WHERE id = $role AND ->is_under->department->is_under->(department WHERE created_by = $user))) > 0;
+                LET $role_is_under_user_org = array::len((SELECT * FROM role WHERE id = $role AND ->is_under->(organization WHERE created_by = $user))) > 0 || array::len((SELECT * FROM role WHERE id = $role AND @.{..}(->is_under->department)->is_under->(organization WHERE created_by = $user))) > 0;
+               	LET $role_is_under_user_dep = array::len((SELECT * FROM role WHERE id = $role AND ->is_under->(department WHERE created_by = $user))) > 0 || array::len((SELECT * FROM role WHERE id = $role AND @.{..}(->is_under->department)->is_under->(department WHERE created_by = $user))) > 0;
 
                 IF $role_creator != $user AND !$role_is_under_user_org AND !$role_is_under_user_dep {
                     THROW 'Forbidden!';
@@ -1119,8 +1119,8 @@ impl Mutation {
                     THROW 'Invalid Input: User does not exist!';
                 };
 
-                LET $role_is_under_user_org = array::len((SELECT * FROM role WHERE id = $role AND ->is_under->(organization WHERE created_by = $user))) > 0 || array::len((SELECT * FROM role WHERE id = $role AND ->is_under->department->is_under->(organization WHERE created_by = $user))) > 0;
-               	LET $role_is_under_user_dep = array::len((SELECT * FROM role WHERE id = $role AND ->is_under->(department WHERE created_by = $user))) > 0 || array::len((SELECT * FROM role WHERE id = $role AND ->is_under->department->is_under->(department WHERE created_by = $user))) > 0;
+                LET $role_is_under_user_org = array::len((SELECT * FROM role WHERE id = $role AND ->is_under->(organization WHERE created_by = $user))) > 0 || array::len((SELECT * FROM role WHERE id = $role AND @.{..}(->is_under->department)->is_under->(organization WHERE created_by = $user))) > 0;
+               	LET $role_is_under_user_dep = array::len((SELECT * FROM role WHERE id = $role AND ->is_under->(department WHERE created_by = $user))) > 0 || array::len((SELECT * FROM role WHERE id = $role AND @.{..}(->is_under->department)->is_under->(department WHERE created_by = $user))) > 0;
 
                 IF $role_creator != $user AND !$role_is_under_user_org AND !$role_is_under_user_dep {
                     THROW 'Forbidden!';
@@ -1223,8 +1223,8 @@ impl Mutation {
                     THROW 'Invalid Input: User does not exist!';
                 };
 
-                LET $role_is_under_user_org = array::len((SELECT * FROM role WHERE id = $role AND ->is_under->(organization WHERE created_by = $user))) > 0 || array::len((SELECT * FROM role WHERE id = $role AND ->is_under->department->is_under->(organization WHERE created_by = $user))) > 0;
-               	LET $role_is_under_user_dep = array::len((SELECT * FROM role WHERE id = $role AND ->is_under->(department WHERE created_by = $user))) > 0 || array::len((SELECT * FROM role WHERE id = $role AND ->is_under->department->is_under->(department WHERE created_by = $user))) > 0;
+                LET $role_is_under_user_org = array::len((SELECT * FROM role WHERE id = $role AND ->is_under->(organization WHERE created_by = $user))) > 0 || array::len((SELECT * FROM role WHERE id = $role AND @.{..}(->is_under->department)->is_under->(organization WHERE created_by = $user))) > 0;
+               	LET $role_is_under_user_dep = array::len((SELECT * FROM role WHERE id = $role AND ->is_under->(department WHERE created_by = $user))) > 0 || array::len((SELECT * FROM role WHERE id = $role AND @.{..}(->is_under->department)->is_under->(department WHERE created_by = $user))) > 0;
 
                 IF $role_creator != $user AND !$role_is_under_user_org AND !$role_is_under_user_dep {
                     THROW 'Forbidden!';

@@ -108,11 +108,11 @@ impl Query {
 
                                 }
               		ELSE IF $filters.status != NONE
-             			{ (SELECT * FROM user WHERE ->assigned->role->is_under->(organization WHERE created_by = $user) AND status = $filters.status) }
+             			{ <set>array::flatten([(SELECT * FROM user WHERE ->assigned->role->is_under->(organization WHERE created_by = $user) AND status = $filters.status), (SELECT * FROM user WHERE ->assigned->role->is_under->(department WHERE created_by = $user) AND status = $filters.status), (SELECT * FROM user WHERE @.{..}(->assigned->role->is_under->department)->is_under->(organization WHERE created_by = $user) AND status = $filters.status), (SELECT * FROM user WHERE @.{..}(->assigned->role->is_under->department)->is_under->(department WHERE created_by = $user) AND status = $filters.status), (SELECT * FROM user WHERE ->assigned->(role WHERE created_by = $user) AND status = $filters.status)]) }
               		;
                	}
                                 ELSE
-               	{ <set>array::flatten([(SELECT * FROM user WHERE ->assigned->role->is_under->(organization WHERE created_by = $user)), (SELECT * FROM user WHERE ->assigned->role->is_under->(department WHERE created_by = $user)), (SELECT * FROM user WHERE ->assigned->role->is_under->department->is_under->(organization WHERE created_by = $user)), (SELECT * FROM user WHERE ->assigned->role->is_under->department->is_under->(department WHERE created_by = $user)), (SELECT * FROM user WHERE ->assigned->(role WHERE created_by = $user))]) }
+               	{ <set>array::flatten([(SELECT * FROM user WHERE ->assigned->role->is_under->(organization WHERE created_by = $user)), (SELECT * FROM user WHERE ->assigned->role->is_under->(department WHERE created_by = $user)), (SELECT * FROM user WHERE @.{..}(->assigned->role->is_under->department)->is_under->(organization WHERE created_by = $user)), (SELECT * FROM user WHERE @.{..}(->assigned->role->is_under->department)->is_under->(department WHERE created_by = $user)), (SELECT * FROM user WHERE ->assigned->(role WHERE created_by = $user))]) }
                 ;
                 COMMIT TRANSACTION;
                 "#
@@ -218,7 +218,7 @@ impl Query {
                         BEGIN TRANSACTION;
                         LET $user = type::thing('user', $user_id);
                         LET $auth_user = type::thing('user', $auth_sub);
-                        LET $found_user = (SELECT * FROM ONLY $user WHERE (->assigned->(role WHERE created_by = $auth_user) OR ->assigned->role->is_under->(organization WHERE created_by = $auth_user) OR ->assigned->role->is_under->(department WHERE created_by = $auth_user) OR ->assigned->role->is_under->department->is_under->(organization WHERE created_by = $auth_user) OR ->assigned->role->is_under->department->is_under->(department WHERE created_by = $auth_user)));
+                        LET $found_user = (SELECT * FROM ONLY $user WHERE (->assigned->(role WHERE created_by = $auth_user) OR ->assigned->role->is_under->(organization WHERE created_by = $auth_user) OR ->assigned->role->is_under->(department WHERE created_by = $auth_user) OR @.{..}(->assigned->role->is_under->department)->is_under->(organization WHERE created_by = $auth_user) OR @.{..}(->assigned->role->is_under->department)->is_under->(department WHERE created_by = $auth_user)));
                         RETURN $found_user;
                         COMMIT TRANSACTION;
                         "
@@ -330,8 +330,8 @@ impl Query {
                     LET $roles = array::flatten([
                    	(SELECT * FROM role WHERE ->is_under->(organization WHERE created_by = $user)),
                    	(SELECT * FROM role WHERE ->is_under->(department WHERE created_by = $user)),
-                   	(SELECT * FROM role WHERE ->is_under->department->is_under->(organization WHERE created_by = $user)),
-                   	(SELECT * FROM role WHERE ->is_under->department->is_under->(department WHERE created_by = $user))
+                   	(SELECT * FROM role WHERE @.{..}(->is_under->department)->is_under->(organization WHERE created_by = $user)),
+                   	(SELECT * FROM role WHERE @.{..}(->is_under->department)->is_under->(department WHERE created_by = $user))
                     ]);
                     RETURN $roles;
                     COMMIT TRANSACTION;
