@@ -23,7 +23,8 @@ use crate::{
     graphql::schemas::{
         role::{
             Department, DepartmentInput, DepartmentInputMetadata, Organization, OrganizationInput,
-            Permission, PermissionInput, RoleInput, RoleMetadata, SystemRole,
+            Permission, PermissionInput, Resource, ResourceInput, ResourceMetadata, RoleInput,
+            RoleMetadata, SystemRole,
         },
         user::{AuthDetails, User, UserInput, UserLogins, UserUpdate},
     },
@@ -42,6 +43,7 @@ pub struct Mutation;
 
 #[Object]
 impl Mutation {
+    /// User signup
     async fn sign_up(&self, ctx: &Context<'_>, mut user: UserInput) -> Result<User> {
         user.password = bcrypt::hash(user.password, bcrypt::DEFAULT_COST).map_err(|e| {
             tracing::error!("Bcrypt Error: {}", e);
@@ -209,6 +211,7 @@ impl Mutation {
         }
     }
 
+    /// Create system role
     async fn create_system_role(
         &self,
         ctx: &Context<'_>,
@@ -320,6 +323,7 @@ impl Mutation {
         }
     }
 
+    /// User signin
     async fn sign_in(
         &self,
         ctx: &Context<'_>,
@@ -446,12 +450,14 @@ impl Mutation {
         }
     }
 
+    /// Sign out
     async fn sign_out(&self, ctx: &Context<'_>) -> Result<bool> {
         // Clear the refresh token cookie
         ctx.insert_http_header(SET_COOKIE, format!("t=; Max-Age=0"));
         Ok(true)
     }
 
+    /// Update user details
     async fn update_user(&self, ctx: &Context<'_>, mut user: UserUpdate) -> Result<User> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
@@ -518,6 +524,7 @@ impl Mutation {
         }
     }
 
+    /// Assign a role to a user
     async fn assign_system_role(
         &self,
         ctx: &Context<'_>,
@@ -550,9 +557,17 @@ impl Mutation {
                 BEGIN TRANSACTION;
                 LET $role = type::thing('role', $role_id);
                 LET $user = type::thing('user', $user_id);
+                LET $role_creator = (SELECT VALUE created_by FROM ONLY $role LIMIT 1);
 
                 IF !$role.exists() OR !$user.exists() {
                     THROW 'Invalid Input';
+                };
+
+                LET $role_is_under_user_org = array::len((SELECT * FROM role WHERE id = $role AND ->is_under->(organization WHERE created_by = $user))) > 0 || array::len((SELECT * FROM role WHERE id = $role AND ->is_under->department->is_under->(organization WHERE created_by = $user))) > 0;
+               	LET $role_is_under_user_dep = array::len((SELECT * FROM role WHERE id = $role AND ->is_under->(department WHERE created_by = $user))) > 0 || array::len((SELECT * FROM role WHERE id = $role AND ->is_under->department->is_under->(department WHERE created_by = $user))) > 0;
+
+                IF $role_creator != $user AND !$role_is_under_user_org AND !$role_is_under_user_dep {
+                    THROW 'Forbidden!';
                 };
 
                 RELATE $user->assigned->$role CONTENT {
@@ -588,6 +603,84 @@ impl Mutation {
         }
     }
 
+    /// Assign a role to a user
+    async fn revoke_system_role(
+        &self,
+        ctx: &Context<'_>,
+        role_id: String,
+        user_id: String,
+    ) -> Result<SystemRole> {
+        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
+            tracing::error!("Error extracting Surreal Client: {:?}", e);
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
+        })?;
+        let header_map = ctx.data_opt::<HeaderMap>();
+
+        let authenticated = confirm_authentication(header_map, db).await?;
+
+        let authorization_constraint = AuthorizationConstraint {
+            permissions: vec!["revoke:role".into()],
+            privilege: Some(AdminPrivilege::Admin),
+        };
+
+        let authorized =
+            confirm_authorization(db, &authenticated, &authorization_constraint).await?;
+
+        if !authorized {
+            return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
+        }
+
+        let mut assign_role_query = db
+            .query(
+                "
+                BEGIN TRANSACTION;
+                LET $role = type::thing('role', $role_id);
+                LET $user = type::thing('user', $user_id);
+                LET $role_creator = (SELECT VALUE created_by FROM ONLY $role LIMIT 1);
+
+                IF !$role.exists() OR !$user.exists() {
+                    THROW 'Invalid Input';
+                };
+
+                LET $role_is_under_user_org = array::len((SELECT * FROM role WHERE id = $role AND ->is_under->(organization WHERE created_by = $user))) > 0 || array::len((SELECT * FROM role WHERE id = $role AND ->is_under->department->is_under->(organization WHERE created_by = $user))) > 0;
+               	LET $role_is_under_user_dep = array::len((SELECT * FROM role WHERE id = $role AND ->is_under->(department WHERE created_by = $user))) > 0 || array::len((SELECT * FROM role WHERE id = $role AND ->is_under->department->is_under->(department WHERE created_by = $user))) > 0;
+
+                IF $role_creator != $user AND !$role_is_under_user_org AND !$role_is_under_user_dep {
+                    THROW 'Forbidden!';
+                };
+
+                DELETE $user->assigned WHERE out = $role;
+
+                LET $role = SELECT * FROM ONLY $role LIMIT 1;
+                RETURN $role;
+                COMMIT TRANSACTION;
+                ",
+            )
+            .bind(("role_id", role_id))
+            .bind(("user_id", user_id))
+            .await
+            .map_err(|e| {
+                tracing::error!("Error assigning role: {}", e);
+                ExtendedError::new("Failed to assign role", StatusCode::BAD_REQUEST.as_str())
+                    .build()
+            })?;
+
+        let user_role: Option<SystemRole> = assign_role_query.take(0).map_err(|e| {
+            tracing::error!("Failed to assign role: {}", e);
+            ExtendedError::new("Failed to assign role", StatusCode::BAD_REQUEST.as_str()).build()
+        })?;
+
+        match user_role {
+            Some(role) => Ok(role),
+            None => Err(ExtendedError::new(
+                "Failed to assign role",
+                StatusCode::BAD_REQUEST.as_str(),
+            )
+            .build()),
+        }
+    }
+
+    /// Create organization
     async fn create_organization(
         &self,
         ctx: &Context<'_>,
@@ -658,6 +751,7 @@ impl Mutation {
         }
     }
 
+    /// Create department
     async fn create_department(
         &self,
         ctx: &Context<'_>,
@@ -751,6 +845,7 @@ impl Mutation {
         }
     }
 
+    /// Switch user role
     async fn switch_role(&self, ctx: &Context<'_>, role_id: String) -> Result<AuthDetails> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
@@ -894,6 +989,7 @@ impl Mutation {
         }
     }
 
+    /// Create a new permission
     async fn create_permission(
         &self,
         ctx: &Context<'_>,
@@ -923,6 +1019,7 @@ impl Mutation {
         }
 
         permission_input.created_by = format!("user:{}", authenticated_ref.sub);
+        permission_input.resource = format!("resource:{}", permission_input.resource);
 
         tracing::debug!("permission_input: {:?}", permission_input);
 
@@ -965,6 +1062,306 @@ impl Mutation {
             Some(permission) => Ok(permission),
             None => Err(ExtendedError::new(
                 "Failed to create permission",
+                StatusCode::BAD_REQUEST.as_str(),
+            )
+            .build()),
+        }
+    }
+
+    /// Grant a permission to a role
+    async fn grant_permission(
+        &self,
+        ctx: &Context<'_>,
+        permission_id: String,
+        role_id: String,
+    ) -> Result<Permission> {
+        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
+            tracing::error!("Error extracting Surreal Client: {:?}", e);
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
+        })?;
+        let header_map = ctx.data_opt::<HeaderMap>();
+
+        let authenticated = confirm_authentication(header_map, db).await?;
+
+        let authorization_constraint = AuthorizationConstraint {
+            permissions: vec!["grant:permission".into()],
+            privilege: Some(AdminPrivilege::Admin),
+        };
+
+        let authenticated_ref = &authenticated;
+        let authorization_constraint_ref = &authorization_constraint;
+
+        let authorized =
+            confirm_authorization(db, authenticated_ref, authorization_constraint_ref).await?;
+
+        if !authorized {
+            return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
+        }
+
+        let mut grant_permission_query = db
+            .query(
+                "
+                BEGIN TRANSACTION;
+                LET $permission = type::thing('permission', $permission_id);
+                LET $role = type::thing('role', $role_id);
+                LET $user = type::thing('user', $user_id);
+                LET $role_creator = (SELECT VALUE created_by FROM ONLY $role LIMIT 1);
+
+                IF !$permission.exists() {
+                    THROW 'Invalid Input: Permission does not exist!';
+                };
+
+                IF !$role.exists() {
+                    THROW 'Invalid Input: Role does not exist!';
+                };
+
+                IF !$user.exists() {
+                    THROW 'Invalid Input: User does not exist!';
+                };
+
+                LET $role_is_under_user_org = array::len((SELECT * FROM role WHERE id = $role AND ->is_under->(organization WHERE created_by = $user))) > 0 || array::len((SELECT * FROM role WHERE id = $role AND ->is_under->department->is_under->(organization WHERE created_by = $user))) > 0;
+               	LET $role_is_under_user_dep = array::len((SELECT * FROM role WHERE id = $role AND ->is_under->(department WHERE created_by = $user))) > 0 || array::len((SELECT * FROM role WHERE id = $role AND ->is_under->department->is_under->(department WHERE created_by = $user))) > 0;
+
+                IF $role_creator != $user AND !$role_is_under_user_org AND !$role_is_under_user_dep {
+                    THROW 'Forbidden!';
+                };
+
+                LET $permission_privileges = (SELECT is_admin, is_super_admin FROM ONLY $permission);
+                LET $role_privileges = (SELECT is_admin, is_super_admin FROM ONLY $role);
+
+                IF ($permission_privileges = $role_privileges) OR ($permission_privileges.is_admin AND $role_privileges.is_super_admin) {
+                    RELATE $role -> granted -> $permission;
+                } ELSE {
+                    THROW 'Not enough privilege!';
+                };
+
+                RETURN (SELECT * FROM ONLY $permission LIMIT 1);
+                COMMIT TRANSACTION;
+                ",
+            )
+            .bind(("permission_id", permission_id))
+            .bind(("role_id", role_id))
+            .bind(("user_id", authenticated_ref.sub.to_owned()))
+            .await
+            .map_err(|e| {
+                tracing::error!("Error granting permission: {}", e);
+                ExtendedError::new(
+                    "Failed to grant permission",
+                    StatusCode::BAD_REQUEST.as_str(),
+                )
+                .build()
+            })?;
+
+        let permission_response: Option<Permission> =
+            grant_permission_query.take(0).map_err(|e| {
+                tracing::error!("Failed to grant permission: {}", e);
+                ExtendedError::new(
+                    "Failed to grant permission",
+                    StatusCode::BAD_REQUEST.as_str(),
+                )
+                .build()
+            })?;
+
+        match permission_response {
+            Some(permission) => Ok(permission),
+            None => Err(ExtendedError::new(
+                "Failed to grant permission",
+                StatusCode::BAD_REQUEST.as_str(),
+            )
+            .build()),
+        }
+    }
+
+    /// Revoke a permission from a role
+    async fn revoke_permission(
+        &self,
+        ctx: &Context<'_>,
+        permission_id: String,
+        role_id: String,
+    ) -> Result<Permission> {
+        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
+            tracing::error!("Error extracting Surreal Client: {:?}", e);
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
+        })?;
+        let header_map = ctx.data_opt::<HeaderMap>();
+
+        let authenticated = confirm_authentication(header_map, db).await?;
+
+        let authorization_constraint = AuthorizationConstraint {
+            permissions: vec!["revoke:permission".into()],
+            privilege: Some(AdminPrivilege::Admin),
+        };
+
+        let authenticated_ref = &authenticated;
+        let authorization_constraint_ref = &authorization_constraint;
+
+        let authorized =
+            confirm_authorization(db, authenticated_ref, authorization_constraint_ref).await?;
+
+        if !authorized {
+            return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
+        }
+
+        let mut revoke_permission_query = db
+            .query(
+                "
+                BEGIN TRANSACTION;
+                LET $permission = type::thing('permission', $permission_id);
+                LET $role = type::thing('role', $role_id);
+                LET $user = type::thing('user', $user_id);
+                LET $role_creator = (SELECT VALUE created_by FROM ONLY $role LIMIT 1);
+
+                IF !$permission.exists() {
+                    THROW 'Invalid Input: Permission does not exist!';
+                };
+
+                IF !$role.exists() {
+                    THROW 'Invalid Input: Role does not exist!';
+                };
+
+                IF !$user.exists() {
+                    THROW 'Invalid Input: User does not exist!';
+                };
+
+                LET $role_is_under_user_org = array::len((SELECT * FROM role WHERE id = $role AND ->is_under->(organization WHERE created_by = $user))) > 0 || array::len((SELECT * FROM role WHERE id = $role AND ->is_under->department->is_under->(organization WHERE created_by = $user))) > 0;
+               	LET $role_is_under_user_dep = array::len((SELECT * FROM role WHERE id = $role AND ->is_under->(department WHERE created_by = $user))) > 0 || array::len((SELECT * FROM role WHERE id = $role AND ->is_under->department->is_under->(department WHERE created_by = $user))) > 0;
+
+                IF $role_creator != $user AND !$role_is_under_user_org AND !$role_is_under_user_dep {
+                    THROW 'Forbidden!';
+                };
+
+                LET $permission_privileges = (SELECT is_admin, is_super_admin FROM ONLY $permission);
+                LET $role_privileges = (SELECT is_admin, is_super_admin FROM ONLY $role);
+
+                IF ($permission_privileges = $role_privileges) OR ($permission_privileges.is_admin AND $role_privileges.is_super_admin) {
+                    DELETE $role -> granted WHERE out = $permission;
+                } ELSE {
+                    THROW 'Not enough privilege!';
+                };
+
+                RETURN (SELECT * FROM ONLY $permission LIMIT 1);
+                COMMIT TRANSACTION;
+                ",
+            )
+            .bind(("permission_id", permission_id))
+            .bind(("role_id", role_id))
+            .bind(("user_id", authenticated_ref.sub.to_owned()))
+            .await
+            .map_err(|e| {
+                tracing::error!("Error revoking permission: {}", e);
+                ExtendedError::new(
+                    "Failed to revoke permission",
+                    StatusCode::BAD_REQUEST.as_str(),
+                )
+                .build()
+            })?;
+
+        let permission_response: Option<Permission> =
+            revoke_permission_query.take(0).map_err(|e| {
+                tracing::error!("Failed to revoke permission: {}", e);
+                ExtendedError::new(
+                    "Failed to revoke permission",
+                    StatusCode::BAD_REQUEST.as_str(),
+                )
+                .build()
+            })?;
+
+        match permission_response {
+            Some(permission) => Ok(permission),
+            None => Err(ExtendedError::new(
+                "Failed to revoke permission",
+                StatusCode::BAD_REQUEST.as_str(),
+            )
+            .build()),
+        }
+    }
+
+    /// Create a new resource
+    async fn create_resource(
+        &self,
+        ctx: &Context<'_>,
+        mut resource_input: ResourceInput,
+        resource_metadata: ResourceMetadata,
+    ) -> Result<Resource> {
+        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
+            tracing::error!("Error extracting Surreal Client: {:?}", e);
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
+        })?;
+        let header_map = ctx.data_opt::<HeaderMap>();
+
+        let authenticated = confirm_authentication(header_map, db).await?;
+
+        let authorization_constraint = AuthorizationConstraint {
+            permissions: vec!["write:resource".into()],
+            privilege: Some(AdminPrivilege::SuperAdmin),
+        };
+
+        let authenticated_ref = &authenticated;
+        let authorization_constraint_ref = &authorization_constraint;
+
+        let authorized =
+            confirm_authorization(db, authenticated_ref, authorization_constraint_ref).await?;
+
+        if !authorized {
+            return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
+        }
+
+        resource_input.created_by = format!("user:{}", authenticated_ref.sub);
+
+        let mut create_resource_query = db
+            .query(
+                "
+                BEGIN TRANSACTION;
+                LET $resource = (CREATE resource CONTENT $resource_input RETURN AFTER);
+
+                LET $resource_id = (SELECT VALUE id FROM ONLY $resource LIMIT 1);
+                IF $resource_metadata.organization_id IS NOT NONE {
+                    LET $organization = type::thing('organization', $resource_metadata.organization_id);
+
+                    IF !$organization.exists() {
+                        THROW 'Organization not found';
+                    };
+                    RELATE $resource_id -> is_under -> $organization;
+                };
+
+                IF $resource_metadata.department_id IS NOT NONE {
+                    LET $department = type::thing('department', $resource_metadata.department_id);
+
+                    IF !$department.exists() {
+                        THROW 'Department not found';
+                    };
+                    RELATE $resource_id -> is_under -> $department;
+                };
+
+                RETURN $resource;
+                COMMIT TRANSACTION;
+                ",
+            )
+            .bind(("resource_input", resource_input))
+            .bind(("resource_metadata", resource_metadata))
+            .await
+            .map_err(|e| {
+                tracing::error!("Error creating resource: {}", e);
+                ExtendedError::new(
+                    "Failed to create resource",
+                    StatusCode::BAD_REQUEST.as_str(),
+                )
+                .build()
+            })?;
+
+        let resource_response: Option<Resource> = create_resource_query.take(0).map_err(|e| {
+            tracing::error!("Failed to create resource: {}", e);
+            ExtendedError::new(
+                "Failed to create resource",
+                StatusCode::BAD_REQUEST.as_str(),
+            )
+            .build()
+        })?;
+
+        match resource_response {
+            Some(resource) => Ok(resource),
+            None => Err(ExtendedError::new(
+                "Failed to create resource",
                 StatusCode::BAD_REQUEST.as_str(),
             )
             .build()),

@@ -434,51 +434,6 @@ impl Query {
         Ok(response)
     }
 
-    // TODO: Revisit this to make sure all are aligned
-    /// Fetch all permissions that the logged in admin user is allowed to grant roles.
-    async fn fetch_grantable_permissions(&self, ctx: &Context<'_>) -> Result<Vec<Permission>> {
-        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
-            tracing::error!("Error extracting Surreal Client: {:?}", e);
-            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
-        })?;
-
-        let header_map = ctx.data_opt::<HeaderMap>();
-
-        let authenticated = confirm_authentication(header_map, db).await?;
-
-        let authenticated_ref = &authenticated;
-
-        let mut fetch_role_permissions_query = db
-            .query(
-                "
-            BEGIN TRANSACTION;
-            LET $user = type::thing('user', $user_id);
-
-            IF !$user.exists() {
-                THROW 'Invalid Input';
-            };
-            LET $permissions = (SELECT ->assigned->(role WHERE role_name = $current_role_name)->granted->permission.* AS permissions FROM ONLY $user)['permissions'];
-            RETURN $permissions;
-            COMMIT TRANSACTION;
-            ",
-            )
-            .bind(("user_id", authenticated_ref.sub.to_owned()))
-            .bind(("current_role_name", authenticated_ref.current_role.to_owned()))
-            .await
-            .map_err(|e| {
-                tracing::error!("Error fetching permissions: {}", e);
-                ExtendedError::new("Error fetching permissions", StatusCode::BAD_REQUEST.as_str())
-                    .build()
-            })?;
-
-        let response: Vec<Permission> = fetch_role_permissions_query.take(0).map_err(|e| {
-            tracing::error!("SystemRole deserialization error: {}", e);
-            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
-        })?;
-
-        Ok(response)
-    }
-
     /// Fetch all organizations where the user is assigned an admin role and is allowed to create roles/assign roles/create a department
     async fn fetch_organizations(&self, ctx: &Context<'_>) -> Result<Vec<Organization>> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
@@ -515,10 +470,10 @@ impl Query {
                	};
                 LET $organizations = <set> array::flatten([
                    	(SELECT * FROM organization WHERE created_by = $user),
-                   	(SELECT * FROM organization WHERE <-is_under<-(role WHERE (is_admin OR is_super_admin) AND admin_permissions CONTAINSANY [
-                  		'CreateDepartment',
-                  		'CreateRole',
-                  		'AssignRole'
+                   	(SELECT * FROM organization WHERE <-is_under<-(role WHERE (is_admin OR is_super_admin) AND ->granted->permission.name CONTAINSANY [
+                  		'write:department',
+                  		'write:role',
+                  		'assign:role'
                    	])<-assigned<-(user WHERE id = $user))
                 ]);
                 RETURN $organizations;
@@ -528,12 +483,12 @@ impl Query {
             .bind(("user_id", authenticated_ref.sub.to_owned()))
             .await
             .map_err(|e| {
-                tracing::error!("Error fetching roles: {}", e);
-                ExtendedError::new("Error fetching roles", StatusCode::BAD_REQUEST.as_str()).build()
+                tracing::error!("Error fetching organizations: {}", e);
+                ExtendedError::new("Error fetching organizations", StatusCode::BAD_REQUEST.as_str()).build()
             })?;
 
         let response: Vec<Organization> = fetch_user_orgs_query.take(0).map_err(|e| {
-            tracing::error!("SystemRole deserialization error: {}", e);
+            tracing::error!("Organization deserialization error: {}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
 
@@ -576,10 +531,10 @@ impl Query {
                	};
                 LET $departments = array::flatten([
                    	(SELECT * FROM department WHERE created_by = $user),
-                   	(SELECT * FROM department WHERE <-is_under<-(role WHERE (is_admin OR is_super_admin) AND admin_permissions CONTAINSANY [
-                  		'CreateDepartment',
-                  		'CreateRole',
-                  		'AssignRole'
+                   	(SELECT * FROM department WHERE <-is_under<-(role WHERE (is_admin OR is_super_admin) AND ->granted->permission.name CONTAINSANY [
+                  		'write:department',
+                  		'write:role',
+                  		'assign:role'
                    	])<-assigned<-(user WHERE id = $user)),
                     (SELECT * FROM department WHERE ->is_under->(organization WHERE created_by = $user)),
                     (SELECT * FROM department WHERE ->is_under->(department WHERE created_by = $user))
@@ -591,12 +546,12 @@ impl Query {
             .bind(("user_id", authenticated_ref.sub.to_owned()))
             .await
             .map_err(|e| {
-                tracing::error!("Error fetching roles: {}", e);
-                ExtendedError::new("Error fetching roles", StatusCode::BAD_REQUEST.as_str()).build()
+                tracing::error!("Error fetching departments: {}", e);
+                ExtendedError::new("Error fetching departments", StatusCode::BAD_REQUEST.as_str()).build()
             })?;
 
         let response: Vec<Department> = fetch_user_departments_query.take(0).map_err(|e| {
-            tracing::error!("SystemRole deserialization error: {}", e);
+            tracing::error!("Department deserialization error: {}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
 

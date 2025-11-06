@@ -4,7 +4,8 @@
 -- A schema-full user table.
 DEFINE TABLE user SCHEMAFULL;
 -- define some fields.
-DEFINE FIELD user_name ON TABLE user TYPE option<string>;
+DEFINE FIELD OVERWRITE user_name ON TABLE user TYPE option<string>
+    ASSERT string::matches($value, "^[a-z0-9_]+$");
 DEFINE INDEX userNameIndex ON TABLE user COLUMNS user_name UNIQUE;
 DEFINE FIELD first_name ON TABLE user TYPE option<string>;
 DEFINE FIELD middle_name ON TABLE user TYPE option<string>;
@@ -60,7 +61,8 @@ DEFINE FIELD updated_at ON TABLE user TYPE datetime
 -- A schema-full role table.
 DEFINE TABLE role SCHEMAFULL;
 -- define some fields.
-DEFINE FIELD role_name ON TABLE role TYPE string VALUE string::uppercase($value);
+DEFINE FIELD role_name ON TABLE role TYPE string VALUE string::uppercase($value)
+    ASSERT string::matches($value, "^[A-Za-z0-9_]+$");
 DEFINE FIELD is_default ON TABLE role TYPE bool DEFAULT false;
 DEFINE EVENT restrict_setting_default_role ON TABLE role WHEN $event  = 'CREATE' OR $event = 'UPDATE' THEN {
     IF ($after.is_super_admin OR $after.is_admin) AND $after.is_default {
@@ -102,22 +104,30 @@ DEFINE FIELD updated_at ON TABLE role TYPE datetime
 -- A schema-full permission table.
 DEFINE TABLE permission SCHEMAFULL TYPE NORMAL;
 DEFINE FIELD OVERWRITE name ON TABLE permission TYPE string
-      ASSERT string::matches($value, "^(read|write|delete|assign|grant):[A-Za-z0-9_]+$");
+      ASSERT string::matches($value, "^(read|write|delete|assign|grant|revoke):[A-Za-z0-9_]+$");
 DEFINE EVENT enforce_either_admin_or_super_admin ON TABLE role WHEN $event = 'CREATE' OR $event = 'UPDATE' THEN {
       IF $after.is_super_admin AND $after.is_admin {
           THROW 'Has to be either admin or super_admin.';
       };
   };
-DEFINE FIELD OVERWRITE resource ON TABLE permission VALUE string::split(name, ':')[1];
+DEFINE FIELD OVERWRITE resource ON TABLE permission VALUE <record<resource>>$value;
 DEFINE FIELD created_by ON TABLE permission VALUE <record<user>>$value;
 DEFINE INDEX permissionNameIndex on TABLE permission COLUMNS name UNIQUE;
 DEFINE FIELD is_admin ON TABLE permission TYPE bool
       DEFAULT false;
 DEFINE FIELD is_super_admin ON TABLE permission TYPE bool
       DEFAULT false;
+DEFINE FIELD created_at ON TABLE permission TYPE datetime
+    DEFAULT time::now() READONLY;
+DEFINE FIELD updated_at ON TABLE permission TYPE datetime
+    VALUE time::now();
 
 -- Relationship between permissions and roles
 DEFINE TABLE granted SCHEMAFULL TYPE RELATION IN role OUT permission;
+DEFINE INDEX rolePermissionIndex ON TABLE granted COLUMNS in, out UNIQUE;
+DEFINE FIELD created_at ON TABLE granted TYPE datetime
+    DEFAULT time::now() READONLY;
+
 
 -- Relationship between user and roles
 DEFINE TABLE assigned SCHEMAFULL TYPE RELATION IN user OUT role;
@@ -138,10 +148,26 @@ DEFINE EVENT enforce_one_super_admin_role ON TABLE assigned WHEN $event = 'CREAT
 };
 DEFINE INDEX userRoleIndex ON TABLE assigned
 COLUMNS in, out UNIQUE;
+DEFINE FIELD created_at ON TABLE assigned TYPE datetime
+    DEFAULT time::now() READONLY;
+DEFINE FIELD updated_at ON TABLE assigned TYPE datetime
+    VALUE time::now();
+
+-- A schema-full resource table
+DEFINE TABLE resource SCHEMAFULL TYPE NORMAL;
+DEFINE FIELD name ON TABLE resource TYPE string VALUE string::lowercase($value)
+    ASSERT string::matches($value, "^[A-Za-z0-9_]+$");
+DEFINE INDEX resourceNameIndex ON TABLE resource COLUMNS name, created_by UNIQUE;
+DEFINE FIELD created_by ON TABLE resource VALUE <record<user>>$value;
+DEFINE FIELD created_at ON TABLE resource TYPE datetime
+  DEFAULT time::now() READONLY;
+DEFINE FIELD updated_at ON TABLE resource TYPE datetime
+  VALUE time::now();
 
 -- A schema-full organization table
 DEFINE TABLE organization SCHEMAFULL TYPE NORMAL;
-DEFINE FIELD org_name ON TABLE organization TYPE string VALUE string::uppercase($value);
+DEFINE FIELD OVERWRITE org_name ON TABLE organization TYPE string VALUE string::uppercase($value)
+    ASSERT string::matches($value, "^[A-Za-z0-9_]+$");
 DEFINE INDEX orgNameIndex ON TABLE organization COLUMNS org_name, created_by UNIQUE;
 DEFINE FIELD created_by ON TABLE organization VALUE <record<user>>$value;
 DEFINE FIELD created_at ON TABLE organization TYPE datetime
@@ -151,7 +177,8 @@ DEFINE FIELD updated_at ON TABLE organization TYPE datetime
 
 -- A schema-full department table
 DEFINE TABLE department SCHEMAFULL TYPE NORMAL;
-DEFINE FIELD dep_name ON TABLE department TYPE string VALUE string::uppercase($value);
+DEFINE FIELD OVERWRITE dep_name ON TABLE department TYPE string VALUE string::uppercase($value)
+    ASSERT string::matches($value, "^[A-Za-z0-9_]+$");
 DEFINE INDEX depNameIndex ON TABLE department COLUMNS dep_name, created_by UNIQUE;
 DEFINE FIELD created_by ON TABLE department VALUE <record<user>>$value;
 DEFINE FIELD created_at ON TABLE department TYPE datetime
@@ -161,7 +188,11 @@ DEFINE FIELD updated_at ON TABLE department TYPE datetime
 
 
 -- A schema-full relation table for departments
-DEFINE TABLE is_under SCHEMAFULL TYPE RELATION IN role | department OUT department | organization;
+DEFINE TABLE is_under SCHEMAFULL TYPE RELATION IN resource | role | department OUT department | organization;
+DEFINE INDEX isUnderIndex ON TABLE is_under
+COLUMNS in, out UNIQUE;
+DEFINE FIELD created_at ON TABLE is_under TYPE datetime
+  DEFAULT time::now() READONLY;
 
 
 -- Function to check if user has a role, if not, assign a default role using edge relationship

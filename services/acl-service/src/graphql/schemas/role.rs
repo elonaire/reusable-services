@@ -119,6 +119,7 @@ pub struct PermissionInput {
     pub created_by: String,
     pub is_admin: Option<bool>,
     pub is_super_admin: Option<bool>,
+    pub resource: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
@@ -129,6 +130,8 @@ pub struct Permission {
     pub name: String,
     #[graphql(skip)]
     pub created_by: RecordId,
+    #[graphql(skip)]
+    pub resource: RecordId,
     pub is_admin: bool,
     pub is_super_admin: bool,
 }
@@ -142,4 +145,42 @@ impl Permission {
     async fn created_by(&self) -> String {
         self.created_by.key().to_string()
     }
+
+    async fn resource(&self) -> String {
+        self.created_by.key().to_string()
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
+pub struct ResourceInput {
+    pub name: String,
+    #[graphql(skip)]
+    pub created_by: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
+#[graphql(complex)]
+pub struct Resource {
+    #[graphql(skip)]
+    pub id: RecordId,
+    pub name: String,
+    #[graphql(skip)]
+    pub created_by: RecordId,
+}
+
+#[ComplexObject]
+impl Resource {
+    async fn id(&self) -> String {
+        self.id.key().to_string()
+    }
+
+    async fn created_by(&self) -> String {
+        self.created_by.key().to_string()
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
+pub struct ResourceMetadata {
+    pub organization_id: Option<String>,
+    pub department_id: Option<String>,
 }

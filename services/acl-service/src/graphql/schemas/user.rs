@@ -54,7 +54,7 @@ pub struct UserInput {
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
 #[graphql(complex)]
 pub struct User {
-    #[graphql(skip)]
+    #[graphql(skip, secret)]
     pub id: RecordId,
     pub user_name: Option<String>,
     pub first_name: Option<String>,
