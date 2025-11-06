@@ -536,8 +536,8 @@ impl Query {
                   		'write:role',
                   		'assign:role'
                    	])<-assigned<-(user WHERE id = $user)),
-                    (SELECT * FROM department WHERE ->is_under->(organization WHERE created_by = $user)),
-                    (SELECT * FROM department WHERE ->is_under->(department WHERE created_by = $user))
+                    (SELECT @.{..}(<-is_under<-department.*) AS departments FROM ONLY organization WHERE created_by = $user LIMIT 1)['departments'],
+                    (SELECT @.{..}(<-is_under<-department.*) AS departments FROM ONLY department WHERE created_by = $user LIMIT 1)['departments']
                 ]);
                 RETURN $departments;
                 COMMIT TRANSACTION;
