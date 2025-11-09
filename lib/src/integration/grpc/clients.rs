@@ -42,13 +42,11 @@ impl From<acl_service::AuthorizationConstraint> for utils::models::Authorization
     fn from(authorization_constraint: acl_service::AuthorizationConstraint) -> Self {
         Self {
             permissions: authorization_constraint.permissions,
-            privilege: Some(
-                authorization_constraint
-                    .privilege
-                    .unwrap()
-                    .try_into()
-                    .unwrap(),
-            ),
+            privilege: authorization_constraint
+                .privilege
+                .unwrap()
+                .try_into()
+                .unwrap(),
         }
     }
 }

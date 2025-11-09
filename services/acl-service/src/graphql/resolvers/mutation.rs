@@ -12,7 +12,7 @@ use lib::utils::{
     auth::AuthClaim,
     cookie_parser::parse_cookies,
     custom_error::ExtendedError,
-    models::{AdminPrivilege, AuthorizationConstraint, EmailMQTTPayload, RoleType},
+    models::{AdminPrivilege, AuthorizationConstraint, EmailMQTTPayload},
 };
 use rsa::{pkcs8::DecodePublicKey, Pkcs1v15Encrypt, RsaPublicKey};
 use rumqttc::v5::mqttbytes::QoS;
@@ -23,8 +23,8 @@ use crate::{
     graphql::schemas::{
         role::{
             Department, DepartmentInput, DepartmentInputMetadata, Organization, OrganizationInput,
-            Permission, PermissionInput, Resource, ResourceInput, ResourceMetadata, RoleInput,
-            RoleMetadata, SystemRole,
+            Permission, PermissionInput, PermissionMetadata, Resource, ResourceInput,
+            ResourceMetadata, RoleInput, RoleMetadata, SystemRole,
         },
         user::{AuthDetails, User, UserInput, UserLogins, UserUpdate},
     },
@@ -231,7 +231,7 @@ impl Mutation {
         // Evaluate admin permissions here to restrict the Admin from giving Superadmin privileges. Constraint is already effected in the database.
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["write:role".into()],
-            privilege: Some(AdminPrivilege::Admin),
+            privilege: AdminPrivilege::Admin,
         };
 
         let authorized =
@@ -241,13 +241,14 @@ impl Mutation {
             return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
         }
 
-        let is_admin = match role_metadata.role_type {
-            RoleType::Admin => true,
-            RoleType::Other => false,
+        match role_metadata.admin_privilege {
+            AdminPrivilege::Admin => {
+                role_input.is_admin = true;
+            }
+            _ => {}
         };
 
         role_input.created_by = format!("user:{}", authenticated_ref.sub);
-        role_input.is_admin = is_admin;
 
         let mut create_role_query = db
             .query(
@@ -300,7 +301,6 @@ impl Mutation {
             .bind(("role_input", role_input))
             .bind(("role_metadata", role_metadata))
             .bind(("user_id", authenticated_ref.sub.to_owned()))
-            .bind(("is_admin", is_admin))
             .await
             .map_err(|e| {
                 tracing::error!("Error creating role: {}", e);
@@ -472,7 +472,7 @@ impl Mutation {
         // Evaluate admin permissions here to restrict the Admin from giving Superadmin privileges. Constraint is already effected in the database.
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["write:user".into()],
-            privilege: None,
+            privilege: AdminPrivilege::None,
         };
 
         let authorized =
@@ -541,7 +541,7 @@ impl Mutation {
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["assign:role".into()],
-            privilege: Some(AdminPrivilege::Admin),
+            privilege: AdminPrivilege::Admin,
         };
 
         let authorized =
@@ -620,7 +620,7 @@ impl Mutation {
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["revoke:role".into()],
-            privilege: Some(AdminPrivilege::Admin),
+            privilege: AdminPrivilege::Admin,
         };
 
         let authorized =
@@ -696,7 +696,7 @@ impl Mutation {
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["write:organization".into()],
-            privilege: Some(AdminPrivilege::Admin),
+            privilege: AdminPrivilege::Admin,
         };
 
         let authenticated_ref = &authenticated;
@@ -768,7 +768,7 @@ impl Mutation {
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["write:department".into()],
-            privilege: Some(AdminPrivilege::Admin),
+            privilege: AdminPrivilege::Admin,
         };
 
         let authenticated_ref = &authenticated;
@@ -994,6 +994,7 @@ impl Mutation {
         &self,
         ctx: &Context<'_>,
         mut permission_input: PermissionInput,
+        permission_metadata: PermissionMetadata,
     ) -> Result<Permission> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
@@ -1005,7 +1006,7 @@ impl Mutation {
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["write:permission".into()],
-            privilege: Some(AdminPrivilege::SuperAdmin),
+            privilege: AdminPrivilege::SuperAdmin,
         };
 
         let authenticated_ref = &authenticated;
@@ -1017,6 +1018,16 @@ impl Mutation {
         if !authorized {
             return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
         }
+
+        match permission_metadata.admin_privilege {
+            AdminPrivilege::Admin => {
+                permission_input.is_admin = true;
+            }
+            AdminPrivilege::SuperAdmin => {
+                permission_input.is_super_admin = true;
+            }
+            _ => {}
+        };
 
         permission_input.created_by = format!("user:{}", authenticated_ref.sub);
         permission_input.resource = format!("resource:{}", permission_input.resource);
@@ -1085,7 +1096,7 @@ impl Mutation {
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["grant:permission".into()],
-            privilege: Some(AdminPrivilege::Admin),
+            privilege: AdminPrivilege::Admin,
         };
 
         let authenticated_ref = &authenticated;
@@ -1189,7 +1200,7 @@ impl Mutation {
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["revoke:permission".into()],
-            privilege: Some(AdminPrivilege::Admin),
+            privilege: AdminPrivilege::Admin,
         };
 
         let authenticated_ref = &authenticated;
@@ -1293,7 +1304,7 @@ impl Mutation {
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["write:resource".into()],
-            privilege: Some(AdminPrivilege::SuperAdmin),
+            privilege: AdminPrivilege::SuperAdmin,
         };
 
         let authenticated_ref = &authenticated;

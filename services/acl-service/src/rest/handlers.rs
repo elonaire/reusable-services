@@ -170,14 +170,18 @@ pub async fn exchange_code_for_token(
                     StatusCode::UNAUTHORIZED
                 })?;
 
-            let _create_user = create_oauth_user_if_not_exists::<Arc<Surreal<Client>>>(
+            let created_user = create_oauth_user_if_not_exists::<Arc<Surreal<Client>>>(
                 &db,
                 OAuthClientName::Google,
                 &OAuthUser::Google(user.clone()),
             )
-            .await;
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to create user: {}", e);
+                StatusCode::UNAUTHORIZED
+            })?;
 
-            let user_roles = fetch_user_roles(&db, &user.resource_name, None)
+            let user_roles = fetch_user_roles(&db, &created_user.id.key().to_string(), None)
                 .await
                 .map_err(|e| {
                     tracing::error!("Failed to fetch default roles: {}", e);
@@ -216,14 +220,18 @@ pub async fn exchange_code_for_token(
                         StatusCode::UNAUTHORIZED
                     })?;
 
-            let _create_user = create_oauth_user_if_not_exists::<Arc<Surreal<Client>>>(
+            let created_user = create_oauth_user_if_not_exists::<Arc<Surreal<Client>>>(
                 &db,
                 OAuthClientName::Github,
                 &OAuthUser::Github(user.clone()),
             )
-            .await;
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to create user: {}", e);
+                StatusCode::UNAUTHORIZED
+            })?;
 
-            let user_roles = fetch_user_roles(&db, &user.id.to_string(), None)
+            let user_roles = fetch_user_roles(&db, &created_user.id.key().to_string(), None)
                 .await
                 .map_err(|e| {
                     tracing::error!("Failed to fetch user roles: {}", e);

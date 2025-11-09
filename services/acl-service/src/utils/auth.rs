@@ -712,132 +712,84 @@ pub async fn confirm_authorization<T: Clone + AsSurrealClient>(
     auth_status: &AuthStatus,
     auth_constraint: &AuthorizationConstraint,
 ) -> Result<bool, Error> {
-    let mut is_admin_privileged = false;
-    let mut is_granted_permissions = false;
+    let formated_query =  match &auth_constraint.privilege {
+        AdminPrivilege::Admin => format!(
+            "
+            BEGIN TRANSACTION;
+            LET $user = type::thing('user', $user_id);
+            IF !$user.exists() {{
+          		THROW 'Invalid Input';
+           	}};
 
-    match &auth_constraint.privilege {
-        Some(privilege) => {
-            let formated_query = match privilege {
-                AdminPrivilege::Admin => format!(
-                    "
-                    BEGIN TRANSACTION;
-                    LET $user = type::thing('user', $user_id);
-                    IF !$user.exists() {{
-                  		THROW 'Invalid Input';
-                   	}};
+            LET $matching_roles = (SELECT ->assigned->(role WHERE (role_name = $current_role_name AND (is_admin OR is_super_admin) AND ->granted->(permission WHERE is_admin OR is_super_admin).name CONTAINSALL $permission_constraints)) AS admin_roles FROM ONLY $user)['admin_roles'];
+            IF $matching_roles != NONE AND array::len($matching_roles) > 0 {{
+          		RETURN $matching_roles.map(|$matching_role: any| record::id($matching_role));
+           	}} ELSE {{
+          		RETURN [];
+           	}};
 
-                    LET $matching_roles = (SELECT ->assigned->(role WHERE (role_name = $current_role_name AND (is_admin OR is_super_admin) AND ->granted->(permission WHERE is_admin OR is_super_admin).name CONTAINSALL $permission_constraints)) AS admin_roles FROM ONLY $user)['admin_roles'];
-                    IF $matching_roles != NONE AND array::len($matching_roles) > 0 {{
-                  		RETURN $matching_roles.map(|$matching_role: any| record::id($matching_role));
-                   	}} ELSE {{
-                  		RETURN [];
-                   	}};
+            COMMIT TRANSACTION;
+            "
+        ),
+        AdminPrivilege::SuperAdmin => format!(
+            "
+            BEGIN TRANSACTION;
+            LET $user = type::thing('user', $user_id);
+            IF !$user.exists() {{
+          		THROW 'Invalid Input';
+           	}};
+            LET $matching_roles = (SELECT ->assigned->(role WHERE role_name = $current_role_name AND is_super_admin AND ->granted->(permission WHERE is_super_admin OR is_admin).name CONTAINSALL $permission_constraints) AS super_admin_roles FROM ONLY $user)['super_admin_roles'];
+            IF $matching_roles != NONE AND array::len($matching_roles) > 0 {{
+          		RETURN $matching_roles.map(|$matching_role: any| record::id($matching_role));
+           	}} ELSE {{
+          		RETURN [];
+           	}};
 
-                    COMMIT TRANSACTION;
-                    "
-                ),
-                AdminPrivilege::SuperAdmin => format!(
-                    "
-                    BEGIN TRANSACTION;
-                    LET $user = type::thing('user', $user_id);
-                    IF !$user.exists() {{
-                  		THROW 'Invalid Input';
-                   	}};
-                    LET $matching_roles = (SELECT ->assigned->(role WHERE role_name = $current_role_name AND is_super_admin AND ->granted->(permission WHERE is_super_admin OR is_admin).name CONTAINSALL $permission_constraints) AS super_admin_roles FROM ONLY $user)['super_admin_roles'];
-                    IF $matching_roles != NONE AND array::len($matching_roles) > 0 {{
-                  		RETURN $matching_roles.map(|$matching_role: any| record::id($matching_role));
-                   	}} ELSE {{
-                  		RETURN [];
-                   	}};
+            COMMIT TRANSACTION;
+            "
+        ),
+        AdminPrivilege::None => format!(
+            "
+            BEGIN TRANSACTION;
+            LET $user = type::thing('user', $user_id);
+            IF !$user.exists() {{
+          		THROW 'Invalid Input';
+           	}};
 
-                    COMMIT TRANSACTION;
-                    "
-                ),
-            };
+            LET $matching_roles = (SELECT ->assigned->(role WHERE role_name = $current_role_name AND ->granted->permission.name CONTAINSALL $permission_constraints) AS user_roles FROM ONLY $user)['user_roles'];
+            IF $matching_roles != NONE AND array::len($matching_roles) > 0 {{
+          		RETURN $matching_roles.map(|$matching_role: any| record::id($matching_role));
+           	}} ELSE {{
+          		RETURN [];
+           	}};
 
-            let mut admin_privilege_check_query = db
-                .as_client()
-                .query(formated_query.as_str())
-                .bind(("user_id", auth_status.sub.to_owned()))
-                .bind(("current_role_name", auth_status.current_role.to_owned()))
-                .bind((
-                    "permission_constraints",
-                    auth_constraint.permissions.to_vec(),
-                ))
-                .await
-                .map_err(|e| {
-                    tracing::error!("{}", e);
-                    Error::new(ErrorKind::Other, "Database query failed")
-                })?;
-
-            // Get the first result from the first query
-            let response: Vec<String> = admin_privilege_check_query.take(0).map_err(|e| {
-                tracing::error!("admin_privilege_check_query: {}", e);
-                Error::new(ErrorKind::Other, "Database query deserialization failed")
-            })?;
-
-            is_admin_privileged = response.len() > 0;
-        }
-        None => {}
+            COMMIT TRANSACTION;
+            "
+        ),
     };
 
-    if auth_constraint.permissions.len() > 0 {
-        let mut role_privilege_check_query = db
-            .as_client()
-            .query(
-                "
-                BEGIN TRANSACTION;
-                LET $user = type::thing('user', $user_id);
-                IF !$user.exists() {{
-              		THROW 'Invalid Input';
-               	}};
-
-                LET $matching_roles = (SELECT ->assigned->(role WHERE role_name = $current_role_name AND ->granted->permission.name CONTAINSALL $permission_constraints) AS user_roles FROM ONLY $user)['user_roles'];
-                IF $matching_roles != NONE AND array::len($matching_roles) > 0 {{
-              		RETURN $matching_roles.map(|$matching_role: any| record::id($matching_role));
-               	}} ELSE {{
-              		RETURN [];
-               	}};
-
-                COMMIT TRANSACTION;
-                "
-            )
-            .bind(("user_id", auth_status.sub.to_owned()))
-            .bind(("permission_constraints", auth_constraint.permissions.to_vec()))
-            .bind(("current_role_name", auth_status.current_role.to_owned()))
-            .await
-            .map_err(|e| {
-                tracing::error!("{}", e);
-                Error::new(ErrorKind::Other, "Database query failed")
-            })?;
-
-        // Get the first result from the first query
-        let response: Vec<String> = role_privilege_check_query.take(0).map_err(|e| {
-            tracing::error!("role_privilege_check_query: {}", e);
-            Error::new(ErrorKind::Other, "Database query deserialization failed")
+    let mut admin_privilege_check_query = db
+        .as_client()
+        .query(formated_query.as_str())
+        .bind(("user_id", auth_status.sub.to_owned()))
+        .bind(("current_role_name", auth_status.current_role.to_owned()))
+        .bind((
+            "permission_constraints",
+            auth_constraint.permissions.to_vec(),
+        ))
+        .await
+        .map_err(|e| {
+            tracing::error!("{}", e);
+            Error::new(ErrorKind::Other, "Database query failed")
         })?;
 
-        tracing::debug!("response: {:?}", response);
+    // Get the first result from the first query
+    let response: Vec<String> = admin_privilege_check_query.take(0).map_err(|e| {
+        tracing::error!("admin_privilege_check_query: {}", e);
+        Error::new(ErrorKind::Other, "Database query deserialization failed")
+    })?;
 
-        is_granted_permissions = response.len() > 0;
-    };
-
-    tracing::debug!(
-        "is_admin_privileged: {}, is_granted_permissions: {}",
-        is_admin_privileged,
-        is_granted_permissions
-    );
-
-    Ok((auth_constraint.permissions.len() > 0
-        && is_granted_permissions
-        && auth_constraint.privilege.is_some()
-        && is_admin_privileged)
-        || (auth_constraint.permissions.len() > 0
-            && is_granted_permissions
-            && auth_constraint.privilege.is_none())
-        || (auth_constraint.permissions.len() == 0
-            && auth_constraint.privilege.is_some()
-            && is_admin_privileged))
+    Ok(response.len() > 0)
 }
 
 /// A generic utility function to verify OAuth tokens for Google, GitHub, and other OAuth providers
@@ -956,7 +908,7 @@ pub async fn create_oauth_user_if_not_exists<T: Clone + AsSurrealClient>(
     db: &T,
     oauth_client_name: OAuthClientName,
     user: &OAuthUser,
-) -> Result<(), Error> {
+) -> Result<User, Error> {
     match oauth_client_name {
         OAuthClientName::Google => {
             if let OAuthUser::Google(google_user) = user {
@@ -981,7 +933,7 @@ pub async fn create_oauth_user_if_not_exists<T: Clone + AsSurrealClient>(
                 })?;
 
                 match existing_user {
-                    Some(_existing_user) => Ok(()),
+                    Some(existing_user) => Ok(existing_user),
                     None => {
                         let email = google_user
                             .email_addresses
@@ -1001,9 +953,12 @@ pub async fn create_oauth_user_if_not_exists<T: Clone + AsSurrealClient>(
                             ..UserInput::default()
                         };
 
-                        let _created_user = create_user(db, user).await?;
+                        let created_user = create_user(db, user).await?;
 
-                        Ok(())
+                        match created_user {
+                            Some(user) => Ok(user),
+                            None => Err(Error::new(ErrorKind::Other, "Failed to create user!")),
+                        }
                     }
                 }
             } else {
@@ -1035,7 +990,7 @@ pub async fn create_oauth_user_if_not_exists<T: Clone + AsSurrealClient>(
                 })?;
 
                 match existing_user {
-                    Some(_existing_user) => Ok(()),
+                    Some(existing_user) => Ok(existing_user),
                     None => {
                         let email = github_user.email.as_ref();
 
@@ -1051,9 +1006,12 @@ pub async fn create_oauth_user_if_not_exists<T: Clone + AsSurrealClient>(
                             ..UserInput::default()
                         };
 
-                        let _created_user = create_user(db, user).await?;
+                        let created_user = create_user(db, user).await?;
 
-                        Ok(())
+                        match created_user {
+                            Some(user) => Ok(user),
+                            None => Err(Error::new(ErrorKind::Other, "Failed to create user!")),
+                        }
                     }
                 }
             } else {
@@ -1083,7 +1041,7 @@ pub async fn fetch_user_roles<T: Clone + AsSurrealClient>(
           		THROW 'User does not exist';
            	};
 
-            LET $roles = (SELECT ->(assigned WHERE is_default=true)->role.* AS roles FROM ONLY user WHERE id = $user OR oauth_user_id = $user_id LIMIT 1)['roles'];
+            LET $roles = (SELECT ->(assigned WHERE is_default=true)->role.* AS roles FROM ONLY user WHERE id = $user LIMIT 1)['roles'];
             RETURN $roles;
             COMMIT TRANSACTION;
             "
@@ -1101,7 +1059,7 @@ pub async fn fetch_user_roles<T: Clone + AsSurrealClient>(
           		THROW 'User does not exist';
            	};
 
-            LET $roles = (SELECT ->assigned->(role WHERE id = $role)[*] AS roles FROM ONLY user WHERE id = $user OR oauth_user_id = $user_id LIMIT 1)['roles'];
+            LET $roles = (SELECT ->assigned->(role WHERE id = $role)[*] AS roles FROM ONLY user WHERE id = $user LIMIT 1)['roles'];
             RETURN $roles;
             COMMIT TRANSACTION;
             "

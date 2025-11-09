@@ -22,6 +22,7 @@ message AuthStatus {
 enum AdminPrivilege {
   ADMIN = 0;
   SUPER_ADMIN = 1;
+  NONE = 2;
 }
 
 message AuthorizationConstraint {

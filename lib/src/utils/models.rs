@@ -55,10 +55,14 @@ pub struct EmailMQTTPayload<'a> {
     pub template: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Enum, Copy, Eq)]
 pub enum AdminPrivilege {
+    #[graphql(name = "Admin")]
     Admin,
+    #[graphql(name = "SuperAdmin")]
     SuperAdmin,
+    #[graphql(name = "None")]
+    None,
 }
 
 impl TryFrom<i32> for AdminPrivilege {
@@ -68,6 +72,7 @@ impl TryFrom<i32> for AdminPrivilege {
         match value {
             0 => Ok(AdminPrivilege::Admin),
             1 => Ok(AdminPrivilege::SuperAdmin),
+            2 => Ok(AdminPrivilege::None),
             _ => Err("Invalid status"),
         }
     }
@@ -78,6 +83,7 @@ impl From<AdminPrivilege> for i32 {
         match status {
             AdminPrivilege::Admin => 0,
             AdminPrivilege::SuperAdmin => 1,
+            AdminPrivilege::None => 2,
         }
     }
 }
@@ -85,13 +91,13 @@ impl From<AdminPrivilege> for i32 {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AuthorizationConstraint {
     pub permissions: Vec<String>,
-    pub privilege: Option<AdminPrivilege>,
+    pub privilege: AdminPrivilege,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
-pub enum RoleType {
-    #[graphql(name = "Admin")]
-    Admin,
-    #[graphql(name = "Other")]
-    Other,
-}
+// #[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
+// pub enum RoleType {
+//     #[graphql(name = "Admin")]
+//     Admin,
+//     #[graphql(name = "Other")]
+//     Other,
+// }

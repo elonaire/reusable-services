@@ -14,7 +14,7 @@ use surrealdb::{engine::remote::ws::Client, Surreal};
 
 use crate::{
     graphql::schemas::{
-        role::{Department, Organization, Permission, SystemRole},
+        role::{Department, Organization, Permission, Resource, SystemRole},
         user::{FetchUsersQueryFilters, User},
     },
     utils::auth::{confirm_authentication, confirm_authorization},
@@ -43,7 +43,7 @@ impl Query {
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["read:user".into()],
-            privilege: Some(AdminPrivilege::Admin),
+            privilege: AdminPrivilege::Admin,
         };
 
         let authorized =
@@ -190,7 +190,7 @@ impl Query {
 
                 let authorization_constraint = AuthorizationConstraint {
                     permissions: vec!["read:user".into()],
-                    privilege: Some(AdminPrivilege::Admin),
+                    privilege: AdminPrivilege::Admin,
                 };
 
                 let authorized =
@@ -305,7 +305,7 @@ impl Query {
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["read:role".into()],
-            privilege: Some(AdminPrivilege::Admin),
+            privilege: AdminPrivilege::Admin,
         };
 
         let authorized =
@@ -412,7 +412,7 @@ impl Query {
             IF !$user.exists() {
                 THROW 'Invalid Input';
             };
-            LET $permissions = (SELECT ->assigned->(role WHERE role_name = $current_role_name)->granted->permission.* AS permissions FROM ONLY $user)['permissions'];
+            LET $permissions = (SELECT *, resource[*] FROM permission WHERE <-granted<-(role WHERE role_name = $current_role_name)<-assigned<-(user WHERE id = $user));
             RETURN $permissions;
             COMMIT TRANSACTION;
             ",
@@ -449,7 +449,7 @@ impl Query {
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["read:organization".into()],
-            privilege: Some(AdminPrivilege::Admin),
+            privilege: AdminPrivilege::Admin,
         };
 
         let authorized =
@@ -510,7 +510,7 @@ impl Query {
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["read:department".into()],
-            privilege: Some(AdminPrivilege::Admin),
+            privilege: AdminPrivilege::Admin,
         };
 
         let authorized =
@@ -554,6 +554,69 @@ impl Query {
             tracing::error!("Department deserialization error: {}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
+
+        Ok(response)
+    }
+
+    /// Fetch all resources for the logged in user's current role's permissions.
+    async fn fetch_granted_permissions_resources(
+        &self,
+        ctx: &Context<'_>,
+    ) -> Result<Vec<Resource>> {
+        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
+            tracing::error!("Error extracting Surreal Client: {:?}", e);
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
+        })?;
+
+        let header_map = ctx.data_opt::<HeaderMap>();
+
+        let authenticated = confirm_authentication(header_map, db).await?;
+
+        let authenticated_ref = &authenticated;
+
+        let authorization_constraint = AuthorizationConstraint {
+            permissions: vec!["read:resource".into()],
+            privilege: AdminPrivilege::Admin,
+        };
+
+        let authorized =
+            confirm_authorization(db, &authenticated, &authorization_constraint).await?;
+
+        if !authorized {
+            return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
+        }
+
+        let mut fetch_role_permissions_resources_query = db
+            .query(
+                "
+            BEGIN TRANSACTION;
+            LET $user = type::thing('user', $user_id);
+
+            IF !$user.exists() {
+                THROW 'Invalid Input';
+            };
+            LET $resources = <set>(SELECT resource[*] FROM permission WHERE <-granted<-(role WHERE role_name = $current_role_name)<-assigned<-(user WHERE id = $user)).map(|$val| $val['resource']);
+            RETURN $resources;
+            COMMIT TRANSACTION;
+            ",
+            )
+            .bind(("user_id", authenticated_ref.sub.to_owned()))
+            .bind(("current_role_name", authenticated_ref.current_role.to_owned()))
+            .await
+            .map_err(|e| {
+                tracing::error!("Error fetching resources: {}", e);
+                ExtendedError::new("Error fetching resources", StatusCode::BAD_REQUEST.as_str())
+                    .build()
+            })?;
+
+        let response: Vec<Resource> =
+            fetch_role_permissions_resources_query
+                .take(0)
+                .map_err(|e| {
+                    tracing::error!("SystemRole deserialization error: {}", e);
+                    ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str())
+                        .build()
+                })?;
 
         Ok(response)
     }

@@ -1,5 +1,5 @@
 use async_graphql::{ComplexObject, InputObject, SimpleObject};
-use lib::utils::models::RoleType;
+use lib::utils::models::AdminPrivilege;
 use serde::{Deserialize, Serialize};
 use surrealdb::RecordId;
 
@@ -14,10 +14,36 @@ pub struct RoleInput {
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
 pub struct RoleMetadata {
-    pub role_type: RoleType,
+    pub admin_privilege: AdminPrivilege,
     pub organization_id: Option<String>,
     pub department_id: Option<String>,
     pub permission_ids: Option<Vec<String>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
+#[graphql(complex)]
+pub struct SystemRole {
+    #[graphql(skip)]
+    pub id: RecordId,
+    pub role_name: String,
+    #[graphql(skip)]
+    pub created_by: RecordId,
+    pub created_at: Option<String>,
+    pub is_admin: Option<bool>,
+    pub is_default: Option<bool>,
+    pub is_super_admin: Option<bool>,
+    pub updated_at: Option<String>,
+}
+
+#[ComplexObject]
+impl SystemRole {
+    async fn id(&self) -> String {
+        self.id.key().to_string()
+    }
+
+    async fn created_by(&self) -> String {
+        self.created_by.key().to_string()
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
@@ -86,40 +112,21 @@ impl Department {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
-#[graphql(complex)]
-pub struct SystemRole {
-    #[graphql(skip)]
-    pub id: RecordId,
-    pub role_name: String,
-    #[graphql(skip)]
-    pub created_by: RecordId,
-    pub created_at: Option<String>,
-    pub is_admin: Option<bool>,
-    pub is_default: Option<bool>,
-    pub is_super_admin: Option<bool>,
-    pub updated_at: Option<String>,
-}
-
-#[ComplexObject]
-impl SystemRole {
-    async fn id(&self) -> String {
-        self.id.key().to_string()
-    }
-
-    async fn created_by(&self) -> String {
-        self.created_by.key().to_string()
-    }
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
 pub struct PermissionInput {
     pub name: String,
     #[graphql(skip)]
     pub created_by: String,
-    pub is_admin: Option<bool>,
-    pub is_super_admin: Option<bool>,
+    #[graphql(skip)]
+    pub is_admin: bool,
+    #[graphql(skip)]
+    pub is_super_admin: bool,
     pub resource: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
+pub struct PermissionMetadata {
+    pub admin_privilege: AdminPrivilege,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
@@ -130,10 +137,11 @@ pub struct Permission {
     pub name: String,
     #[graphql(skip)]
     pub created_by: RecordId,
-    #[graphql(skip)]
-    pub resource: RecordId,
+    pub resource: Resource,
     pub is_admin: bool,
     pub is_super_admin: bool,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
 }
 
 #[ComplexObject]
@@ -146,9 +154,9 @@ impl Permission {
         self.created_by.key().to_string()
     }
 
-    async fn resource(&self) -> String {
-        self.created_by.key().to_string()
-    }
+    // async fn resource(&self) -> String {
+    //     self.created_by.key().to_string()
+    // }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]

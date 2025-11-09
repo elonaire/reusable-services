@@ -77,7 +77,7 @@ DEFINE EVENT enforce_one_default_role ON TABLE role WHEN $event = 'CREATE' OR $e
         };
     };
 };
-DEFINE FIELD is_admin ON TABLE role  VALUE IF $value IS NOT NONE { <bool>$value } ELSE { false };
+DEFINE FIELD is_admin ON TABLE role VALUE IF $value IS NOT NONE { <bool>$value } ELSE { false };
 DEFINE FIELD is_super_admin ON TABLE role TYPE bool DEFAULT false;
 DEFINE EVENT enforce_one_super_admin_role ON TABLE role WHEN $event = 'CREATE' OR $event = 'UPDATE' THEN {
     IF $after.is_super_admin {
@@ -113,10 +113,8 @@ DEFINE EVENT enforce_either_admin_or_super_admin ON TABLE role WHEN $event = 'CR
 DEFINE FIELD OVERWRITE resource ON TABLE permission VALUE <record<resource>>$value;
 DEFINE FIELD created_by ON TABLE permission VALUE <record<user>>$value;
 DEFINE INDEX permissionNameIndex on TABLE permission COLUMNS name UNIQUE;
-DEFINE FIELD is_admin ON TABLE permission TYPE bool
-      DEFAULT false;
-DEFINE FIELD is_super_admin ON TABLE permission TYPE bool
-      DEFAULT false;
+DEFINE FIELD OVERWRITE is_admin ON TABLE permission VALUE IF $value IS NOT NONE { <bool>$value } ELSE { false };
+DEFINE FIELD OVERWRITE is_super_admin ON TABLE permission VALUE IF $value IS NOT NONE { <bool>$value } ELSE { false };
 DEFINE FIELD created_at ON TABLE permission TYPE datetime
     DEFAULT time::now() READONLY;
 DEFINE FIELD updated_at ON TABLE permission TYPE datetime
