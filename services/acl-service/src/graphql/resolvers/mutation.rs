@@ -1032,19 +1032,15 @@ impl Mutation {
         permission_input.created_by = format!("user:{}", authenticated_ref.sub);
         permission_input.resource = format!("resource:{}", permission_input.resource);
 
-        tracing::debug!("permission_input: {:?}", permission_input);
-
         let mut create_permission_query = db
             .query(
                 "
                 BEGIN TRANSACTION;
                 LET $permission = (CREATE permission CONTENT $permission_input RETURN AFTER);
-                -- The Super Admin should be granted any permission being created automatically.
                 LET $permission_id = (SELECT VALUE id FROM ONLY $permission LIMIT 1);
                 LET $super_admin_roles = (SELECT VALUE id FROM role WHERE is_super_admin);
                 RELATE $super_admin_roles -> granted -> $permission_id;
-
-                RETURN $permission;
+                RETURN (SELECT * FROM $permission FETCH resource);
                 COMMIT TRANSACTION;
                 ",
             )

@@ -174,6 +174,8 @@ pub struct Resource {
     pub name: String,
     #[graphql(skip)]
     pub created_by: RecordId,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
 }
 
 #[ComplexObject]

@@ -558,11 +558,8 @@ impl Query {
         Ok(response)
     }
 
-    /// Fetch all resources for the logged in user's current role's permissions.
-    async fn fetch_granted_permissions_resources(
-        &self,
-        ctx: &Context<'_>,
-    ) -> Result<Vec<Resource>> {
+    /// Fetch all resources.
+    async fn fetch_resources(&self, ctx: &Context<'_>) -> Result<Vec<Resource>> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
@@ -576,7 +573,7 @@ impl Query {
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["read:resource".into()],
-            privilege: AdminPrivilege::Admin,
+            privilege: AdminPrivilege::SuperAdmin,
         };
 
         let authorized =
@@ -595,13 +592,16 @@ impl Query {
             IF !$user.exists() {
                 THROW 'Invalid Input';
             };
-            LET $resources = <set>(SELECT resource[*] FROM permission WHERE <-granted<-(role WHERE role_name = $current_role_name)<-assigned<-(user WHERE id = $user)).map(|$val| $val['resource']);
+            LET $resources =(SELECT * FROM resource);
             RETURN $resources;
             COMMIT TRANSACTION;
             ",
             )
             .bind(("user_id", authenticated_ref.sub.to_owned()))
-            .bind(("current_role_name", authenticated_ref.current_role.to_owned()))
+            .bind((
+                "current_role_name",
+                authenticated_ref.current_role.to_owned(),
+            ))
             .await
             .map_err(|e| {
                 tracing::error!("Error fetching resources: {}", e);
