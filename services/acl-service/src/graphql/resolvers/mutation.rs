@@ -22,7 +22,7 @@ use tokio::fs;
 use crate::{
     graphql::schemas::{
         role::{
-            Department, DepartmentInput, DepartmentInputMetadata, Organization, OrganizationInput,
+            Department, DepartmentInput, DepartmentMetadata, Organization, OrganizationInput,
             Permission, PermissionInput, PermissionMetadata, Resource, ResourceInput,
             ResourceMetadata, RoleInput, RoleMetadata, SystemRole,
         },
@@ -756,7 +756,7 @@ impl Mutation {
         &self,
         ctx: &Context<'_>,
         mut department_input: DepartmentInput,
-        department_input_metadata: DepartmentInputMetadata,
+        department_metadata: DepartmentMetadata,
     ) -> Result<Department> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
@@ -786,8 +786,8 @@ impl Mutation {
             .query(
                 "
                 BEGIN TRANSACTION;
-                IF $department_input_metadata.organization_id {
-                    LET $org = type::thing('organization', $department_input_metadata.organization_id);
+                IF $department_metadata.organization_id {
+                    LET $org = type::thing('organization', $department_metadata.organization_id);
                     IF !$org.exists() {
                         THROW 'Invalid Input';
                     };
@@ -796,8 +796,8 @@ impl Mutation {
                     RELATE $department_id -> is_under -> $org;
 
                     RETURN $created_department;
-                } ELSE IF $department_input_metadata.department_id {
-                    LET $dep = type::thing('department', $department_input_metadata.department_id);
+                } ELSE IF $department_metadata.department_id {
+                    LET $dep = type::thing('department', $department_metadata.department_id);
                     IF !$dep.exists() {
                         THROW 'Invalid Input';
                     };
@@ -814,7 +814,7 @@ impl Mutation {
                 ",
             )
             .bind(("department_input", department_input))
-            .bind(("department_input_metadata", department_input_metadata))
+            .bind(("department_metadata", department_metadata))
             .await
             .map_err(|e| {
                 tracing::error!("Error creating department: {}", e);

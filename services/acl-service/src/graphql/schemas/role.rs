@@ -84,7 +84,7 @@ pub struct DepartmentInput {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
-pub struct DepartmentInputMetadata {
+pub struct DepartmentMetadata {
     pub organization_id: Option<String>,
     pub department_id: Option<String>,
 }
