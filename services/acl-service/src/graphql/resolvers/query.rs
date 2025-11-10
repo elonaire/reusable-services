@@ -529,15 +529,15 @@ impl Query {
                	{
               		THROW 'Invalid Input';
                	};
-                LET $departments = array::flatten([
+                LET $departments = <set>array::flatten([
                    	(SELECT * FROM department WHERE created_by = $user),
                    	(SELECT * FROM department WHERE <-is_under<-(role WHERE (is_admin OR is_super_admin) AND ->granted->permission.name CONTAINSANY [
                   		'write:department',
                   		'write:role',
                   		'assign:role'
                    	])<-assigned<-(user WHERE id = $user)),
-                    ((SELECT @.{..}(<-is_under<-department.*) AS departments FROM ONLY organization WHERE created_by = $user LIMIT 1)['departments']),
-                    ((SELECT @.{..}(<-is_under<-department.*) AS departments FROM ONLY department WHERE created_by = $user LIMIT 1)['departments'])
+                    (SELECT * FROM department WHERE @.{..}(->is_under)->(organization WHERE created_by = $user)),
+                    (SELECT * FROM department WHERE @.{..}(->is_under)->(department WHERE created_by = $user)),
                 ]).filter(|$v| $v);
                 RETURN $departments;
                 COMMIT TRANSACTION;
