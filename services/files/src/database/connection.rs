@@ -1,31 +1,49 @@
 use std::fs::File;
-use std::io::Read;
+use std::io::{Error, ErrorKind, Read};
 
 use dotenvy::dotenv;
 // use serde::Serialize;
 use surrealdb::{
     engine::remote::ws::{Client, Ws},
     opt::auth::Root,
-    Error, Result, Surreal,
+    Surreal,
 };
 
-pub async fn create_db_connection() -> Result<Surreal<Client>> {
+pub async fn create_db_connection() -> Result<Surreal<Client>, Error> {
     dotenv().ok();
     println!("Creating Surreal database connection...");
-    let db_host = std::env::var("DATABASE_HOST_FILES").expect("DB_HOST not set");
-    let db_port = std::env::var("DATABASE_PORT_FILES").expect("DB_PORT not set");
-    let db_user: String = std::env::var("DATABASE_USER").expect("DB_USER not set");
-    let db_password: String = std::env::var("DATABASE_PASSWORD").expect("DB_PASSWORD not set");
-    let db_name: String = std::env::var("DATABASE_NAME_FILES").expect("DB_NAME not set");
-    let db_namespace: String = std::env::var("DATABASE_NAMESPACE").expect("DB_NAMESPACE not set");
+    let db_host = std::env::var("DATABASE_HOST_FILES").map_err(|e| {
+        tracing::error!("Config Error: {}", e);
+        Error::new(ErrorKind::Other, "DATABASE_HOST_FILES not set")
+    })?;
+    let db_port = std::env::var("DATABASE_PORT_FILES").map_err(|e| {
+        tracing::error!("Config Error: {}", e);
+        Error::new(ErrorKind::Other, "DATABASE_PORT_FILES not set")
+    })?;
+    let db_user: String = std::env::var("DATABASE_USER").map_err(|e| {
+        tracing::error!("Config Error: {}", e);
+        Error::new(ErrorKind::Other, "DATABASE_USER not set")
+    })?;
+    let db_password: String = std::env::var("DATABASE_PASSWORD").map_err(|e| {
+        tracing::error!("Config Error: {}", e);
+        Error::new(ErrorKind::Other, "DATABASE_PASSWORD not set")
+    })?;
+    let db_name: String = std::env::var("DATABASE_NAME_FILES").map_err(|e| {
+        tracing::error!("Config Error: {}", e);
+        Error::new(ErrorKind::Other, "DATABASE_NAME_FILES not set")
+    })?;
+    let db_namespace: String = std::env::var("DATABASE_NAMESPACE").map_err(|e| {
+        tracing::error!("Config Error: {}", e);
+        Error::new(ErrorKind::Other, "DATABASE_NAMESPACE not set")
+    })?;
     // let db_scope: String = std::env::var("DATABASE_SCOPE").expect("DB_SCOPE not set");
 
     let db_url = format!("{}:{}", db_host, db_port);
     // format!("{}:{}", db_host, db_port).as_str()
     println!("DB URL: {}", db_url);
     let db = Surreal::new::<Ws>(db_url).await.map_err(|e| {
-        tracing::error!("{}", e);
-        Error::from(e)
+        tracing::error!("Sign In error: {:?}", e);
+        Error::new(ErrorKind::Other, "Failed to connect to database")
     })?;
 
     // Authenticate as root
@@ -33,24 +51,34 @@ pub async fn create_db_connection() -> Result<Surreal<Client>> {
         username: db_user.clone().as_str(),
         password: db_password.clone().as_str(),
     })
-    .await?;
+    .await
+    .map_err(|e| {
+        tracing::error!("Sign In error: {:?}", e);
+        Error::new(ErrorKind::Other, "Failed to connect to database")
+    })?;
 
     // Select a specific namespace and database
     db.use_ns(db_namespace.as_str())
         .use_db(db_name.as_str())
-        .await?;
+        .await
+        .map_err(|e| {
+            tracing::error!("Namespace error: {:?}", e);
+            Error::new(ErrorKind::Other, "Failed to connect to database")
+        })?;
 
     // Perform migrations
     // println!("{:?}", env::current_dir());
-    let file_name =
-        std::env::var("DATABASE_SCHEMA_FILE_PATH").expect("DATABASE_SCHEMA_FILE_PATH not set");
+    let file_name = std::env::var("DATABASE_SCHEMA_FILE_PATH").map_err(|e| {
+        tracing::error!("Config Error: {}", e);
+        Error::new(ErrorKind::Other, "DATABASE_SCHEMA_FILE_PATH not set")
+    })?;
 
     let schema = read_file_to_string(file_name.as_str());
 
     if schema.is_some() {
         db.query(schema.unwrap().as_str()).await.map_err(|e| {
-            tracing::error!("{}", e);
-            Error::from(e)
+            tracing::error!("Query Error: {}", e);
+            Error::new(ErrorKind::Other, e)
         })?;
     }
 

@@ -87,19 +87,48 @@ async fn graphql_handler(
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
+    // Persist the server logs to a file on a daily basis using "tracing_subscriber"
+    let file_appender = tracing_appender::rolling::daily("./logs", "email.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
+    let stdout = std::io::stdout
+        .with_filter(|meta| {
+            meta.target() != "h2::codec::framed_write"
+                && meta.target() != "h2::codec::framed_read"
+                && meta.target() != "rumqttc::v5::state"
+        })
+        .with_max_level(tracing::Level::DEBUG); // Log to console at DEBUG level
+
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_writer(stdout.and(non_blocking))
+        .init();
+
     dotenv().ok();
     // let db = Arc::new(database::connection::create_db_connection().await.unwrap());
 
     // Bring in some needed env vars
     let deployment_env = env::var("ENVIRONMENT").unwrap_or_else(|_| "prod".to_string()); // default to production because it's the most secure
-    let allowed_services_cors = env::var("ALLOWED_SERVICES_CORS")
-        .expect("Missing the ALLOWED_SERVICES environment variable.");
-    let email_http_port =
-        env::var("EMAIL_HTTP_PORT").expect("Missing the EMAIL_HTTP_PORT environment variable.");
-    let email_grpc_port =
-        env::var("EMAIL_GRPC_PORT").expect("Missing the EMAIL_GRPC_PORT environment variable.");
-    let mqtt_host = env::var("MQTT_HOST").expect("Missing the MQTT_HOST environment variable.");
-    let mqtt_port = env::var("MQTT_PORT").expect("Missing the MQTT_PORT environment variable.");
+    let allowed_services_cors = env::var("ALLOWED_SERVICES_CORS").map_err(|e| {
+        tracing::error!("Config Error: {}", e);
+        Error::new(ErrorKind::Other, "ALLOWED_SERVICES_CORS not set")
+    })?;
+    let email_http_port = env::var("EMAIL_HTTP_PORT").map_err(|e| {
+        tracing::error!("Config Error: {}", e);
+        Error::new(ErrorKind::Other, "EMAIL_HTTP_PORT not set")
+    })?;
+    let email_grpc_port = env::var("EMAIL_GRPC_PORT").map_err(|e| {
+        tracing::error!("Config Error: {}", e);
+        Error::new(ErrorKind::Other, "EMAIL_GRPC_PORT not set")
+    })?;
+    let mqtt_host = env::var("MQTT_HOST").map_err(|e| {
+        tracing::error!("Config Error: {}", e);
+        Error::new(ErrorKind::Other, "MQTT_HOST not set")
+    })?;
+    let mqtt_port = env::var("MQTT_PORT").map_err(|e| {
+        tracing::error!("Config Error: {}", e);
+        Error::new(ErrorKind::Other, "MQTT_PORT not set")
+    })?;
 
     // Initialize the schema builder
     let mut schema_builder =
@@ -118,23 +147,6 @@ async fn main() -> Result<(), Error> {
         .split(",")
         .filter_map(|endpoint| endpoint.trim().parse::<HeaderValue>().ok())
         .collect();
-
-    // Persist the server logs to a file on a daily basis using "tracing_subscriber"
-    let file_appender = tracing_appender::rolling::daily("./logs", "email.log");
-    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
-
-    let stdout = std::io::stdout
-        .with_filter(|meta| {
-            meta.target() != "h2::codec::framed_write"
-                && meta.target() != "h2::codec::framed_read"
-                && meta.target() != "rumqttc::v5::state"
-        })
-        .with_max_level(tracing::Level::DEBUG); // Log to console at DEBUG level
-
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
-        .with_writer(stdout.and(non_blocking))
-        .init();
 
     let (client, mut eventloop) =
         MqttClient::new("email-service", &mqtt_host, mqtt_port.parse().unwrap()).await?;
@@ -177,7 +189,10 @@ async fn main() -> Result<(), Error> {
     let grpc_address: SocketAddr = format!("0.0.0.0:{}", email_grpc_port)
         .as_str()
         .parse()
-        .expect("The gRPC address must be set");
+        .map_err(|e| {
+            tracing::error!("Config Error: {}", e);
+            Error::new(ErrorKind::Other, "gRPC address not set")
+        })?;
     let tonic_auth_middleware = AuthMiddleware::default();
 
     tokio::spawn(async move {

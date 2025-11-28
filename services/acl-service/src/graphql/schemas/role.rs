@@ -153,10 +153,6 @@ impl Permission {
     async fn created_by(&self) -> String {
         self.created_by.key().to_string()
     }
-
-    // async fn resource(&self) -> String {
-    //     self.created_by.key().to_string()
-    // }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]

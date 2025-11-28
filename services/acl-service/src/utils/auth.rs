@@ -92,28 +92,19 @@ pub async fn initiate_auth_code_grant_flow(
     let client = match oauth_client {
         OAuthClientName::Google => BasicClient::new(ClientId::new(
             env::var("GOOGLE_OAUTH_CLIENT_ID").map_err(|e| {
-                tracing::error!(
-                    "Missing the GOOGLE_OAUTH_CLIENT_ID environment variable.: {}",
-                    e
-                );
+                tracing::error!("Config Error: {}", e);
                 Error::new(ErrorKind::Other, "Server Error")
             })?,
         ))
         .set_client_secret(ClientSecret::new(
             env::var("GOOGLE_OAUTH_CLIENT_SECRET").map_err(|e| {
-                tracing::error!(
-                    "Missing the GOOGLE_OAUTH_CLIENT_SECRET environment variable.: {}",
-                    e
-                );
+                tracing::error!("Config Error: {}", e);
                 Error::new(ErrorKind::Other, "Server Error")
             })?,
         ))
         .set_auth_uri(
             AuthUrl::new(env::var("GOOGLE_OAUTH_AUTHORIZE_URL").map_err(|e| {
-                tracing::error!(
-                    "Missing the GOOGLE_OAUTH_AUTHORIZE_URL environment variable.: {}",
-                    e
-                );
+                tracing::error!("Config Error: {}", e);
                 Error::new(ErrorKind::Other, "Server Error")
             })?)
             .map_err(|e| {
@@ -123,10 +114,7 @@ pub async fn initiate_auth_code_grant_flow(
         )
         .set_token_uri(
             TokenUrl::new(env::var("GOOGLE_OAUTH_ACCESS_TOKEN_URL").map_err(|e| {
-                tracing::error!(
-                    "Missing the GOOGLE_OAUTH_ACCESS_TOKEN_URL environment variable.: {}",
-                    e
-                );
+                tracing::error!("Config Error: {}", e);
                 Error::new(ErrorKind::Other, "Server Error")
             })?)
             .map_err(|e| {
@@ -136,10 +124,7 @@ pub async fn initiate_auth_code_grant_flow(
         )
         .set_revocation_url(
             RevocationUrl::new(env::var("GOOGLE_OAUTH_REVOKE_TOKEN_URL").map_err(|e| {
-                tracing::error!(
-                    "Missing the GOOGLE_OAUTH_REVOKE_TOKEN_URL environment variable.: {}",
-                    e
-                );
+                tracing::error!("Config Error: {}", e);
                 Error::new(ErrorKind::Other, "Server Error")
             })?)
             .map_err(|e| {
@@ -149,28 +134,19 @@ pub async fn initiate_auth_code_grant_flow(
         ),
         OAuthClientName::Github => BasicClient::new(ClientId::new(
             env::var("GITHUB_OAUTH_CLIENT_ID").map_err(|e| {
-                tracing::error!(
-                    "Missing the GITHUB_OAUTH_CLIENT_ID environment variable.: {}",
-                    e
-                );
+                tracing::error!("Config Error: {}", e);
                 Error::new(ErrorKind::Other, "Server Error")
             })?,
         ))
         .set_client_secret(ClientSecret::new(
             env::var("GITHUB_OAUTH_CLIENT_SECRET").map_err(|e| {
-                tracing::error!(
-                    "Missing the GITHUB_OAUTH_CLIENT_SECRET environment variable.: {}",
-                    e
-                );
+                tracing::error!("Config Error: {}", e);
                 Error::new(ErrorKind::Other, "Server Error")
             })?,
         ))
         .set_auth_uri(
             AuthUrl::new(env::var("GITHUB_OAUTH_AUTHORIZE_URL").map_err(|e| {
-                tracing::error!(
-                    "Missing the GITHUB_OAUTH_AUTHORIZE_URL environment variable.: {}",
-                    e
-                );
+                tracing::error!("Config Error: {}", e);
                 Error::new(ErrorKind::Other, "Server Error")
             })?)
             .map_err(|e| {
@@ -180,10 +156,7 @@ pub async fn initiate_auth_code_grant_flow(
         )
         .set_token_uri(
             TokenUrl::new(env::var("GITHUB_OAUTH_ACCESS_TOKEN_URL").map_err(|e| {
-                tracing::error!(
-                    "Missing the GITHUB_OAUTH_ACCESS_TOKEN_URL environment variable.: {}",
-                    e
-                );
+                tracing::error!("Config Error: {}", e);
                 Error::new(ErrorKind::Other, "Server Error")
             })?)
             .map_err(|e| {
@@ -193,10 +166,7 @@ pub async fn initiate_auth_code_grant_flow(
         )
         .set_revocation_url(
             RevocationUrl::new(env::var("GITHUB_OAUTH_REVOKE_TOKEN_URL").map_err(|e| {
-                tracing::error!(
-                    "Missing the GITHUB_OAUTH_REVOKE_TOKEN_URL environment variable.: {}",
-                    e
-                );
+                tracing::error!("Config Error: {}", e);
                 Error::new(ErrorKind::Other, "Server Error")
             })?)
             .map_err(|e| {
@@ -207,10 +177,10 @@ pub async fn initiate_auth_code_grant_flow(
     };
 
     Ok(client.set_redirect_uri(
-        RedirectUrl::new(
-            env::var("OAUTH_REDIRECT_URI")
-                .expect("Missing the OAUTH_REDIRECT_URI environment variable."),
-        )
+        RedirectUrl::new(env::var("OAUTH_REDIRECT_URI").map_err(|e| {
+            tracing::error!("Config Error: {}", e);
+            Error::new(ErrorKind::Other, "Server Error")
+        })?)
         .map_err(|e| {
             tracing::error!("Failed to create RedirectUrl.: {}", e);
             Error::new(ErrorKind::Other, "Server Error")
