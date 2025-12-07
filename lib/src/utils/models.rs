@@ -118,11 +118,3 @@ pub struct UserPaymentDetails {
     pub reference: String,
     // pub metadata: Option<PaymentDetailsMetaData>,
 }
-
-// #[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
-// pub enum RoleType {
-//     #[graphql(name = "Admin")]
-//     Admin,
-//     #[graphql(name = "Other")]
-//     Other,
-// }

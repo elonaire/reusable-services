@@ -87,6 +87,17 @@ async fn graphql_handler(
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
+    // Persist the server logs to a file on a daily basis using "tracing_subscriber"
+    let file_appender = tracing_appender::rolling::daily("./logs", "payments.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
+    let stdout = std::io::stdout.with_max_level(tracing::Level::DEBUG); // Log to console at DEBUG level
+
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_writer(stdout.and(non_blocking))
+        .init();
+
     let connection_pool = database::connection::create_db_connection()
         .await
         .map_err(|e| {
@@ -125,17 +136,6 @@ async fn main() -> Result<(), Error> {
         .split(",")
         .filter_map(|endpoint| endpoint.trim().parse::<HeaderValue>().ok())
         .collect();
-
-    // Persist the server logs to a file on a daily basis using "tracing_subscriber"
-    let file_appender = tracing_appender::rolling::daily("./logs", "payments.log");
-    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
-
-    let stdout = std::io::stdout.with_max_level(tracing::Level::DEBUG); // Log to console at DEBUG level
-
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
-        .with_writer(stdout.and(non_blocking))
-        .init();
 
     let (client, mut eventloop) =
         MqttClient::new("payments-service", &mqtt_host, mqtt_port.parse().unwrap()).await?;

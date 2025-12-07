@@ -48,8 +48,8 @@ pub async fn create_db_connection() -> Result<Surreal<Client>, Error> {
 
     // Authenticate as root
     db.signin(Root {
-        username: db_user.as_str(),
-        password: db_password.as_str(),
+        username: &db_user,
+        password: &db_password,
     })
     .await
     .map_err(|e| {
@@ -58,8 +58,8 @@ pub async fn create_db_connection() -> Result<Surreal<Client>, Error> {
     })?;
 
     // Select a specific namespace and database
-    db.use_ns(db_namespace.as_str())
-        .use_db(db_name.as_str())
+    db.use_ns(&db_namespace)
+        .use_db(&db_name)
         .await
         .map_err(|e| {
             tracing::error!("Namespace error: {:?}", e);
@@ -73,21 +73,24 @@ pub async fn create_db_connection() -> Result<Surreal<Client>, Error> {
         Error::new(ErrorKind::Other, "DATABASE_SCHEMA_FILE_PATH not set")
     })?;
 
-    let schema = read_file_to_string(file_name.as_str());
-
-    if schema.is_some() {
-        db.query(schema.unwrap().as_str()).await.map_err(|e| {
-            tracing::error!("Query Error: {}", e);
-            Error::new(ErrorKind::Other, e)
-        })?;
-    }
+    let schema = read_file_to_string(&file_name)?;
+    db.query(&schema).await.map_err(|e| {
+        tracing::error!("Query Error: {}", e);
+        Error::new(ErrorKind::Other, e)
+    })?;
 
     Ok(db)
 }
 
-fn read_file_to_string(filename: &str) -> Option<String> {
-    let mut file = File::open(filename).ok()?;
+fn read_file_to_string(filename: &str) -> Result<String, Error> {
+    let mut file = File::open(filename).map_err(|e| {
+        tracing::error!("File Error: {}", e);
+        Error::new(ErrorKind::Other, "Server Error")
+    })?;
     let mut contents = String::new();
-    file.read_to_string(&mut contents).ok()?;
-    Some(contents)
+    file.read_to_string(&mut contents).map_err(|e| {
+        tracing::error!("File Read Error: {}", e);
+        Error::new(ErrorKind::Other, "Server Error")
+    })?;
+    Ok(contents)
 }
