@@ -1,0 +1,16 @@
+syntax = "proto3";
+package payments;
+
+service PaymentsService {
+    rpc InitiatePaymentIntegration(UserPaymentDetails) returns (PaymentIntegrationResponse);
+}
+
+message UserPaymentDetails {
+    string email = 1;
+    uint64 amount = 2;
+    string reference = 3;
+}
+
+message PaymentIntegrationResponse {
+    string authorization_url = 1;
+}

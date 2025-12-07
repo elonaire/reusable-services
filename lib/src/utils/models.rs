@@ -94,6 +94,31 @@ pub struct AuthorizationConstraint {
     pub privilege: AdminPrivilege,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
+pub struct InitializePaymentResponse {
+    pub status: bool,
+    pub message: String,
+    pub data: InitializePaymentResponseData,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
+pub struct InitializePaymentResponseData {
+    #[serde(rename = "authorization_url")]
+    pub authorization_url: String,
+    #[serde(rename = "access_code")]
+    pub access_code: String,
+    pub reference: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
+#[graphql(input_name = "UserPaymentDetailsInput")]
+pub struct UserPaymentDetails {
+    pub email: String,
+    pub amount: u64,
+    // pub currency: Option<String>,
+    pub reference: String,
+    // pub metadata: Option<PaymentDetailsMetaData>,
+}
+
 // #[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
 // pub enum RoleType {
 //     #[graphql(name = "Admin")]

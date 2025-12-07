@@ -7,6 +7,7 @@ members = [
     "services/acl-service",
     "services/files",
     "services/email",
+    "services/payments",
 ]
 
 [profile.release]

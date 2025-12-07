@@ -10,3 +10,4 @@ prod.env
 k8s.env
 *.key
 *.pem
+/email-templates

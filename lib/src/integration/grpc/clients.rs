@@ -15,6 +15,20 @@ pub mod files_service {
     include!("out/files.rs");
 }
 
+pub mod payments_service {
+    include!("out/payments.rs");
+}
+
+impl From<payments_service::UserPaymentDetails> for utils::models::UserPaymentDetails {
+    fn from(user: payments_service::UserPaymentDetails) -> Self {
+        Self {
+            email: user.email,
+            amount: user.amount,
+            reference: user.reference,
+        }
+    }
+}
+
 /// For easy conversion to protobuf
 impl From<utils::models::AuthStatus> for acl_service::ConfirmAuthenticationResponse {
     fn from(auth_status: utils::models::AuthStatus) -> Self {

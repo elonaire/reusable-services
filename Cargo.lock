@@ -3079,6 +3079,36 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "17359afc20d7ab31fdb42bb844c8b3bb1dabd7dcf7e68428492da7f16966fcef"
 
 [[package]]
+name = "payments"
+version = "0.1.0"
+dependencies = [
+ "async-graphql",
+ "async-graphql-axum",
+ "async-trait",
+ "axum 0.8.6",
+ "chrono",
+ "dotenvy",
+ "hex",
+ "hmac",
+ "hyper",
+ "lib",
+ "prost",
+ "reqwest",
+ "rumqttc",
+ "serde",
+ "serde_json",
+ "sha2",
+ "surrealdb",
+ "tokio",
+ "tonic",
+ "tonic-middleware",
+ "tower-http",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "pbkdf2"
 version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
