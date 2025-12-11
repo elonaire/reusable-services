@@ -1,5 +1,7 @@
 use async_graphql::{MergedObject, Object};
 
+use crate::graphql::resolvers::payments::query::PaymentQuery;
+
 #[derive(Default)]
 pub struct EmptyQuery;
 
@@ -11,4 +13,4 @@ impl EmptyQuery {
 }
 
 #[derive(MergedObject, Default)]
-pub struct Query(EmptyQuery);
+pub struct Query(EmptyQuery, PaymentQuery);

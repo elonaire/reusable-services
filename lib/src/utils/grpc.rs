@@ -10,6 +10,7 @@ use tonic::{
 use crate::integration::grpc::clients::{
     acl_service::acl_client::AclClient, email_service::email_service_client::EmailServiceClient,
     files_service::files_service_client::FilesServiceClient,
+    payments_service::payments_service_client::PaymentsServiceClient,
 };
 
 // Define the trait for gRPC clients
@@ -83,6 +84,17 @@ impl GrpcClient for FilesServiceClient<Channel> {
             .connect()
             .await?;
         Ok(FilesServiceClient::new(channel))
+    }
+}
+
+// Implement the trait for PaymentsServiceClient<Channel>
+#[async_trait]
+impl GrpcClient for PaymentsServiceClient<Channel> {
+    async fn connect<'a>(endpoint: &'a str) -> Result<Self, Error> {
+        let channel = Endpoint::from_shared(endpoint.to_string())?
+            .connect()
+            .await?;
+        Ok(PaymentsServiceClient::new(channel))
     }
 }
 
