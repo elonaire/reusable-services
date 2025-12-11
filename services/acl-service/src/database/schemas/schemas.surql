@@ -93,7 +93,7 @@ DEFINE EVENT enforce_either_admin_or_super_admin ON TABLE role WHEN $event = 'CR
     };
 };
 DEFINE INDEX roleNameIndex ON TABLE role COLUMNS role_name UNIQUE;
-DEFINE FIELD created_by ON TABLE role VALUE <record<user>>$value;
+DEFINE FIELD OVERWRITE created_by ON TABLE role TYPE record<user>;
 
 DEFINE FIELD created_at ON TABLE role TYPE datetime
   DEFAULT time::now() READONLY;
@@ -110,8 +110,8 @@ DEFINE EVENT enforce_either_admin_or_super_admin ON TABLE role WHEN $event = 'CR
           THROW 'Has to be either admin or super_admin.';
       };
   };
-DEFINE FIELD resource ON TABLE permission VALUE <record<resource>>$value;
-DEFINE FIELD created_by ON TABLE permission VALUE <record<user>>$value;
+DEFINE FIELD OVERWRITE resource ON TABLE permission TYPE record<resource>;
+DEFINE FIELD OVERWRITE created_by ON TABLE permission TYPE record<user>;
 DEFINE INDEX permissionNameIndex on TABLE permission COLUMNS name UNIQUE;
 DEFINE FIELD is_admin ON TABLE permission VALUE IF $value IS NOT NONE { <bool>$value } ELSE { false };
 DEFINE FIELD is_super_admin ON TABLE permission VALUE IF $value IS NOT NONE { <bool>$value } ELSE { false };
@@ -156,7 +156,7 @@ DEFINE TABLE resource SCHEMAFULL TYPE NORMAL;
 DEFINE FIELD name ON TABLE resource TYPE string VALUE string::lowercase($value)
     ASSERT string::matches($value, "^[A-Za-z0-9_]+$");
 DEFINE INDEX resourceNameIndex ON TABLE resource COLUMNS name, created_by UNIQUE;
-DEFINE FIELD created_by ON TABLE resource VALUE <record<user>>$value;
+DEFINE FIELD OVERWRITE created_by ON TABLE resource TYPE record<user>;
 DEFINE FIELD created_at ON TABLE resource TYPE datetime
   DEFAULT time::now() READONLY;
 DEFINE FIELD updated_at ON TABLE resource TYPE datetime
@@ -167,7 +167,7 @@ DEFINE TABLE organization SCHEMAFULL TYPE NORMAL;
 DEFINE FIELD org_name ON TABLE organization TYPE string VALUE string::uppercase($value)
     ASSERT string::matches($value, "^[A-Za-z0-9_]+$");
 DEFINE INDEX orgNameIndex ON TABLE organization COLUMNS org_name, created_by UNIQUE;
-DEFINE FIELD created_by ON TABLE organization VALUE <record<user>>$value;
+DEFINE FIELD OVERWRITE created_by ON TABLE organization TYPE record<user>;
 DEFINE FIELD created_at ON TABLE organization TYPE datetime
   DEFAULT time::now() READONLY;
 DEFINE FIELD updated_at ON TABLE organization TYPE datetime
@@ -178,7 +178,7 @@ DEFINE TABLE department SCHEMAFULL TYPE NORMAL;
 DEFINE FIELD dep_name ON TABLE department TYPE string VALUE string::uppercase($value)
     ASSERT string::matches($value, "^[A-Za-z0-9_]+$");
 DEFINE INDEX depNameIndex ON TABLE department COLUMNS dep_name, created_by UNIQUE;
-DEFINE FIELD created_by ON TABLE department VALUE <record<user>>$value;
+DEFINE FIELD OVERWRITE created_by ON TABLE department TYPE record<user>;
 DEFINE FIELD created_at ON TABLE department TYPE datetime
   DEFAULT time::now() READONLY;
 DEFINE FIELD updated_at ON TABLE department TYPE datetime

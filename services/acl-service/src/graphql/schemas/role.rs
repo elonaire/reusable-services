@@ -7,7 +7,7 @@ use surrealdb::RecordId;
 pub struct RoleInput {
     pub role_name: String,
     #[graphql(skip)]
-    pub created_by: String,
+    pub created_by: Option<RecordId>,
     #[graphql(skip)]
     pub is_admin: bool,
 }
@@ -50,7 +50,7 @@ impl SystemRole {
 pub struct OrganizationInput {
     pub org_name: String,
     #[graphql(skip)]
-    pub created_by: String,
+    pub created_by: Option<RecordId>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
@@ -80,7 +80,7 @@ impl Organization {
 pub struct DepartmentInput {
     pub dep_name: String,
     #[graphql(skip)]
-    pub created_by: String,
+    pub created_by: Option<RecordId>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
@@ -116,17 +116,19 @@ impl Department {
 pub struct PermissionInput {
     pub name: String,
     #[graphql(skip)]
-    pub created_by: String,
+    pub created_by: Option<RecordId>,
     #[graphql(skip)]
     pub is_admin: bool,
     #[graphql(skip)]
     pub is_super_admin: bool,
-    pub resource: String,
+    #[graphql(skip)]
+    pub resource: Option<RecordId>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
 pub struct PermissionMetadata {
     pub admin_privilege: AdminPrivilege,
+    pub resource_id: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
@@ -159,7 +161,7 @@ impl Permission {
 pub struct ResourceInput {
     pub name: String,
     #[graphql(skip)]
-    pub created_by: String,
+    pub created_by: Option<RecordId>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]

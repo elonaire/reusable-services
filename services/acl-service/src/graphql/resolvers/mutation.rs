@@ -16,7 +16,7 @@ use lib::utils::{
 };
 use rsa::{pkcs8::DecodePublicKey, Pkcs1v15Encrypt, RsaPublicKey};
 use rumqttc::v5::mqttbytes::QoS;
-use surrealdb::{engine::remote::ws::Client, Surreal};
+use surrealdb::{engine::remote::ws::Client, RecordId, Surreal};
 use tokio::fs;
 
 use crate::{
@@ -248,7 +248,7 @@ impl Mutation {
             _ => {}
         };
 
-        role_input.created_by = format!("user:{}", authenticated_ref.sub);
+        role_input.created_by = Some(RecordId::from_table_key("user", &authenticated_ref.sub));
 
         let mut create_role_query = db
             .query(
@@ -708,7 +708,8 @@ impl Mutation {
             return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
         }
 
-        organization_input.created_by = format!("user:{}", authenticated_ref.sub);
+        organization_input.created_by =
+            Some(RecordId::from_table_key("user", &authenticated_ref.sub));
 
         let mut create_organization_query = db
             .query(
@@ -780,7 +781,8 @@ impl Mutation {
             return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
         }
 
-        department_input.created_by = format!("user:{}", authenticated_ref.sub);
+        department_input.created_by =
+            Some(RecordId::from_table_key("user", &authenticated_ref.sub));
 
         let mut create_department_query = db
             .query(
@@ -1029,8 +1031,12 @@ impl Mutation {
             _ => {}
         };
 
-        permission_input.created_by = format!("user:{}", authenticated_ref.sub);
-        permission_input.resource = format!("resource:{}", permission_input.resource);
+        permission_input.created_by =
+            Some(RecordId::from_table_key("user", &authenticated_ref.sub));
+        permission_input.resource = Some(RecordId::from_table_key(
+            "resource",
+            &permission_metadata.resource_id,
+        ));
 
         let mut create_permission_query = db
             .query(
@@ -1313,7 +1319,7 @@ impl Mutation {
             return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
         }
 
-        resource_input.created_by = format!("user:{}", authenticated_ref.sub);
+        resource_input.created_by = Some(RecordId::from_table_key("user", &authenticated_ref.sub));
 
         let mut create_resource_query = db
             .query(
