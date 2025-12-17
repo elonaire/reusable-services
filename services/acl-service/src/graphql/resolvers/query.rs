@@ -271,6 +271,43 @@ impl Query {
         }
     }
 
+    /// Fetch site owner basic info.
+    async fn fetch_site_owner_info(&self, ctx: &Context<'_>) -> Result<User> {
+        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
+            tracing::error!("Error extracting Surreal Client: {:?}", e);
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
+        })?;
+
+        let mut user_query = db
+            .query(
+                "
+                BEGIN TRANSACTION;
+                LET $found_user = (SELECT * OMIT password, user_name, status, phone, oauth_client, oauth_user_id FROM ONLY user WHERE ->assigned->(role WHERE is_super_admin) LIMIT 1);
+                RETURN $found_user;
+                COMMIT TRANSACTION;
+                "
+            )
+            .await
+            .map_err(|e| {
+            tracing::error!("Error fetching user: {}", e);
+            ExtendedError::new("Error fetching user", StatusCode::BAD_REQUEST.as_str()).build()
+        })?;
+
+        let user: Option<User> = user_query.take(0).map_err(|e| {
+            tracing::debug!("User deserialization error: {}", e);
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
+        })?;
+
+        match user {
+            Some(user) => return Ok(user),
+            None => {
+                return Err(
+                    ExtendedError::new("User not found", StatusCode::NOT_FOUND.as_str()).build(),
+                )
+            }
+        }
+    }
+
     async fn check_auth(&self, ctx: &Context<'_>) -> Result<AuthStatus> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
