@@ -3,6 +3,7 @@ use std::{
     fs::Metadata,
     io::{Error, ErrorKind},
     path::Path,
+    sync::Arc,
 };
 
 use lib::{
@@ -12,6 +13,7 @@ use lib::{
         models::{CreateFileInfo, ForeignKey, PurchaseFileDetails, User},
     },
 };
+use surrealdb::{engine::remote::ws::Client, Surreal};
 use tokio::{fs::File, io::AsyncWriteExt};
 use uuid::Uuid;
 
@@ -137,8 +139,9 @@ pub async fn purchase_file<T: Clone + AsSurrealClient>(
 
 pub async fn create_file_from_content<T: Clone + AsSurrealClient>(
     db: &T,
-    file_info: CreateFileInfo,
-) -> Result<bool, Error> {
+    file_info: &CreateFileInfo,
+    user_id: &str,
+) -> Result<String, Error> {
     let upload_dir = env::var("FILE_UPLOADS_DIR").map_err(|err| {
         tracing::error!(
             "Missing the FILE_UPLOADS_DIR environment variable.: {}",
@@ -163,7 +166,72 @@ pub async fn create_file_from_content<T: Clone + AsSurrealClient>(
         Error::new(ErrorKind::Other, "Failed to get file metadata")
     })?;
 
-    tracing::debug!("file_metadata: {:?}", file_metadata);
+    let user_fk_body = ForeignKey {
+        table: "user_id".into(),
+        column: "user_id".into(),
+        foreign_key: user_id.to_owned(),
+    };
 
-    Ok(true)
+    let user_fk: Option<User> = add_foreign_key_if_not_exists(db, user_fk_body).await;
+
+    if user_fk.is_none() {
+        return Err(Error::new(
+            ErrorKind::Other,
+            "Failed to insert file into database",
+        ));
+    }
+
+    let user_id_raw = user_fk.unwrap().id.key().to_string();
+
+    // Insert uploaded files into the database
+    let mut db_query_result = db
+        .as_client()
+        .query(
+            "
+            BEGIN TRANSACTION;
+            LET $user = type::thing('user_id', $user_id);
+
+            IF !$user.exists() {
+                THROW 'Invalid Input';
+            };
+
+            LET $new_file = (CREATE file CONTENT {
+               	owner: $user,
+               	name: $name,
+                size: $size,
+                mime_type: $mime_type,
+                system_filename: $system_filename,
+                is_free: $is_free
+            });
+            RETURN $new_file[0];
+            COMMIT TRANSACTION;
+            ",
+        )
+        .bind(("user_id", user_id_raw))
+        .bind(("name", file_info.file_name.clone()))
+        .bind(("size", file_metadata.len()))
+        .bind((
+            "mime_type",
+            file_info.extension.fetch_mime_type().to_owned(),
+        ))
+        .bind(("is_free", file_info.is_free))
+        .bind(("system_filename", format!("{}", system_filename)))
+        .await
+        .map_err(|e| {
+            tracing::error!("Error creating file DB record: {}", e);
+            Error::new(ErrorKind::Other, "Failed to insert file into database")
+        })?;
+
+    let saved_file: Option<UploadedFile> = db_query_result.take(0).map_err(|e| {
+        tracing::error!("Failed to insert file into database: {}", e);
+        Error::new(ErrorKind::Other, "Failed to insert file into database")
+    })?;
+
+    match saved_file {
+        Some(file_info) => Ok(file_info.id.key().to_string()),
+        None => Err(Error::new(
+            ErrorKind::Other,
+            "Failed to insert file into database",
+        )),
+    }
 }

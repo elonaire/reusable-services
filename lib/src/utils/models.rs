@@ -52,6 +52,7 @@ pub struct CreateFileInfo {
     pub file_name: String,
     pub content: String,
     pub extension: AllowedCreateFileExtension,
+    pub is_free: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Enum, Copy, Eq)]

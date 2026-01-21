@@ -133,14 +133,14 @@ pub async fn upload(
             .query(
                 "
                 BEGIN TRANSACTION;
-                LET $user = type::thing($user_id);
+                LET $user = type::thing('user_id', $user_id);
 
                 IF !$user.exists() {
                     THROW 'Invalid Input';
                 };
 
                 LET $new_file = (CREATE file CONTENT {
-                   	owner: type::thing($user),
+                   	owner: $user,
                    	name: $name,
                     size: $size,
                     mime_type: $mime_type,
@@ -151,7 +151,7 @@ pub async fn upload(
                 COMMIT TRANSACTION;
                 ",
             )
-            .bind(("user_id", format!("user_id:{}", user_id_raw)))
+            .bind(("user_id", user_id_raw.clone()))
             .bind(("name", filename))
             .bind(("size", total_size))
             .bind(("mime_type", mime_type))

@@ -37,6 +37,7 @@ message CreateFileFromContentRequest {
     string file_name = 1;
     string content = 2;
     AllowedCreateFileExtension extension = 3;
+    bool is_free = 4;
 }
 
 enum AllowedCreateFileExtension {
@@ -45,5 +46,5 @@ enum AllowedCreateFileExtension {
 }
 
 message CreateFileFromContentResponse {
-    bool success = 1;
+    string file_id = 1;
 }

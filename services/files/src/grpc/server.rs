@@ -1,9 +1,12 @@
 use std::sync::Arc;
 
-use lib::integration::grpc::clients::files_service::{
-    files_service_server::FilesService, CreateFileFromContentRequest,
-    CreateFileFromContentResponse, FetchFileIdRequest, FetchFileIdResponse, FetchFileNameRequest,
-    FetchFileNameResponse, PurchaseFileRequest, PurchaseFileResponse,
+use lib::integration::grpc::clients::{
+    acl_service::{AuthStatus, ConfirmAuthenticationResponse},
+    files_service::{
+        files_service_server::FilesService, CreateFileFromContentRequest,
+        CreateFileFromContentResponse, FetchFileIdRequest, FetchFileIdResponse,
+        FetchFileNameRequest, FetchFileNameResponse, PurchaseFileRequest, PurchaseFileResponse,
+    },
 };
 use surrealdb::{engine::remote::ws::Client, Surreal};
 use tonic::{Request, Response, Status};
@@ -57,8 +60,17 @@ impl FilesService for FilesServiceImplementation {
         &self,
         request: Request<CreateFileFromContentRequest>,
     ) -> Result<Response<CreateFileFromContentResponse>, Status> {
-        match utils::files::create_file_from_content(&self.db, request.into_inner().into()).await {
-            Ok(success) => Ok(Response::new(CreateFileFromContentResponse { success })),
+        let auth_status = request
+            .extensions()
+            .get::<ConfirmAuthenticationResponse>()
+            .cloned()
+            .ok_or_else(|| Status::unauthenticated("Unauthorized"))?;
+
+        let payload = request.into_inner();
+        match utils::files::create_file_from_content(&self.db, &payload.into(), &auth_status.sub)
+            .await
+        {
+            Ok(file_id) => Ok(Response::new(CreateFileFromContentResponse { file_id })),
             Err(_e) => Err(Status::internal("Failed")),
         }
     }

@@ -120,6 +120,7 @@ impl From<files_service::CreateFileFromContentRequest> for utils::models::Create
             extension: file_info.extension.try_into().unwrap(),
             content: file_info.content,
             file_name: file_info.file_name,
+            is_free: file_info.is_free,
         }
     }
 }
