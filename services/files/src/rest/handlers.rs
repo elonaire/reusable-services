@@ -8,15 +8,13 @@ use lib::{
     integration::foreign_key::add_foreign_key_if_not_exists,
     utils::models::{AuthStatus, ForeignKey, User},
 };
+use tokio::{
+    fs::{remove_file, File},
+    io::{AsyncReadExt, AsyncWriteExt},
+};
 use uuid::Uuid;
 
-use std::{
-    env,
-    fs::{self, File},
-    io::Write,
-    path::Path,
-    sync::Arc,
-};
+use std::{env, path::Path, sync::Arc};
 use surrealdb::{engine::remote::ws::Client, Surreal};
 
 use crate::graphql::schemas::general::{UploadedFile, UploadedFileResponse};
@@ -51,11 +49,11 @@ pub async fn upload(
     let user_id_raw = user_fk.unwrap().id.key().to_string();
 
     let mut total_size: u64 = 0;
-    let mut filename = String::new();
-    let mut mime_type = String::new();
+    let mut filename;
+    let mut mime_type;
     let upload_dir = upload_dir.unwrap();
-    let mut field_name = String::new();
-    let mut is_free = true;
+    let mut field_name;
+    let mut is_free;
     let mut all_uploaded_files_response = Vec::new() as Vec<UploadedFileResponse>;
 
     // Ensure the directory exists
@@ -66,7 +64,7 @@ pub async fn upload(
 
     while let Some(field) = multipart.next_field().await.unwrap_or_else(|_| None) {
         let system_filename = Uuid::new_v4();
-        let filepath = format!("{}{}", &upload_dir, system_filename);
+        let filepath = Path::new(&upload_dir).join(&system_filename.to_string());
         let mut field = field;
 
         // Extract field name and filename
@@ -74,7 +72,6 @@ pub async fn upload(
             .file_name()
             .map(|name| name.to_string())
             .unwrap_or_else(|| "unknown".to_string());
-        // filepath = format!("{}/{}", &upload_dir, filename);
         // Extract the MIME type
         mime_type = field
             .content_type()
@@ -93,7 +90,7 @@ pub async fn upload(
         };
 
         // Create and open the file for writing
-        let mut file = match File::create(&filepath) {
+        let mut file = match File::create(&filepath).await {
             Ok(file) => file,
             Err(e) => {
                 tracing::error!("Failed to create file: {}", e);
@@ -108,26 +105,26 @@ pub async fn upload(
             Ok(None) => None,
             Err(e) => {
                 tracing::error!("Failed to read chunk: {}", e);
-                let _ = std::fs::remove_file(&filepath);
+                let _ = remove_file(&filepath).await;
                 return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file")
                     .into_response();
             }
         } {
             total_size += chunk.len() as u64;
-            if let Err(e) = file.write_all(&chunk) {
+            if let Err(e) = file.write_all(&chunk).await {
                 tracing::error!("Failed to write chunk: {}", e);
                 // Clean up file on error
-                let _ = std::fs::remove_file(&filepath);
+                let _ = remove_file(&filepath).await;
                 return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file")
                     .into_response();
             }
         }
 
         // Ensure file is successfully flushed
-        if let Err(e) = file.flush() {
+        if let Err(e) = file.flush().await {
             tracing::error!("Failed to flush file: {}", e);
             // Clean up file on error
-            let _ = std::fs::remove_file(&filepath);
+            let _ = remove_file(&filepath).await;
             return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file").into_response();
         }
 
@@ -164,7 +161,7 @@ pub async fn upload(
 
         if let Err(e) = &db_query_result {
             tracing::error!("Failed to insert file into database: {}", e);
-            let _ = std::fs::remove_file(&filepath);
+            let _ = remove_file(&filepath).await;
 
             return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file").into_response();
         } else {
@@ -172,7 +169,7 @@ pub async fn upload(
 
             if let Err(e) = stored_file {
                 tracing::error!("Failed to retrieve file from database: {}", e);
-                let _ = std::fs::remove_file(&filepath);
+                let _ = remove_file(&filepath).await;
 
                 return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file")
                     .into_response();
@@ -214,7 +211,11 @@ pub async fn download_file(
     let path = Path::new(&upload_dir).join(&file_name);
 
     if path.exists() {
-        let bytes = fs::read(&path).map_err(|_| StatusCode::NOT_FOUND)?;
+        let mut file = File::open(&path).await.map_err(|_| StatusCode::NOT_FOUND)?;
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer)
+            .await
+            .map_err(|_| StatusCode::NOT_FOUND)?;
 
         let mut file_details_query = db
             .query(
@@ -317,7 +318,7 @@ pub async fn download_file(
                         format!("attachment; filename=\"{}\"", &file_details.name),
                     )
                     .header("Content-Type", content_type.to_string())
-                    .body(bytes.into())
+                    .body(buffer.into())
                     .map_err(|err| {
                         tracing::error!("Failed to build response: {}", err);
                         StatusCode::INTERNAL_SERVER_ERROR
@@ -346,7 +347,11 @@ pub async fn get_image(
     let path = Path::new(&upload_dir).join(&file_name);
 
     if path.exists() {
-        let bytes = fs::read(path).map_err(|_| StatusCode::NOT_FOUND)?;
+        let mut file = File::open(&path).await.map_err(|_| StatusCode::NOT_FOUND)?;
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer)
+            .await
+            .map_err(|_| StatusCode::NOT_FOUND)?;
 
         let mut file_details_query = db
             .query(
@@ -372,7 +377,7 @@ pub async fn get_image(
 
                 let response = Response::builder()
                     .header("Content-Type", content_type.to_string())
-                    .body(bytes.into())
+                    .body(buffer.into())
                     .map_err(|e| {
                         tracing::error!("Failed database query: {}", e);
                         StatusCode::INTERNAL_SERVER_ERROR

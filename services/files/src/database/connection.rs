@@ -1,5 +1,5 @@
-use std::fs::File;
 use std::io::{Error, ErrorKind, Read};
+use tokio::{fs::File, io::AsyncReadExt};
 
 use dotenvy::dotenv;
 // use serde::Serialize;
@@ -73,7 +73,7 @@ pub async fn create_db_connection() -> Result<Surreal<Client>, Error> {
         Error::new(ErrorKind::Other, "DATABASE_SCHEMA_FILE_PATH not set")
     })?;
 
-    let schema = read_file_to_string(&file_name)?;
+    let schema = read_file_to_string(&file_name).await?;
     db.query(&schema).await.map_err(|e| {
         tracing::error!("Query Error: {}", e);
         Error::new(ErrorKind::Other, e)
@@ -82,13 +82,13 @@ pub async fn create_db_connection() -> Result<Surreal<Client>, Error> {
     Ok(db)
 }
 
-fn read_file_to_string(filename: &str) -> Result<String, Error> {
-    let mut file = File::open(filename).map_err(|e| {
+async fn read_file_to_string(filename: &str) -> Result<String, Error> {
+    let mut file = File::open(filename).await.map_err(|e| {
         tracing::error!("File Error: {}", e);
         Error::new(ErrorKind::Other, "Server Error")
     })?;
     let mut contents = String::new();
-    file.read_to_string(&mut contents).map_err(|e| {
+    file.read_to_string(&mut contents).await.map_err(|e| {
         tracing::error!("File Read Error: {}", e);
         Error::new(ErrorKind::Other, "Server Error")
     })?;

@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use lib::integration::grpc::clients::files_service::{
-    files_service_server::FilesService, FetchFileIdRequest, FetchFileIdResponse,
-    FetchFileNameRequest, FetchFileNameResponse, PurchaseFileRequest, PurchaseFileResponse,
+    files_service_server::FilesService, CreateFileFromContentRequest,
+    CreateFileFromContentResponse, FetchFileIdRequest, FetchFileIdResponse, FetchFileNameRequest,
+    FetchFileNameResponse, PurchaseFileRequest, PurchaseFileResponse,
 };
 use surrealdb::{engine::remote::ws::Client, Surreal};
 use tonic::{Request, Response, Status};
@@ -48,6 +49,16 @@ impl FilesService for FilesServiceImplementation {
     ) -> Result<Response<PurchaseFileResponse>, Status> {
         match utils::files::purchase_file(&self.db, request.into_inner().into()).await {
             Ok(response) => Ok(Response::new(PurchaseFileResponse { success: response })),
+            Err(_e) => Err(Status::internal("Failed")),
+        }
+    }
+
+    async fn create_file_from_content(
+        &self,
+        request: Request<CreateFileFromContentRequest>,
+    ) -> Result<Response<CreateFileFromContentResponse>, Status> {
+        match utils::files::create_file_from_content(&self.db, request.into_inner().into()).await {
+            Ok(success) => Ok(Response::new(CreateFileFromContentResponse { success })),
             Err(_e) => Err(Status::internal("Failed")),
         }
     }

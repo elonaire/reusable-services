@@ -47,6 +47,51 @@ pub struct PurchaseFileDetails {
     pub buyer_id: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
+pub struct CreateFileInfo {
+    pub file_name: String,
+    pub content: String,
+    pub extension: AllowedCreateFileExtension,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Enum, Copy, Eq)]
+pub enum AllowedCreateFileExtension {
+    #[graphql(name = "Markdown")]
+    Markdown,
+    #[graphql(name = "Txt")]
+    Txt,
+}
+
+impl AllowedCreateFileExtension {
+    pub fn fetch_mime_type(&self) -> &'static str {
+        match self {
+            Self::Markdown => "text/markdown",
+            Self::Txt => "text/plain",
+        }
+    }
+}
+
+impl TryFrom<i32> for AllowedCreateFileExtension {
+    type Error = &'static str;
+
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(AllowedCreateFileExtension::Markdown),
+            1 => Ok(AllowedCreateFileExtension::Txt),
+            _ => Err("Invalid extension"),
+        }
+    }
+}
+
+impl From<AllowedCreateFileExtension> for i32 {
+    fn from(status: AllowedCreateFileExtension) -> Self {
+        match status {
+            AllowedCreateFileExtension::Markdown => 0,
+            AllowedCreateFileExtension::Txt => 1,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct EmailMQTTPayload<'a> {
     pub recipient: &'a str,
@@ -73,7 +118,7 @@ impl TryFrom<i32> for AdminPrivilege {
             0 => Ok(AdminPrivilege::Admin),
             1 => Ok(AdminPrivilege::SuperAdmin),
             2 => Ok(AdminPrivilege::None),
-            _ => Err("Invalid status"),
+            _ => Err("Invalid privilege"),
         }
     }
 }

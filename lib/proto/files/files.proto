@@ -5,6 +5,7 @@ service FilesService {
     rpc FetchFileId(FetchFileIdRequest) returns (FetchFileIdResponse);
     rpc FetchFileName(FetchFileNameRequest) returns (FetchFileNameResponse);
     rpc PurchaseFile(PurchaseFileRequest) returns (PurchaseFileResponse);
+    rpc CreateFileFromContent(CreateFileFromContentRequest) returns (CreateFileFromContentResponse);
 }
 
 message FetchFileIdRequest {
@@ -29,5 +30,20 @@ message PurchaseFileRequest {
 }
 
 message PurchaseFileResponse {
+    bool success = 1;
+}
+
+message CreateFileFromContentRequest {
+    string file_name = 1;
+    string content = 2;
+    AllowedCreateFileExtension extension = 3;
+}
+
+enum AllowedCreateFileExtension {
+  MARKDOWN = 0;
+  TXT = 1;
+}
+
+message CreateFileFromContentResponse {
     bool success = 1;
 }

@@ -1,12 +1,19 @@
-use std::io::{Error, ErrorKind};
+use std::{
+    env,
+    fs::Metadata,
+    io::{Error, ErrorKind},
+    path::Path,
+};
 
 use lib::{
     integration::foreign_key::add_foreign_key_if_not_exists,
     utils::{
         custom_traits::AsSurrealClient,
-        models::{ForeignKey, PurchaseFileDetails, User},
+        models::{CreateFileInfo, ForeignKey, PurchaseFileDetails, User},
     },
 };
+use tokio::{fs::File, io::AsyncWriteExt};
+use uuid::Uuid;
 
 use crate::graphql::schemas::general::UploadedFile;
 
@@ -124,6 +131,39 @@ pub async fn purchase_file<T: Clone + AsSurrealClient>(
         tracing::error!("purchase_file_query Deserialization Error: {}", e);
         Error::new(ErrorKind::Other, "UploadedFile deserialization failed")
     })?;
+
+    Ok(true)
+}
+
+pub async fn create_file_from_content<T: Clone + AsSurrealClient>(
+    db: &T,
+    file_info: CreateFileInfo,
+) -> Result<bool, Error> {
+    let upload_dir = env::var("FILE_UPLOADS_DIR").map_err(|err| {
+        tracing::error!(
+            "Missing the FILE_UPLOADS_DIR environment variable.: {}",
+            err
+        );
+        Error::new(ErrorKind::Other, "Server Error")
+    })?;
+
+    let system_filename = Uuid::new_v4();
+    let filepath = Path::new(&upload_dir).join(&system_filename.to_string());
+
+    // Create and open the file for writing
+    let mut file = File::create(&filepath).await.map_err(|err| {
+        tracing::error!("Failed to create file: {}", err);
+        Error::new(ErrorKind::Other, "Failed to create file")
+    })?;
+
+    file.write_all(file_info.content.as_bytes()).await?;
+
+    let file_metadata = file.metadata().await.map_err(|err| {
+        tracing::error!("Failed to get file metadata: {}", err);
+        Error::new(ErrorKind::Other, "Failed to get file metadata")
+    })?;
+
+    tracing::debug!("file_metadata: {:?}", file_metadata);
 
     Ok(true)
 }

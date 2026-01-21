@@ -112,3 +112,14 @@ impl From<acl_service::ConfirmAuthenticationResponse> for utils::models::AuthSta
         }
     }
 }
+
+/// For easy conversion to protobuf
+impl From<files_service::CreateFileFromContentRequest> for utils::models::CreateFileInfo {
+    fn from(file_info: files_service::CreateFileFromContentRequest) -> Self {
+        Self {
+            extension: file_info.extension.try_into().unwrap(),
+            content: file_info.content,
+            file_name: file_info.file_name,
+        }
+    }
+}
