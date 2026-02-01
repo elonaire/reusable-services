@@ -7,14 +7,16 @@ use hyper::{
     HeaderMap, StatusCode,
 };
 use lib::utils::{
+    api_responses::synthesize_graphql_response,
     custom_error::ExtendedError,
-    models::{AdminPrivilege, AuthStatus, AuthorizationConstraint},
+    models::{AdminPrivilege, ApiResponse, AuthStatus, AuthorizationConstraint},
 };
 use surrealdb::{engine::remote::ws::Client, Surreal};
 
 use crate::{
     graphql::schemas::{
         role::{Department, Organization, Permission, Resource, SystemRole},
+        shared::GraphQLApiResponse,
         user::{FetchUsersQueryFilters, User},
     },
     utils::auth::{confirm_authentication, confirm_authorization},
@@ -29,15 +31,13 @@ impl Query {
         &self,
         ctx: &Context<'_>,
         filters: Option<FetchUsersQueryFilters>,
-    ) -> Result<Vec<User>> {
+    ) -> Result<GraphQLApiResponse<Vec<User>>> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
 
-        let header_map = ctx.data_opt::<HeaderMap>();
-
-        let authenticated = confirm_authentication(header_map, db).await?;
+        let authenticated = confirm_authentication(db, ctx).await?;
 
         let authenticated_ref = &authenticated;
 
@@ -130,11 +130,20 @@ impl Query {
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
 
-        Ok(response)
+        let api_response = synthesize_graphql_response(ctx, &response).ok_or_else(|| {
+            tracing::error!("Failed to synthesize response!");
+            ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+        })?;
+
+        Ok(api_response.into())
     }
 
     /// Fetch a single user by ID. Respects hierarchy and permissions.
-    async fn fetch_single_user(&self, ctx: &Context<'_>, user_id: String) -> Result<User> {
+    async fn fetch_single_user(
+        &self,
+        ctx: &Context<'_>,
+        user_id: String,
+    ) -> Result<GraphQLApiResponse<User>> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
@@ -173,7 +182,18 @@ impl Query {
                     })?;
 
                     match user {
-                        Some(user) => return Ok(user),
+                        Some(user) => {
+                            let api_response =
+                                synthesize_graphql_response(ctx, &user).ok_or_else(|| {
+                                    tracing::error!("Failed to synthesize response!");
+                                    ExtendedError::new(
+                                        "Bad Request",
+                                        StatusCode::BAD_REQUEST.as_str(),
+                                    )
+                                    .build()
+                                })?;
+                            return Ok(api_response.into());
+                        }
                         None => {
                             return Err(ExtendedError::new(
                                 "User not found",
@@ -184,7 +204,7 @@ impl Query {
                     }
                 }
 
-                let authenticated = confirm_authentication(Some(header_map), db).await?;
+                let authenticated = confirm_authentication(db, ctx).await?;
 
                 let authenticated_ref = &authenticated;
 
@@ -252,7 +272,16 @@ impl Query {
                 };
 
                 match user {
-                    Some(user) => Ok(user),
+                    Some(user) => {
+                        let api_response =
+                            synthesize_graphql_response(ctx, &user).ok_or_else(|| {
+                                tracing::error!("Failed to synthesize response!");
+                                ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str())
+                                    .build()
+                            })?;
+
+                        Ok(api_response.into())
+                    }
                     None => Err(ExtendedError::new(
                         "User not found",
                         StatusCode::NOT_FOUND.as_str(),
@@ -272,7 +301,7 @@ impl Query {
     }
 
     /// Fetch site owner basic info.
-    async fn fetch_site_owner_info(&self, ctx: &Context<'_>) -> Result<User> {
+    async fn fetch_site_owner_info(&self, ctx: &Context<'_>) -> Result<GraphQLApiResponse<User>> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
@@ -299,7 +328,14 @@ impl Query {
         })?;
 
         match user {
-            Some(user) => return Ok(user),
+            Some(user) => {
+                let api_response = synthesize_graphql_response(ctx, &user).ok_or_else(|| {
+                    tracing::error!("Failed to synthesize response!");
+                    ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+                })?;
+
+                return Ok(api_response.into());
+            }
             None => {
                 return Err(
                     ExtendedError::new("User not found", StatusCode::NOT_FOUND.as_str()).build(),
@@ -308,19 +344,23 @@ impl Query {
         }
     }
 
-    async fn check_auth(&self, ctx: &Context<'_>) -> Result<AuthStatus> {
+    async fn check_auth(&self, ctx: &Context<'_>) -> Result<GraphQLApiResponse<AuthStatus>> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
-        let header_map = ctx.data_opt::<HeaderMap>();
 
-        let auth_status = confirm_authentication(header_map, db).await.map_err(|e| {
+        let auth_status = confirm_authentication(db, ctx).await.map_err(|e| {
             tracing::error!("Error confirming authentication: {:?}", e);
             ExtendedError::new("Unauthorized!", StatusCode::UNAUTHORIZED.as_str()).build()
         })?;
 
-        Ok(auth_status)
+        let api_response = synthesize_graphql_response(ctx, &auth_status).ok_or_else(|| {
+            tracing::error!("Failed to synthesize response!");
+            ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+        })?;
+
+        Ok(api_response.into())
     }
 
     /// Fetches system roles assigned to a given user or under organization created by the user or under department created by the user
@@ -328,15 +368,13 @@ impl Query {
         &self,
         ctx: &Context<'_>,
         user_id: Option<String>,
-    ) -> Result<Vec<SystemRole>> {
+    ) -> Result<GraphQLApiResponse<Vec<SystemRole>>> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
 
-        let header_map = ctx.data_opt::<HeaderMap>();
-
-        let authenticated = confirm_authentication(header_map, db).await?;
+        let authenticated = confirm_authentication(db, ctx).await?;
 
         let authenticated_ref = &authenticated;
 
@@ -347,6 +385,8 @@ impl Query {
 
         let authorized =
             confirm_authorization(db, &authenticated, &authorization_constraint).await?;
+
+        let api_response: ApiResponse<Vec<SystemRole>>;
 
         if user_id.is_none() {
             if !authorized {
@@ -386,7 +426,12 @@ impl Query {
                     .build()
             })?;
 
-            Ok(response)
+            api_response = synthesize_graphql_response(ctx, &response).ok_or_else(|| {
+                tracing::error!("Failed to synthesize response!");
+                ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+            })?;
+
+            Ok(api_response.into())
         } else {
             let user_id = user_id.unwrap();
             if user_id != authenticated.sub && !authorized {
@@ -423,20 +468,26 @@ impl Query {
                     .build()
             })?;
 
-            Ok(response)
+            api_response = synthesize_graphql_response(ctx, &response).ok_or_else(|| {
+                tracing::error!("Failed to synthesize response!");
+                ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+            })?;
+
+            Ok(api_response.into())
         }
     }
 
     /// Fetch all permissions that the logged in user's current role is granted.
-    async fn fetch_current_role_permissions(&self, ctx: &Context<'_>) -> Result<Vec<Permission>> {
+    async fn fetch_current_role_permissions(
+        &self,
+        ctx: &Context<'_>,
+    ) -> Result<GraphQLApiResponse<Vec<Permission>>> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
 
-        let header_map = ctx.data_opt::<HeaderMap>();
-
-        let authenticated = confirm_authentication(header_map, db).await?;
+        let authenticated = confirm_authentication(db, ctx).await?;
 
         let authenticated_ref = &authenticated;
 
@@ -468,19 +519,25 @@ impl Query {
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
 
-        Ok(response)
+        let api_response = synthesize_graphql_response(ctx, &response).ok_or_else(|| {
+            tracing::error!("Failed to synthesize response!");
+            ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+        })?;
+
+        Ok(api_response.into())
     }
 
     /// Fetch all organizations where the user is assigned an admin role and is allowed to create roles/assign roles/create a department
-    async fn fetch_organizations(&self, ctx: &Context<'_>) -> Result<Vec<Organization>> {
+    async fn fetch_organizations(
+        &self,
+        ctx: &Context<'_>,
+    ) -> Result<GraphQLApiResponse<Vec<Organization>>> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
 
-        let header_map = ctx.data_opt::<HeaderMap>();
-
-        let authenticated = confirm_authentication(header_map, db).await?;
+        let authenticated = confirm_authentication(db, ctx).await?;
 
         let authenticated_ref = &authenticated;
 
@@ -529,19 +586,25 @@ impl Query {
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
 
-        Ok(response)
+        let api_response = synthesize_graphql_response(ctx, &response).ok_or_else(|| {
+            tracing::error!("Failed to synthesize response!");
+            ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+        })?;
+
+        Ok(api_response.into())
     }
 
     /// Fetch all departments where the user is assigned an admin role and is allowed to create roles/assign roles/create a department
-    async fn fetch_departments(&self, ctx: &Context<'_>) -> Result<Vec<Department>> {
+    async fn fetch_departments(
+        &self,
+        ctx: &Context<'_>,
+    ) -> Result<GraphQLApiResponse<Vec<Department>>> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
 
-        let header_map = ctx.data_opt::<HeaderMap>();
-
-        let authenticated = confirm_authentication(header_map, db).await?;
+        let authenticated = confirm_authentication(db, ctx).await?;
 
         let authenticated_ref = &authenticated;
 
@@ -592,19 +655,25 @@ impl Query {
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
 
-        Ok(response)
+        let api_response = synthesize_graphql_response(ctx, &response).ok_or_else(|| {
+            tracing::error!("Failed to synthesize response!");
+            ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+        })?;
+
+        Ok(api_response.into())
     }
 
     /// Fetch all resources.
-    async fn fetch_resources(&self, ctx: &Context<'_>) -> Result<Vec<Resource>> {
+    async fn fetch_resources(
+        &self,
+        ctx: &Context<'_>,
+    ) -> Result<GraphQLApiResponse<Vec<Resource>>> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
 
-        let header_map = ctx.data_opt::<HeaderMap>();
-
-        let authenticated = confirm_authentication(header_map, db).await?;
+        let authenticated = confirm_authentication(db, ctx).await?;
 
         let authenticated_ref = &authenticated;
 
@@ -655,6 +724,11 @@ impl Query {
                         .build()
                 })?;
 
-        Ok(response)
+        let api_response = synthesize_graphql_response(ctx, &response).ok_or_else(|| {
+            tracing::error!("Failed to synthesize response!");
+            ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+        })?;
+
+        Ok(api_response.into())
     }
 }

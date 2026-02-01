@@ -1,6 +1,12 @@
-use async_graphql::{Enum, InputObject, SimpleObject};
+use std::sync::Arc;
+
+use async_graphql::{ComplexObject, Enum, InputObject, Object, OutputType, SimpleObject};
+use axum::http::{HeaderName, HeaderValue};
+use hyper::HeaderMap;
 use serde::{Deserialize, Serialize};
 use surrealdb::RecordId;
+use tokio::sync::Mutex;
+use tonic::metadata::MetadataMap;
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
 pub struct User {
@@ -163,4 +169,105 @@ pub struct UserPaymentDetails {
     // pub currency: Option<String>,
     pub reference: String,
     // pub metadata: Option<PaymentDetailsMetaData>,
+}
+
+#[derive(Clone, Default)]
+pub struct AxumAuthContext {
+    pub request_headers: HeaderMap,
+    pub response_headers: Arc<Mutex<HeaderMap>>,
+}
+
+pub enum MetadataView<'a> {
+    Http(Option<&'a HeaderMap>),
+    Grpc(Option<&'a MetadataMap>),
+}
+
+impl<'a> MetadataView<'a> {
+    pub fn as_header_map(&self) -> Option<HeaderMap> {
+        match self {
+            MetadataView::Http(Some(headers)) => Some((*headers).clone()),
+            MetadataView::Grpc(Some(metadata)) => {
+                let mut header_map = HeaderMap::new();
+
+                for key_and_value in metadata.iter() {
+                    match key_and_value {
+                        tonic::metadata::KeyAndValueRef::Ascii(key, value) => {
+                            let header_name =
+                                HeaderName::from_bytes(key.as_str().as_bytes()).ok()?;
+                            let header_value = HeaderValue::from_str(value.to_str().ok()?).ok()?;
+                            header_map.insert(header_name, header_value);
+                        }
+                        tonic::metadata::KeyAndValueRef::Binary(key, value) => {
+                            let header_name =
+                                HeaderName::from_bytes(key.as_str().as_bytes()).ok()?;
+                            let bytes = value.to_bytes().ok()?;
+                            let header_value = HeaderValue::from_bytes(&bytes).ok()?;
+                            header_map.insert(header_name, header_value);
+                        }
+                    }
+                }
+
+                Some(header_map)
+            }
+            _ => None,
+        }
+    }
+}
+
+pub struct GrpcAuthContext {
+    pub request_metadata: MetadataMap,
+    pub response_metadata: Arc<Mutex<MetadataMap>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ApiResponse<T> {
+    data: T,
+    metadata: ApiResponseMetadata,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct ApiResponseMetadata {
+    request_id: String,
+    new_access_token: Option<String>,
+}
+
+impl<T: Sync + Send + Clone> ApiResponse<T> {
+    pub fn new(data: &T, request_id: String, new_access_token: Option<String>) -> Self {
+        Self {
+            data: data.clone(),
+            metadata: ApiResponseMetadata {
+                request_id,
+                new_access_token,
+            },
+        }
+    }
+
+    pub fn set_data(&mut self, new_data: T) -> &Self {
+        self.data = new_data;
+        self
+    }
+
+    pub fn set_metadata(
+        &mut self,
+        request_id: Option<String>,
+        new_access_token: Option<String>,
+    ) -> &Self {
+        self.metadata = ApiResponseMetadata {
+            request_id: request_id.unwrap_or(self.metadata.request_id.clone()),
+            new_access_token,
+        };
+        self
+    }
+
+    pub fn get_data(&self) -> T {
+        self.data.clone()
+    }
+
+    pub fn get_request_id(&self) -> String {
+        self.metadata.request_id.clone()
+    }
+
+    pub fn get_new_access_token(&self) -> Option<String> {
+        self.metadata.new_access_token.as_ref().cloned()
+    }
 }

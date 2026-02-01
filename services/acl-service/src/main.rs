@@ -44,6 +44,7 @@ use tracing_subscriber::fmt::writer::MakeWriterExt;
 use lib::{
     integration::grpc::clients::acl_service::acl_server::AclServer, utils::mqtt::MqttClient,
 };
+use uuid::Uuid;
 
 type MySchema = Schema<Query, Mutation, EmptySubscription>;
 
@@ -61,8 +62,13 @@ async fn graphql_handler(
     let mut request = req.0;
 
     let db = db.clone();
-    let headers = headers.clone();
+    let mut headers = headers.clone();
     let mqtt_client = mqtt_client.clone();
+    let request_id = Uuid::new_v4();
+    headers.insert(
+        "x-request-id",
+        HeaderValue::from_str(&request_id.to_string()).unwrap_or(HeaderValue::from_static("")),
+    );
 
     request = request.data(db);
     request = request.data(headers);
@@ -207,12 +213,10 @@ async fn main() -> Result<(), Error> {
             tracing::error!("Config Error: {}", e);
             Error::new(ErrorKind::Other, "gRPC address not set")
         })?;
-    // let tonic_auth_middleware = AuthMiddleware::default();
 
     tokio::spawn(async move {
         // let the thread panic if gRPC server fails to start
         Server::builder()
-            // .layer(MiddlewareLayer::new(tonic_auth_middleware))
             .add_service(AclServer::new(acl_grpc))
             .serve(grpc_address)
             .await

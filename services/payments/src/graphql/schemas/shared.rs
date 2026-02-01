@@ -1,7 +1,11 @@
 use async_graphql::{OutputType, SimpleObject};
-use lib::utils::models::ApiResponse;
+use lib::utils::models::{ApiResponse, InitializePaymentResponse};
 
 #[derive(SimpleObject)]
+#[graphql(concrete(
+    name = "InitializePaymentResResponse",
+    params(InitializePaymentResponse)
+))]
 pub struct GraphQLApiResponse<T: OutputType> {
     pub data: T,
     pub metadata: GraphQLApiResponseMetadata,

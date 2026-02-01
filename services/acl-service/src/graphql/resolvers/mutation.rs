@@ -9,10 +9,11 @@ use hyper::{
 };
 use jwt_simple::prelude::*;
 use lib::utils::{
+    api_responses::synthesize_graphql_response,
     auth::AuthClaim,
     cookie_parser::parse_cookies,
     custom_error::ExtendedError,
-    models::{AdminPrivilege, AuthorizationConstraint, EmailMQTTPayload},
+    models::{AdminPrivilege, ApiResponse, AuthorizationConstraint, EmailMQTTPayload},
 };
 use rsa::{pkcs8::DecodePublicKey, Pkcs1v15Encrypt, RsaPublicKey};
 use rumqttc::v5::mqttbytes::QoS;
@@ -26,6 +27,7 @@ use crate::{
             Permission, PermissionInput, PermissionMetadata, Resource, ResourceInput,
             ResourceMetadata, RoleInput, RoleMetadata, SystemRole,
         },
+        shared::GraphQLApiResponse,
         user::{AuthDetails, User, UserInput, UserLogins, UserUpdate},
     },
     utils::{
@@ -44,7 +46,11 @@ pub struct Mutation;
 #[Object]
 impl Mutation {
     /// User signup
-    async fn sign_up(&self, ctx: &Context<'_>, mut user: UserInput) -> Result<User> {
+    async fn sign_up(
+        &self,
+        ctx: &Context<'_>,
+        mut user: UserInput,
+    ) -> Result<GraphQLApiResponse<User>> {
         user.password = bcrypt::hash(user.password, bcrypt::DEFAULT_COST).map_err(|e| {
             tracing::error!("Bcrypt Error: {}", e);
             ExtendedError::new("Failed to sign up", StatusCode::BAD_REQUEST.as_str()).build()
@@ -77,11 +83,16 @@ impl Mutation {
             Some(user) => {
                 let shared_state = ctx.data::<Extension<Arc<AppState>>>();
 
+                let api_response = synthesize_graphql_response(ctx, &user).ok_or_else(|| {
+                    tracing::error!("Failed to synthesize response!");
+                    ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+                })?;
+
                 // There should be a check to prevent any panics, especially because registration was successful
                 if let Err(e) = &shared_state {
                     tracing::error!("Error extracting Shared State: {:?}", e);
 
-                    return Ok(user);
+                    return Ok(api_response.into());
                 };
 
                 let auth_claim = AuthClaim { roles: vec![] };
@@ -96,7 +107,7 @@ impl Mutation {
                 if let Err(e) = &public_key_path {
                     tracing::error!("Failed to get RSA_PUBLIC_KEY_PATH env var: {}", e);
 
-                    return Ok(user);
+                    return Ok(api_response.into());
                 }
 
                 let public_key = fs::read_to_string(&public_key_path.unwrap()).await;
@@ -104,13 +115,13 @@ impl Mutation {
                 if let Err(e) = &signed_jwt {
                     tracing::error!("Failed to sign JWT: {}", e);
 
-                    return Ok(user);
+                    return Ok(api_response.into());
                 }
 
                 if let Err(e) = &public_key {
                     tracing::error!("Failed to read public key: {}", e);
 
-                    return Ok(user);
+                    return Ok(api_response.into());
                 }
 
                 let mut rng = rand::rngs::OsRng; // rand@0.8
@@ -119,7 +130,7 @@ impl Mutation {
                 if let Err(e) = &public_key {
                     tracing::error!("Failed to get public key: {}", e);
 
-                    return Ok(user);
+                    return Ok(api_response.into());
                 }
 
                 let encrypted_token = public_key.unwrap().encrypt(
@@ -131,7 +142,7 @@ impl Mutation {
                 if let Err(e) = &encrypted_token {
                     tracing::error!("Failed to encrypt token: {}", e);
 
-                    return Ok(user);
+                    return Ok(api_response.into());
                 }
 
                 let auth_service = env::var("OAUTH_SERVICE");
@@ -139,7 +150,7 @@ impl Mutation {
                 if let Err(e) = &auth_service {
                     tracing::error!("Failed to get OAUTH_SERVICE env var: {}", e);
 
-                    return Ok(user);
+                    return Ok(api_response.into());
                 }
 
                 let encoded_token =
@@ -185,7 +196,7 @@ impl Mutation {
                 if let Err(e) = &encoded_payload {
                     tracing::error!("Error serializing Email Payload: {:?}", e);
 
-                    return Ok(user);
+                    return Ok(api_response.into());
                 };
 
                 if let Err(e) = shared_state
@@ -201,9 +212,9 @@ impl Mutation {
                 {
                     tracing::error!("Failed to publish email/send event: {}", e);
 
-                    return Ok(user);
+                    return Ok(api_response.into());
                 }
-                Ok(user)
+                Ok(api_response.into())
             }
             None => Err(
                 ExtendedError::new("Failed to sign up", StatusCode::BAD_REQUEST.as_str()).build(),
@@ -217,14 +228,14 @@ impl Mutation {
         ctx: &Context<'_>,
         mut role_input: RoleInput,
         role_metadata: RoleMetadata,
-    ) -> Result<SystemRole> {
+    ) -> Result<GraphQLApiResponse<SystemRole>> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
-        let header_map = ctx.data_opt::<HeaderMap>();
+        // let header_map = ctx.data_opt::<HeaderMap>();
 
-        let authenticated = confirm_authentication(header_map, db).await?;
+        let authenticated = confirm_authentication(db, ctx).await?;
 
         let authenticated_ref = &authenticated;
 
@@ -314,7 +325,14 @@ impl Mutation {
         })?;
 
         match user_role {
-            Some(role) => Ok(role),
+            Some(role) => {
+                let api_response = synthesize_graphql_response(ctx, &role).ok_or_else(|| {
+                    tracing::error!("Failed to synthesize response!");
+                    ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+                })?;
+
+                Ok(api_response.into())
+            }
             None => Err(ExtendedError::new(
                 "Failed to create role",
                 StatusCode::BAD_REQUEST.as_str(),
@@ -328,17 +346,30 @@ impl Mutation {
         &self,
         ctx: &Context<'_>,
         raw_user_details: UserLogins,
-    ) -> Result<AuthDetails> {
+    ) -> Result<GraphQLApiResponse<AuthDetails>> {
         let user_details = raw_user_details.transformed();
+
+        let api_response: ApiResponse<AuthDetails>;
+
         match user_details.oauth_client {
             Some(oauth_client) => {
                 let oauth_client_instance = initiate_auth_code_grant_flow(oauth_client).await?;
                 let redirect_url =
                     navigate_to_redirect_url(oauth_client_instance, ctx, oauth_client).await;
-                Ok(AuthDetails {
-                    url: Some(redirect_url),
-                    token: None,
-                })
+
+                api_response = synthesize_graphql_response(
+                    ctx,
+                    &AuthDetails {
+                        url: Some(redirect_url),
+                        token: None,
+                    },
+                )
+                .ok_or_else(|| {
+                    tracing::error!("Failed to synthesize response!");
+                    ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+                })?;
+
+                Ok(api_response.into())
             }
             None => {
                 let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
@@ -361,7 +392,7 @@ impl Mutation {
                         })?;
 
                         let refresh_token_expiry_duration = Duration::from_secs(30 * 24 * 60 * 60); // days by hours by minutes by 60 seconds
-                        let access_token_expiry_duration = Duration::from_secs(15 * 60); // minutes by 60 seconds
+                        let access_token_expiry_duration = Duration::from_secs(1 * 60); // minutes by 60 seconds
 
                         let user_roles =
                             fetch_user_roles(db, &user.id.key().to_string(), None).await?;
@@ -432,10 +463,20 @@ impl Mutation {
                             None => {}
                         }
 
-                        Ok(AuthDetails {
-                            token: Some(token_str),
-                            url: None,
-                        })
+                        api_response = synthesize_graphql_response(
+                            ctx,
+                            &AuthDetails {
+                                token: Some(token_str),
+                                url: None,
+                            },
+                        )
+                        .ok_or_else(|| {
+                            tracing::error!("Failed to synthesize response!");
+                            ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str())
+                                .build()
+                        })?;
+
+                        Ok(api_response.into())
                     }
                     Err(e) => {
                         tracing::error!("Error signing in: {}", e);
@@ -451,21 +492,31 @@ impl Mutation {
     }
 
     /// Sign out
-    async fn sign_out(&self, ctx: &Context<'_>) -> Result<bool> {
+    async fn sign_out(&self, ctx: &Context<'_>) -> Result<GraphQLApiResponse<bool>> {
         // Clear the refresh token cookie
         ctx.insert_http_header(SET_COOKIE, format!("t=; Max-Age=0"));
-        Ok(true)
+
+        // TODO: Add logic to revoke tokens/delete sessions
+
+        let api_response = synthesize_graphql_response(ctx, &true).ok_or_else(|| {
+            tracing::error!("Failed to synthesize response!");
+            ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+        })?;
+        Ok(api_response.into())
     }
 
     /// Update user details
-    async fn update_user(&self, ctx: &Context<'_>, mut user: UserUpdate) -> Result<User> {
+    async fn update_user(
+        &self,
+        ctx: &Context<'_>,
+        mut user: UserUpdate,
+    ) -> Result<GraphQLApiResponse<User>> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
-        let header_map = ctx.data_opt::<HeaderMap>();
 
-        let authenticated = confirm_authentication(header_map, db).await?;
+        let authenticated = confirm_authentication(db, ctx).await?;
 
         let authenticated_ref = &authenticated;
 
@@ -517,7 +568,14 @@ impl Mutation {
             })?;
 
         match response {
-            Some(user) => Ok(user),
+            Some(user) => {
+                let api_response = synthesize_graphql_response(ctx, &user).ok_or_else(|| {
+                    tracing::error!("Failed to synthesize response!");
+                    ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+                })?;
+
+                Ok(api_response.into())
+            }
             None => {
                 Err(ExtendedError::new("User not found", StatusCode::NOT_FOUND.as_str()).build())
             }
@@ -530,14 +588,13 @@ impl Mutation {
         ctx: &Context<'_>,
         role_id: String,
         user_id: String,
-    ) -> Result<SystemRole> {
+    ) -> Result<GraphQLApiResponse<SystemRole>> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
-        let header_map = ctx.data_opt::<HeaderMap>();
 
-        let authenticated = confirm_authentication(header_map, db).await?;
+        let authenticated = confirm_authentication(db, ctx).await?;
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["assign:role".into()],
@@ -594,7 +651,13 @@ impl Mutation {
         })?;
 
         match user_role {
-            Some(role) => Ok(role),
+            Some(role) => {
+                let api_response = synthesize_graphql_response(ctx, &role).ok_or_else(|| {
+                    tracing::error!("Failed to synthesize response!");
+                    ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+                })?;
+                Ok(api_response.into())
+            }
             None => Err(ExtendedError::new(
                 "Failed to assign role",
                 StatusCode::BAD_REQUEST.as_str(),
@@ -609,14 +672,14 @@ impl Mutation {
         ctx: &Context<'_>,
         role_id: String,
         user_id: String,
-    ) -> Result<SystemRole> {
+    ) -> Result<GraphQLApiResponse<SystemRole>> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
         let header_map = ctx.data_opt::<HeaderMap>();
 
-        let authenticated = confirm_authentication(header_map, db).await?;
+        let authenticated = confirm_authentication(db, ctx).await?;
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["revoke:role".into()],
@@ -671,7 +734,13 @@ impl Mutation {
         })?;
 
         match user_role {
-            Some(role) => Ok(role),
+            Some(role) => {
+                let api_response = synthesize_graphql_response(ctx, &role).ok_or_else(|| {
+                    tracing::error!("Failed to synthesize response!");
+                    ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+                })?;
+                Ok(api_response.into())
+            }
             None => Err(ExtendedError::new(
                 "Failed to assign role",
                 StatusCode::BAD_REQUEST.as_str(),
@@ -685,14 +754,13 @@ impl Mutation {
         &self,
         ctx: &Context<'_>,
         mut organization_input: OrganizationInput,
-    ) -> Result<Organization> {
+    ) -> Result<GraphQLApiResponse<Organization>> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
-        let header_map = ctx.data_opt::<HeaderMap>();
 
-        let authenticated = confirm_authentication(header_map, db).await?;
+        let authenticated = confirm_authentication(db, ctx).await?;
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["write:organization".into()],
@@ -743,7 +811,15 @@ impl Mutation {
             })?;
 
         match organization_response {
-            Some(organization) => Ok(organization),
+            Some(organization) => {
+                let api_response =
+                    synthesize_graphql_response(ctx, &organization).ok_or_else(|| {
+                        tracing::error!("Failed to synthesize response!");
+                        ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+                    })?;
+
+                Ok(api_response.into())
+            }
             None => Err(ExtendedError::new(
                 "Failed to create organization",
                 StatusCode::BAD_REQUEST.as_str(),
@@ -758,14 +834,13 @@ impl Mutation {
         ctx: &Context<'_>,
         mut department_input: DepartmentInput,
         department_metadata: DepartmentMetadata,
-    ) -> Result<Department> {
+    ) -> Result<GraphQLApiResponse<Department>> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
-        let header_map = ctx.data_opt::<HeaderMap>();
 
-        let authenticated = confirm_authentication(header_map, db).await?;
+        let authenticated = confirm_authentication(db, ctx).await?;
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["write:department".into()],
@@ -838,7 +913,15 @@ impl Mutation {
             })?;
 
         match department_response {
-            Some(department) => Ok(department),
+            Some(department) => {
+                let api_response =
+                    synthesize_graphql_response(ctx, &department).ok_or_else(|| {
+                        tracing::error!("Failed to synthesize response!");
+                        ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+                    })?;
+
+                Ok(api_response.into())
+            }
             None => Err(ExtendedError::new(
                 "Failed to create department",
                 StatusCode::BAD_REQUEST.as_str(),
@@ -848,14 +931,18 @@ impl Mutation {
     }
 
     /// Switch user role
-    async fn switch_role(&self, ctx: &Context<'_>, role_id: String) -> Result<AuthDetails> {
+    async fn switch_role(
+        &self,
+        ctx: &Context<'_>,
+        role_id: String,
+    ) -> Result<GraphQLApiResponse<AuthDetails>> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
         let header_map = ctx.data_opt::<HeaderMap>();
 
-        let authenticated = confirm_authentication(header_map, db).await?;
+        let authenticated = confirm_authentication(db, ctx).await?;
 
         let authenticated_ref = &authenticated;
 
@@ -914,6 +1001,8 @@ impl Mutation {
                             None => "127.0.0.1",
                         };
 
+                        let api_response: ApiResponse<AuthDetails>;
+
                         // Check if oauth_client cookie is present
                         match cookies.get("oauth_client") {
                             Some(oauth_client) => {
@@ -949,10 +1038,23 @@ impl Mutation {
                                         ),
                                     );
 
-                                    Ok(AuthDetails {
-                                        token: Some(access_token_str),
-                                        url: None,
-                                    })
+                                    api_response = synthesize_graphql_response(
+                                        ctx,
+                                        &AuthDetails {
+                                            token: Some(access_token_str),
+                                            url: None,
+                                        },
+                                    )
+                                    .ok_or_else(|| {
+                                        tracing::error!("Failed to synthesize response!");
+                                        ExtendedError::new(
+                                            "Bad Request",
+                                            StatusCode::BAD_REQUEST.as_str(),
+                                        )
+                                        .build()
+                                    })?;
+
+                                    Ok(api_response.into())
                                 } else {
                                     // Set the refresh token cookie
                                     ctx.append_http_header(
@@ -965,10 +1067,23 @@ impl Mutation {
                                         ),
                                     );
 
-                                    Ok(AuthDetails {
-                                        token: None,
-                                        url: None,
-                                    })
+                                    api_response = synthesize_graphql_response(
+                                        ctx,
+                                        &AuthDetails {
+                                            token: None,
+                                            url: None,
+                                        },
+                                    )
+                                    .ok_or_else(|| {
+                                        tracing::error!("Failed to synthesize response!");
+                                        ExtendedError::new(
+                                            "Bad Request",
+                                            StatusCode::BAD_REQUEST.as_str(),
+                                        )
+                                        .build()
+                                    })?;
+
+                                    Ok(api_response.into())
                                 }
                             }
                             None => Err(ExtendedError::new(
@@ -997,14 +1112,13 @@ impl Mutation {
         ctx: &Context<'_>,
         mut permission_input: PermissionInput,
         permission_metadata: PermissionMetadata,
-    ) -> Result<Permission> {
+    ) -> Result<GraphQLApiResponse<Permission>> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
-        let header_map = ctx.data_opt::<HeaderMap>();
 
-        let authenticated = confirm_authentication(header_map, db).await?;
+        let authenticated = confirm_authentication(db, ctx).await?;
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["write:permission".into()],
@@ -1072,7 +1186,15 @@ impl Mutation {
             })?;
 
         match permission_response {
-            Some(permission) => Ok(permission),
+            Some(permission) => {
+                let api_response =
+                    synthesize_graphql_response(ctx, &permission).ok_or_else(|| {
+                        tracing::error!("Failed to synthesize response!");
+                        ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+                    })?;
+
+                Ok(api_response.into())
+            }
             None => Err(ExtendedError::new(
                 "Failed to create permission",
                 StatusCode::BAD_REQUEST.as_str(),
@@ -1087,14 +1209,13 @@ impl Mutation {
         ctx: &Context<'_>,
         permission_id: String,
         role_id: String,
-    ) -> Result<Permission> {
+    ) -> Result<GraphQLApiResponse<Permission>> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
-        let header_map = ctx.data_opt::<HeaderMap>();
 
-        let authenticated = confirm_authentication(header_map, db).await?;
+        let authenticated = confirm_authentication(db, ctx).await?;
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["grant:permission".into()],
@@ -1176,7 +1297,15 @@ impl Mutation {
             })?;
 
         match permission_response {
-            Some(permission) => Ok(permission),
+            Some(permission) => {
+                let api_response =
+                    synthesize_graphql_response(ctx, &permission).ok_or_else(|| {
+                        tracing::error!("Failed to synthesize response!");
+                        ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+                    })?;
+
+                Ok(api_response.into())
+            }
             None => Err(ExtendedError::new(
                 "Failed to grant permission",
                 StatusCode::BAD_REQUEST.as_str(),
@@ -1191,14 +1320,13 @@ impl Mutation {
         ctx: &Context<'_>,
         permission_id: String,
         role_id: String,
-    ) -> Result<Permission> {
+    ) -> Result<GraphQLApiResponse<Permission>> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
-        let header_map = ctx.data_opt::<HeaderMap>();
 
-        let authenticated = confirm_authentication(header_map, db).await?;
+        let authenticated = confirm_authentication(db, ctx).await?;
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["revoke:permission".into()],
@@ -1280,7 +1408,15 @@ impl Mutation {
             })?;
 
         match permission_response {
-            Some(permission) => Ok(permission),
+            Some(permission) => {
+                let api_response =
+                    synthesize_graphql_response(ctx, &permission).ok_or_else(|| {
+                        tracing::error!("Failed to synthesize response!");
+                        ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+                    })?;
+
+                Ok(api_response.into())
+            }
             None => Err(ExtendedError::new(
                 "Failed to revoke permission",
                 StatusCode::BAD_REQUEST.as_str(),
@@ -1295,14 +1431,13 @@ impl Mutation {
         ctx: &Context<'_>,
         mut resource_input: ResourceInput,
         resource_metadata: ResourceMetadata,
-    ) -> Result<Resource> {
+    ) -> Result<GraphQLApiResponse<Resource>> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
-        let header_map = ctx.data_opt::<HeaderMap>();
 
-        let authenticated = confirm_authentication(header_map, db).await?;
+        let authenticated = confirm_authentication(db, ctx).await?;
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["write:resource".into()],
@@ -1372,7 +1507,15 @@ impl Mutation {
         })?;
 
         match resource_response {
-            Some(resource) => Ok(resource),
+            Some(resource) => {
+                let api_response =
+                    synthesize_graphql_response(ctx, &resource).ok_or_else(|| {
+                        tracing::error!("Failed to synthesize response!");
+                        ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+                    })?;
+
+                Ok(api_response.into())
+            }
             None => Err(ExtendedError::new(
                 "Failed to create resource",
                 StatusCode::BAD_REQUEST.as_str(),

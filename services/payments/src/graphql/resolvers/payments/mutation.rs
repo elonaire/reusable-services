@@ -5,12 +5,15 @@ use hyper::StatusCode;
 use lib::{
     middleware::auth::false_graphql::confirm_authentication,
     utils::{
+        api_responses::synthesize_graphql_response,
         custom_error::ExtendedError,
         models::{InitializePaymentResponse, UserPaymentDetails},
     },
 };
 
-use crate::utils::payments::initiate_payment_integration;
+use crate::{
+    graphql::schemas::shared::GraphQLApiResponse, utils::payments::initiate_payment_integration,
+};
 
 #[derive(Default)]
 pub struct PaymentMutation;
@@ -21,15 +24,16 @@ impl PaymentMutation {
         &self,
         ctx: &Context<'_>,
         mut user_payment_details: UserPaymentDetails,
-    ) -> Result<InitializePaymentResponse> {
-        if let Some(headers) = ctx.data_opt::<HeaderMap>() {
-            let _auth_status = confirm_authentication(headers).await?;
+    ) -> Result<GraphQLApiResponse<InitializePaymentResponse>> {
+        let _auth_status = confirm_authentication(ctx).await?;
 
-            let payment_req = initiate_payment_integration(&mut user_payment_details).await?;
+        let payment_req = initiate_payment_integration(&mut user_payment_details).await?;
 
-            Ok(payment_req)
-        } else {
-            Err(ExtendedError::new("Not Authorized!", StatusCode::UNAUTHORIZED.as_str()).build())
-        }
+        let api_response = synthesize_graphql_response(ctx, &payment_req).ok_or_else(|| {
+            tracing::error!("Failed to synthesize response!");
+            ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+        })?;
+
+        Ok(api_response.into())
     }
 }

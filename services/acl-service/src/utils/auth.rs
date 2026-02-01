@@ -1,6 +1,7 @@
 use axum::http::HeaderValue;
 use jwt_simple::prelude::*;
-use lib::utils::models::{AdminPrivilege, AuthorizationConstraint};
+use lib::utils::custom_traits::AuthMetadataContext;
+use lib::utils::models::{AdminPrivilege, AuthorizationConstraint, MetadataView};
 use lib::utils::{
     auth::AuthClaim, cookie_parser::parse_cookies, custom_traits::AsSurrealClient,
     models::AuthStatus,
@@ -310,12 +311,15 @@ pub async fn decode_token_string(token: &String) -> Result<JWTClaims<AuthClaim>,
 
 /// A utility function to confirm auth by parsing relevant headers. Useful for authenticating clients. Includes refresh token handling and OAuth
 // TODO: Pass an optional generic context parameter to support both REST and GraphQL refresh token handling - to attach new access token to context headers.
-pub async fn confirm_authentication<T: Clone + AsSurrealClient>(
-    header_map: Option<&HeaderMap>,
-    db: &T,
-    // role: &String,
-) -> Result<AuthStatus, Error> {
-    // let header_map = ctx.data_opt::<HeaderMap>();
+pub async fn confirm_authentication<T, C>(db: &T, ctx: &C) -> Result<AuthStatus, Error>
+where
+    T: Clone + AsSurrealClient,
+    C: AuthMetadataContext + Sync,
+{
+    let metadata_view = ctx.request_metadata();
+
+    // Unified approach - works for both HTTP and gRPC!
+    let header_map = metadata_view.as_header_map();
     // Process request headers as needed
     match header_map {
         Some(headers) => {
@@ -357,7 +361,9 @@ pub async fn confirm_authentication<T: Clone + AsSurrealClient>(
                                                     current_role: claims.custom.roles[0].clone(),
                                                 })
                                             }
-                                            Err(_err) => handle_refresh_token(&cookies, db).await,
+                                            Err(_err) => {
+                                                handle_refresh_token(&cookies, db, ctx).await
+                                            }
                                         }
                                     } else {
                                         match cookies.get("oauth_user_roles_jwt") {
@@ -425,15 +431,6 @@ pub async fn confirm_authentication<T: Clone + AsSurrealClient>(
                                                                 });
                                                             }
                                                         }
-                                                        // Ok(AuthStatus {
-                                                        //     is_auth: true,
-                                                        //     sub: claims
-                                                        //         .subject
-                                                        //         .as_ref()
-                                                        //         .map(|t| t.to_string())
-                                                        //         .unwrap_or("".to_string()),
-                                                        //     current_role: claims.custom.roles[0].clone(),
-                                                        // })
                                                     }
                                                     Err(err) => {
                                                         tracing::error!(
@@ -484,10 +481,15 @@ pub async fn confirm_authentication<T: Clone + AsSurrealClient>(
 }
 
 /// A utility function to handle refresh tokens
-async fn handle_refresh_token<T: Clone + AsSurrealClient>(
+async fn handle_refresh_token<T, C>(
     cookies: &HashMap<String, String>,
     db: &T,
-) -> Result<AuthStatus, Error> {
+    ctx: &C,
+) -> Result<AuthStatus, Error>
+where
+    T: Clone + AsSurrealClient,
+    C: AuthMetadataContext + Sync,
+{
     let converted_jwt_secret_key = get_converted_jwt_secret_key().await?;
     match cookies.get("t") {
         Some(refresh_token) => {
@@ -515,8 +517,8 @@ async fn handle_refresh_token<T: Clone + AsSurrealClient>(
                                 roles: refresh_claims.custom.roles.clone(),
                             };
 
-                            let token_expiry_duration = Duration::from_secs(15 * 60);
-                            let _token = sign_jwt(
+                            let token_expiry_duration = Duration::from_secs(1 * 60);
+                            let token = sign_jwt(
                                 &auth_claim,
                                 token_expiry_duration,
                                 &user.id.key().to_string(),
@@ -527,13 +529,20 @@ async fn handle_refresh_token<T: Clone + AsSurrealClient>(
                                 Error::new(ErrorKind::PermissionDenied, "Unauthorized")
                             })?;
 
-                            // TODO: Handle these with the respective functionality for REST and GraphQL contexts(Hint: Might use a Trait for this)
-                            // ctx.insert_http_header(
-                            //     SET_COOKIE,
-                            //     format!("oauth_client=; HttpOnly; SameSite=Strict"),
-                            // );
+                            tracing::debug!("Refreshing this sh!t!");
 
-                            // ctx.append_http_header("New-Access-Token", format!("Bearer {}", token));
+                            // Set response headers using the AuthMetadataContext trait - works for REST, gRPC, and GraphQL!
+                            ctx.set_response_metadata(
+                                "set-cookie",
+                                "oauth_client=; HttpOnly; SameSite=Strict",
+                            )
+                            .await;
+
+                            ctx.append_response_metadata(
+                                "new-access-token",
+                                &format!("Bearer {}", token),
+                            )
+                            .await;
 
                             return Ok(AuthStatus {
                                 is_auth: true,

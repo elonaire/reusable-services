@@ -9,9 +9,10 @@ use lib::integration::grpc::clients::acl_service::{
     ConfirmAuthorizationResponse, SignInAsServiceRequest, SignInAsServiceResponse,
 };
 use lib::utils::auth::AuthClaim;
-use lib::utils::models::{AuthStatus, AuthorizationConstraint};
+use lib::utils::models::{AuthStatus, AuthorizationConstraint, GrpcAuthContext};
 use surrealdb::engine::remote::ws::Client;
 use surrealdb::Surreal;
+use tokio::sync::Mutex;
 use tonic::{Request, Response, Status};
 
 use crate::graphql::schemas::user::UserLogins;
@@ -41,25 +42,30 @@ impl Acl for AclServiceImplementation {
         &self,
         request: Request<ConfirmAuthenticationRequest>,
     ) -> Result<Response<ConfirmAuthenticationResponse>, Status> {
-        let metadata = request.metadata();
-        let token = metadata
-            .get("authorization")
-            .ok_or(Status::unauthenticated("Unauthorized"))?;
-        let cookie = metadata
-            .get("cookie")
-            .ok_or(Status::unauthenticated("Unauthorized"))?;
+        let response_metadata = Arc::new(Mutex::new(tonic::metadata::MetadataMap::new()));
 
-        let token_header_value = HeaderValue::from_str(token.to_str().unwrap_or(""))
-            .map_err(|_e| Status::unauthenticated("Unauthorized"))?;
-        let cookie_header_value = HeaderValue::from_str(cookie.to_str().unwrap_or(""))
-            .map_err(|_e| Status::unauthenticated("Unauthorized"))?;
+        // Create a unit request for the context (just for metadata access)
+        // We can't use the original request directly due to type mismatch
+        let metadata = request.metadata().clone();
 
-        let mut header_map = HeaderMap::new();
-        header_map.insert(AUTHORIZATION, token_header_value);
-        header_map.insert(COOKIE, cookie_header_value);
+        // Alternative: You can modify GrpcAuthContext to not need Request at all
+        // since you already have the metadata. Here's a workaround:
 
-        match confirm_authentication(Some(&header_map), &self.db).await {
-            Ok(auth_status) => Ok(Response::new(auth_status.into())),
+        let ctx = GrpcAuthContext {
+            request_metadata: metadata,
+            response_metadata: response_metadata.clone(),
+        };
+
+        match confirm_authentication(&self.db, &ctx).await {
+            Ok(auth_status) => {
+                let mut response = Response::new(auth_status.into());
+
+                // Add response metadata that was set during authentication
+                let resp_metadata = response_metadata.lock().await;
+                *response.metadata_mut() = resp_metadata.clone();
+
+                Ok(response)
+            }
             Err(e) => {
                 tracing::error!("Authentication failed: {}", e);
                 Err(Status::unauthenticated("Unauthorized"))

@@ -1,7 +1,8 @@
 use std::env;
 use std::time::Instant;
 
-use hyper::header::{AUTHORIZATION, COOKIE};
+use axum::http::HeaderValue;
+use hyper::header::{AUTHORIZATION, COOKIE, SET_COOKIE};
 use tonic::body::BoxBody;
 use tonic::codegen::http::{Request, Response};
 use tonic::transport::Channel;
@@ -59,16 +60,33 @@ where
             Status::unavailable("Failed to connect to ACL service")
         })?;
 
-        let response = acl_grpc_client.confirm_authentication(request).await?;
+        let result = acl_grpc_client.confirm_authentication(request).await?;
+        let result_metadata = result.metadata().clone();
 
-        let auth_status = response.into_inner();
+        let auth_status = result.into_inner();
         // Insert auth_status into the req extensions
         req.extensions_mut().insert(auth_status);
-        let result = service.call(req).await?;
+        let mut response = service.call(req).await?;
+        let mut response_headers = response.headers_mut().clone();
+
+        if let Some(cookie_str) = result_metadata.get("set-cookie") {
+            let value = cookie_str.to_str().unwrap_or("");
+            response_headers.insert(
+                SET_COOKIE,
+                HeaderValue::from_str(value).unwrap_or(HeaderValue::from_static("")),
+            );
+        };
+        if let Some(new_access_token) = result_metadata.get("new-access-token") {
+            let value = new_access_token.to_str().unwrap_or("");
+            response_headers.insert(
+                "new-access-token",
+                HeaderValue::from_str(value).unwrap_or(HeaderValue::from_static("")),
+            );
+        };
 
         let elapsed_time = start_time.elapsed();
         tracing::info!("gRPC request processed in {:?}", elapsed_time);
 
-        Ok(result)
+        Ok(response)
     }
 }

@@ -9,16 +9,23 @@ use crate::{
         models::AuthStatus,
     },
 };
-use axum::{extract::Request, http::StatusCode, middleware::Next, response::Response};
-use hyper::header::{AUTHORIZATION, COOKIE};
+use axum::{
+    extract::Request,
+    http::{HeaderValue, StatusCode},
+    middleware::Next,
+    response::Response,
+};
+use hyper::header::{AUTHORIZATION, COOKIE, SET_COOKIE};
 use tonic::transport::Channel;
 
 pub async fn handle_auth_with_refresh(
     mut req: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
-    let auth_header = req.headers().get(AUTHORIZATION);
-    let cookie_header = req.headers().get(COOKIE);
+    let headers = req.headers().clone();
+
+    let auth_header = headers.get(AUTHORIZATION);
+    let cookie_header = headers.get(COOKIE);
 
     let mut request = tonic::Request::new(ConfirmAuthenticationRequest {});
 
@@ -46,14 +53,33 @@ pub async fn handle_auth_with_refresh(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    let response = acl_grpc_client.confirm_authentication(request).await;
+    let result = acl_grpc_client.confirm_authentication(request).await;
 
-    match response {
-        Ok(response) => {
-            let auth_status: AuthStatus = response.into_inner().into();
-            // Insert auth_status into the req extensions
+    match result {
+        Ok(result) => {
+            let grpc_metadata = result.metadata().clone();
+
+            let auth_status: AuthStatus = result.into_inner().into();
+
             req.extensions_mut().insert(auth_status);
-            Ok(next.run(req).await)
+            let mut response = next.run(req).await;
+
+            if let Some(cookie_str) = grpc_metadata.get("set-cookie") {
+                let value = cookie_str.to_str().unwrap_or("");
+                response.headers_mut().insert(
+                    SET_COOKIE,
+                    HeaderValue::from_str(value).unwrap_or(HeaderValue::from_static("")),
+                );
+            };
+            if let Some(new_access_token) = grpc_metadata.get("new-access-token") {
+                let value = new_access_token.to_str().unwrap_or("");
+                response.headers_mut().insert(
+                    "new-access-token",
+                    HeaderValue::from_str(value).unwrap_or(HeaderValue::from_static("")),
+                );
+            };
+
+            Ok(response)
         }
         Err(_e) => return Err(StatusCode::UNAUTHORIZED),
     }

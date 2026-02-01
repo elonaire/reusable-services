@@ -4,6 +4,7 @@ pub mod custom_error;
 pub mod custom_traits;
 // pub mod gql_client;
 // pub mod graphql_api;
+pub mod api_responses;
 pub mod grpc;
 pub mod models;
 pub mod mqtt;
