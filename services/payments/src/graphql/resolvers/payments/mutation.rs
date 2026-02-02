@@ -25,14 +25,16 @@ impl PaymentMutation {
         ctx: &Context<'_>,
         mut user_payment_details: UserPaymentDetails,
     ) -> Result<GraphQLApiResponse<InitializePaymentResponse>> {
-        let _auth_status = confirm_authentication(ctx).await?;
+        let auth_status = confirm_authentication(ctx).await?;
+        let auth_status_ref = &auth_status;
 
         let payment_req = initiate_payment_integration(&mut user_payment_details).await?;
 
-        let api_response = synthesize_graphql_response(ctx, &payment_req).ok_or_else(|| {
-            tracing::error!("Failed to synthesize response!");
-            ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
-        })?;
+        let api_response = synthesize_graphql_response(ctx, &payment_req, Some(auth_status_ref))
+            .ok_or_else(|| {
+                tracing::error!("Failed to synthesize response!");
+                ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+            })?;
 
         Ok(api_response.into())
     }

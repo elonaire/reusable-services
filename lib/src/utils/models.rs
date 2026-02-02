@@ -28,6 +28,7 @@ pub struct AuthStatus {
     pub is_auth: bool,
     pub sub: String,
     pub current_role: String,
+    pub new_access_token: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]

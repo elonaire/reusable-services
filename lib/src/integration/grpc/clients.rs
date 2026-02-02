@@ -36,6 +36,7 @@ impl From<utils::models::AuthStatus> for acl_service::ConfirmAuthenticationRespo
             sub: auth_status.sub,
             is_auth: auth_status.is_auth,
             current_role: auth_status.current_role,
+            new_access_token: auth_status.new_access_token.unwrap_or(String::new()),
         }
     }
 }
@@ -47,6 +48,7 @@ impl From<acl_service::AuthStatus> for utils::models::AuthStatus {
             sub: auth_status.sub,
             is_auth: auth_status.is_auth,
             current_role: auth_status.current_role,
+            new_access_token: Some(auth_status.new_access_token),
         }
     }
 }
@@ -109,6 +111,7 @@ impl From<acl_service::ConfirmAuthenticationResponse> for utils::models::AuthSta
             sub: auth_status.sub,
             is_auth: auth_status.is_auth,
             current_role: auth_status.current_role,
+            new_access_token: Some(auth_status.new_access_token),
         }
     }
 }

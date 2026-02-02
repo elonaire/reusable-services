@@ -310,7 +310,6 @@ pub async fn decode_token_string(token: &String) -> Result<JWTClaims<AuthClaim>,
 }
 
 /// A utility function to confirm auth by parsing relevant headers. Useful for authenticating clients. Includes refresh token handling and OAuth
-// TODO: Pass an optional generic context parameter to support both REST and GraphQL refresh token handling - to attach new access token to context headers.
 pub async fn confirm_authentication<T, C>(db: &T, ctx: &C) -> Result<AuthStatus, Error>
 where
     T: Clone + AsSurrealClient,
@@ -359,6 +358,7 @@ where
                                                         .map(|t| t.to_string())
                                                         .unwrap_or("".to_string()),
                                                     current_role: claims.custom.roles[0].clone(),
+                                                    new_access_token: None,
                                                 })
                                             }
                                             Err(_err) => {
@@ -409,6 +409,7 @@ where
                                                                         .custom
                                                                         .roles[0]
                                                                         .clone(),
+                                                                    new_access_token: None,
                                                                 });
                                                             }
                                                             OAuthClientName::Github => {
@@ -428,6 +429,7 @@ where
                                                                         .custom
                                                                         .roles[0]
                                                                         .clone(),
+                                                                    new_access_token: None,
                                                                 });
                                                             }
                                                         }
@@ -529,8 +531,6 @@ where
                                 Error::new(ErrorKind::PermissionDenied, "Unauthorized")
                             })?;
 
-                            tracing::debug!("Refreshing this sh!t!");
-
                             // Set response headers using the AuthMetadataContext trait - works for REST, gRPC, and GraphQL!
                             ctx.set_response_metadata(
                                 "set-cookie",
@@ -540,7 +540,7 @@ where
 
                             ctx.append_response_metadata(
                                 "new-access-token",
-                                &format!("Bearer {}", token),
+                                &format!("Bearer {}", &token),
                             )
                             .await;
 
@@ -548,6 +548,7 @@ where
                                 is_auth: true,
                                 sub: user.id.key().to_string(),
                                 current_role: refresh_claims.custom.roles[0].clone(),
+                                new_access_token: Some(token),
                             });
                         }
                         None => {

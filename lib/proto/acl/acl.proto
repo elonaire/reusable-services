@@ -17,6 +17,7 @@ message AuthStatus {
   bool is_auth = 1;
   string sub = 2;
   string current_role = 3;
+  string new_access_token = 4;
 }
 
 enum AdminPrivilege {
@@ -38,6 +39,7 @@ message ConfirmAuthenticationResponse {
   bool is_auth = 1;
   string sub = 2;
   string current_role = 3;
+  string new_access_token = 4;
 }
 
 message ConfirmAuthenticationRequest {}

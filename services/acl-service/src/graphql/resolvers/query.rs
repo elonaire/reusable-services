@@ -130,10 +130,11 @@ impl Query {
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
 
-        let api_response = synthesize_graphql_response(ctx, &response).ok_or_else(|| {
-            tracing::error!("Failed to synthesize response!");
-            ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
-        })?;
+        let api_response = synthesize_graphql_response(ctx, &response, Some(authenticated_ref))
+            .ok_or_else(|| {
+                tracing::error!("Failed to synthesize response!");
+                ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+            })?;
 
         Ok(api_response.into())
     }
@@ -183,8 +184,8 @@ impl Query {
 
                     match user {
                         Some(user) => {
-                            let api_response =
-                                synthesize_graphql_response(ctx, &user).ok_or_else(|| {
+                            let api_response = synthesize_graphql_response(ctx, &user, None)
+                                .ok_or_else(|| {
                                     tracing::error!("Failed to synthesize response!");
                                     ExtendedError::new(
                                         "Bad Request",
@@ -274,11 +275,15 @@ impl Query {
                 match user {
                     Some(user) => {
                         let api_response =
-                            synthesize_graphql_response(ctx, &user).ok_or_else(|| {
-                                tracing::error!("Failed to synthesize response!");
-                                ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str())
+                            synthesize_graphql_response(ctx, &user, Some(authenticated_ref))
+                                .ok_or_else(|| {
+                                    tracing::error!("Failed to synthesize response!");
+                                    ExtendedError::new(
+                                        "Bad Request",
+                                        StatusCode::BAD_REQUEST.as_str(),
+                                    )
                                     .build()
-                            })?;
+                                })?;
 
                         Ok(api_response.into())
                     }
@@ -329,10 +334,11 @@ impl Query {
 
         match user {
             Some(user) => {
-                let api_response = synthesize_graphql_response(ctx, &user).ok_or_else(|| {
-                    tracing::error!("Failed to synthesize response!");
-                    ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
-                })?;
+                let api_response =
+                    synthesize_graphql_response(ctx, &user, None).ok_or_else(|| {
+                        tracing::error!("Failed to synthesize response!");
+                        ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+                    })?;
 
                 return Ok(api_response.into());
             }
@@ -355,10 +361,13 @@ impl Query {
             ExtendedError::new("Unauthorized!", StatusCode::UNAUTHORIZED.as_str()).build()
         })?;
 
-        let api_response = synthesize_graphql_response(ctx, &auth_status).ok_or_else(|| {
-            tracing::error!("Failed to synthesize response!");
-            ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
-        })?;
+        let auth_status_ref = &auth_status;
+
+        let api_response = synthesize_graphql_response(ctx, &auth_status, Some(auth_status_ref))
+            .ok_or_else(|| {
+                tracing::error!("Failed to synthesize response!");
+                ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+            })?;
 
         Ok(api_response.into())
     }
@@ -426,10 +435,11 @@ impl Query {
                     .build()
             })?;
 
-            api_response = synthesize_graphql_response(ctx, &response).ok_or_else(|| {
-                tracing::error!("Failed to synthesize response!");
-                ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
-            })?;
+            api_response = synthesize_graphql_response(ctx, &response, Some(authenticated_ref))
+                .ok_or_else(|| {
+                    tracing::error!("Failed to synthesize response!");
+                    ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+                })?;
 
             Ok(api_response.into())
         } else {
@@ -468,10 +478,11 @@ impl Query {
                     .build()
             })?;
 
-            api_response = synthesize_graphql_response(ctx, &response).ok_or_else(|| {
-                tracing::error!("Failed to synthesize response!");
-                ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
-            })?;
+            api_response = synthesize_graphql_response(ctx, &response, Some(authenticated_ref))
+                .ok_or_else(|| {
+                    tracing::error!("Failed to synthesize response!");
+                    ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+                })?;
 
             Ok(api_response.into())
         }
@@ -519,10 +530,11 @@ impl Query {
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
 
-        let api_response = synthesize_graphql_response(ctx, &response).ok_or_else(|| {
-            tracing::error!("Failed to synthesize response!");
-            ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
-        })?;
+        let api_response = synthesize_graphql_response(ctx, &response, Some(authenticated_ref))
+            .ok_or_else(|| {
+                tracing::error!("Failed to synthesize response!");
+                ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+            })?;
 
         Ok(api_response.into())
     }
@@ -586,10 +598,11 @@ impl Query {
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
 
-        let api_response = synthesize_graphql_response(ctx, &response).ok_or_else(|| {
-            tracing::error!("Failed to synthesize response!");
-            ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
-        })?;
+        let api_response = synthesize_graphql_response(ctx, &response, Some(authenticated_ref))
+            .ok_or_else(|| {
+                tracing::error!("Failed to synthesize response!");
+                ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+            })?;
 
         Ok(api_response.into())
     }
@@ -655,10 +668,11 @@ impl Query {
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
 
-        let api_response = synthesize_graphql_response(ctx, &response).ok_or_else(|| {
-            tracing::error!("Failed to synthesize response!");
-            ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
-        })?;
+        let api_response = synthesize_graphql_response(ctx, &response, Some(authenticated_ref))
+            .ok_or_else(|| {
+                tracing::error!("Failed to synthesize response!");
+                ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+            })?;
 
         Ok(api_response.into())
     }
@@ -724,10 +738,11 @@ impl Query {
                         .build()
                 })?;
 
-        let api_response = synthesize_graphql_response(ctx, &response).ok_or_else(|| {
-            tracing::error!("Failed to synthesize response!");
-            ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
-        })?;
+        let api_response = synthesize_graphql_response(ctx, &response, Some(authenticated_ref))
+            .ok_or_else(|| {
+                tracing::error!("Failed to synthesize response!");
+                ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+            })?;
 
         Ok(api_response.into())
     }

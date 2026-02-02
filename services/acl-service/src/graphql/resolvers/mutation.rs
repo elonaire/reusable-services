@@ -83,10 +83,11 @@ impl Mutation {
             Some(user) => {
                 let shared_state = ctx.data::<Extension<Arc<AppState>>>();
 
-                let api_response = synthesize_graphql_response(ctx, &user).ok_or_else(|| {
-                    tracing::error!("Failed to synthesize response!");
-                    ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
-                })?;
+                let api_response =
+                    synthesize_graphql_response(ctx, &user, None).ok_or_else(|| {
+                        tracing::error!("Failed to synthesize response!");
+                        ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+                    })?;
 
                 // There should be a check to prevent any panics, especially because registration was successful
                 if let Err(e) = &shared_state {
@@ -326,10 +327,11 @@ impl Mutation {
 
         match user_role {
             Some(role) => {
-                let api_response = synthesize_graphql_response(ctx, &role).ok_or_else(|| {
-                    tracing::error!("Failed to synthesize response!");
-                    ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
-                })?;
+                let api_response = synthesize_graphql_response(ctx, &role, Some(authenticated_ref))
+                    .ok_or_else(|| {
+                        tracing::error!("Failed to synthesize response!");
+                        ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+                    })?;
 
                 Ok(api_response.into())
             }
@@ -363,6 +365,7 @@ impl Mutation {
                         url: Some(redirect_url),
                         token: None,
                     },
+                    None,
                 )
                 .ok_or_else(|| {
                     tracing::error!("Failed to synthesize response!");
@@ -469,6 +472,7 @@ impl Mutation {
                                 token: Some(token_str),
                                 url: None,
                             },
+                            None,
                         )
                         .ok_or_else(|| {
                             tracing::error!("Failed to synthesize response!");
@@ -498,7 +502,7 @@ impl Mutation {
 
         // TODO: Add logic to revoke tokens/delete sessions
 
-        let api_response = synthesize_graphql_response(ctx, &true).ok_or_else(|| {
+        let api_response = synthesize_graphql_response(ctx, &true, None).ok_or_else(|| {
             tracing::error!("Failed to synthesize response!");
             ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
         })?;
@@ -569,10 +573,11 @@ impl Mutation {
 
         match response {
             Some(user) => {
-                let api_response = synthesize_graphql_response(ctx, &user).ok_or_else(|| {
-                    tracing::error!("Failed to synthesize response!");
-                    ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
-                })?;
+                let api_response = synthesize_graphql_response(ctx, &user, Some(authenticated_ref))
+                    .ok_or_else(|| {
+                        tracing::error!("Failed to synthesize response!");
+                        ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+                    })?;
 
                 Ok(api_response.into())
             }
@@ -596,13 +601,15 @@ impl Mutation {
 
         let authenticated = confirm_authentication(db, ctx).await?;
 
+        let authenticated_ref = &authenticated;
+
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["assign:role".into()],
             privilege: AdminPrivilege::Admin,
         };
 
         let authorized =
-            confirm_authorization(db, &authenticated, &authorization_constraint).await?;
+            confirm_authorization(db, authenticated_ref, &authorization_constraint).await?;
 
         if !authorized {
             return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
@@ -652,10 +659,11 @@ impl Mutation {
 
         match user_role {
             Some(role) => {
-                let api_response = synthesize_graphql_response(ctx, &role).ok_or_else(|| {
-                    tracing::error!("Failed to synthesize response!");
-                    ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
-                })?;
+                let api_response = synthesize_graphql_response(ctx, &role, Some(authenticated_ref))
+                    .ok_or_else(|| {
+                        tracing::error!("Failed to synthesize response!");
+                        ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+                    })?;
                 Ok(api_response.into())
             }
             None => Err(ExtendedError::new(
@@ -681,13 +689,15 @@ impl Mutation {
 
         let authenticated = confirm_authentication(db, ctx).await?;
 
+        let authenticated_ref = &authenticated;
+
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["revoke:role".into()],
             privilege: AdminPrivilege::Admin,
         };
 
         let authorized =
-            confirm_authorization(db, &authenticated, &authorization_constraint).await?;
+            confirm_authorization(db, authenticated_ref, &authorization_constraint).await?;
 
         if !authorized {
             return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
@@ -735,10 +745,11 @@ impl Mutation {
 
         match user_role {
             Some(role) => {
-                let api_response = synthesize_graphql_response(ctx, &role).ok_or_else(|| {
-                    tracing::error!("Failed to synthesize response!");
-                    ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
-                })?;
+                let api_response = synthesize_graphql_response(ctx, &role, Some(authenticated_ref))
+                    .ok_or_else(|| {
+                        tracing::error!("Failed to synthesize response!");
+                        ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+                    })?;
                 Ok(api_response.into())
             }
             None => Err(ExtendedError::new(
@@ -813,10 +824,12 @@ impl Mutation {
         match organization_response {
             Some(organization) => {
                 let api_response =
-                    synthesize_graphql_response(ctx, &organization).ok_or_else(|| {
-                        tracing::error!("Failed to synthesize response!");
-                        ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
-                    })?;
+                    synthesize_graphql_response(ctx, &organization, Some(authenticated_ref))
+                        .ok_or_else(|| {
+                            tracing::error!("Failed to synthesize response!");
+                            ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str())
+                                .build()
+                        })?;
 
                 Ok(api_response.into())
             }
@@ -915,10 +928,12 @@ impl Mutation {
         match department_response {
             Some(department) => {
                 let api_response =
-                    synthesize_graphql_response(ctx, &department).ok_or_else(|| {
-                        tracing::error!("Failed to synthesize response!");
-                        ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
-                    })?;
+                    synthesize_graphql_response(ctx, &department, Some(authenticated_ref))
+                        .ok_or_else(|| {
+                            tracing::error!("Failed to synthesize response!");
+                            ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str())
+                                .build()
+                        })?;
 
                 Ok(api_response.into())
             }
@@ -1044,6 +1059,7 @@ impl Mutation {
                                             token: Some(access_token_str),
                                             url: None,
                                         },
+                                        Some(authenticated_ref),
                                     )
                                     .ok_or_else(|| {
                                         tracing::error!("Failed to synthesize response!");
@@ -1073,6 +1089,7 @@ impl Mutation {
                                             token: None,
                                             url: None,
                                         },
+                                        Some(authenticated_ref),
                                     )
                                     .ok_or_else(|| {
                                         tracing::error!("Failed to synthesize response!");
@@ -1188,10 +1205,12 @@ impl Mutation {
         match permission_response {
             Some(permission) => {
                 let api_response =
-                    synthesize_graphql_response(ctx, &permission).ok_or_else(|| {
-                        tracing::error!("Failed to synthesize response!");
-                        ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
-                    })?;
+                    synthesize_graphql_response(ctx, &permission, Some(authenticated_ref))
+                        .ok_or_else(|| {
+                            tracing::error!("Failed to synthesize response!");
+                            ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str())
+                                .build()
+                        })?;
 
                 Ok(api_response.into())
             }
@@ -1299,10 +1318,12 @@ impl Mutation {
         match permission_response {
             Some(permission) => {
                 let api_response =
-                    synthesize_graphql_response(ctx, &permission).ok_or_else(|| {
-                        tracing::error!("Failed to synthesize response!");
-                        ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
-                    })?;
+                    synthesize_graphql_response(ctx, &permission, Some(authenticated_ref))
+                        .ok_or_else(|| {
+                            tracing::error!("Failed to synthesize response!");
+                            ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str())
+                                .build()
+                        })?;
 
                 Ok(api_response.into())
             }
@@ -1410,10 +1431,12 @@ impl Mutation {
         match permission_response {
             Some(permission) => {
                 let api_response =
-                    synthesize_graphql_response(ctx, &permission).ok_or_else(|| {
-                        tracing::error!("Failed to synthesize response!");
-                        ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
-                    })?;
+                    synthesize_graphql_response(ctx, &permission, Some(authenticated_ref))
+                        .ok_or_else(|| {
+                            tracing::error!("Failed to synthesize response!");
+                            ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str())
+                                .build()
+                        })?;
 
                 Ok(api_response.into())
             }
@@ -1509,10 +1532,12 @@ impl Mutation {
         match resource_response {
             Some(resource) => {
                 let api_response =
-                    synthesize_graphql_response(ctx, &resource).ok_or_else(|| {
-                        tracing::error!("Failed to synthesize response!");
-                        ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
-                    })?;
+                    synthesize_graphql_response(ctx, &resource, Some(authenticated_ref))
+                        .ok_or_else(|| {
+                            tracing::error!("Failed to synthesize response!");
+                            ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str())
+                                .build()
+                        })?;
 
                 Ok(api_response.into())
             }

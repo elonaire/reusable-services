@@ -20,17 +20,20 @@ impl EmailMutation {
         ctx: &Context<'_>,
         email: Email,
     ) -> Result<GraphQLApiResponse<&'static str>> {
-        let _authenticated = confirm_authentication(ctx).await?;
+        let authenticated = confirm_authentication(ctx).await?;
+        let authenticated_ref = &authenticated;
 
         let send_email_res = utils::email::send_email(&email).await;
 
         match send_email_res {
             Ok(send_email_res) => {
                 let api_response =
-                    synthesize_graphql_response(ctx, &send_email_res).ok_or_else(|| {
-                        tracing::error!("Failed to synthesize response!");
-                        ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
-                    })?;
+                    synthesize_graphql_response(ctx, &send_email_res, Some(authenticated_ref))
+                        .ok_or_else(|| {
+                            tracing::error!("Failed to synthesize response!");
+                            ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str())
+                                .build()
+                        })?;
 
                 Ok(api_response.into())
             }
