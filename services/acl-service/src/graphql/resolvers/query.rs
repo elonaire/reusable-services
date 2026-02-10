@@ -53,6 +53,8 @@ impl Query {
             return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
         }
 
+        tracing::debug!("filters: {:?}", filters);
+
         let mut fetch_users_query = db
             .query(
                 r#"
@@ -61,58 +63,43 @@ impl Query {
                 IF !$user.exists()
                	{
               		THROW 'Invalid Input';
-               	}
-                                ;
-                                RETURN IF $filters != NONE
+               	};
+
+                LET $org = IF $filters.organization_id != NONE
+                { type::thing('organization', $filters.organization_id) }
+                ;
+                LET $dept = IF $filters.department_id != NONE
+                { type::thing('department', $filters.department_id) }
+                ;
+                LET $role = IF $filters.role_id != NONE
+                { type::thing('role', $filters.role_id) }
+                ;
+                RETURN IF $filters != NONE
                	{
-              		RETURN IF $filters.organization_id != NONE
-             			{
 
-                				LET $organization = type::thing('organization', $filters.organization_id);
+              		LET $filtered_users = <set> array::flatten([
+             			(SELECT * FROM user WHERE ($filters.department_id = NONE AND $filters.organization_id != NONE AND $filters.status != NONE AND status = $filters.status AND ->assigned->role->is_under->(organization WHERE (created_by = $user AND id = $org))) OR ($filters.department_id = NONE AND $filters.organization_id = NONE AND $filters.status != NONE AND status = $filters.status AND ->assigned->role->is_under->(organization WHERE created_by = $user))),
+             			(SELECT * FROM user WHERE ($filters.department_id != NONE AND $filters.organization_id = NONE AND $filters.status != NONE AND status = $filters.status AND ->assigned->role->is_under->(department WHERE (created_by = $user AND id = $dept))) OR ($filters.department_id != NONE AND $filters.organization_id != NONE AND $filters.status != NONE AND status = $filters.status AND ->assigned->role->is_under->(department WHERE (created_by = $user AND id = $dept))->is_under->(organization WHERE id = $org)) OR ($filters.department_id = NONE AND $filters.organization_id = NONE AND $filters.status != NONE AND status = $filters.status AND ->assigned->role->is_under->(department WHERE created_by = $user))),
+             			(SELECT * FROM user WHERE ($filters.department_id = NONE AND $filters.organization_id != NONE AND $filters.status != NONE AND status = $filters.status AND @.{..}(->assigned->role->is_under->department)->is_under->(organization WHERE (created_by = $user AND id = $org))) OR ($filters.department_id != NONE AND $filters.organization_id != NONE AND $filters.status != NONE AND status = $filters.status AND @.{..}(->assigned->role->is_under->(department WHERE id = $dept))->is_under->(organization WHERE (created_by = $user AND id = $org))) OR ($filters.department_id = NONE AND $filters.organization_id = NONE AND $filters.status != NONE AND status = $filters.status AND @.{..}(->assigned->role->is_under->department)->is_under->(organization WHERE created_by = $user))),
+             			(SELECT * FROM user WHERE ($filters.department_id != NONE AND $filters.organization_id = NONE AND $filters.status != NONE AND status = $filters.status AND @.{..}(->assigned->role->is_under->department)->is_under->(department WHERE (created_by = $user AND id = $dept))) OR ($filters.department_id != NONE AND $filters.organization_id != NONE AND $filters.status != NONE AND status = $filters.status AND @.{..}(->assigned->role->is_under->department)->is_under->(department WHERE (created_by = $user AND id = $dept))->is_under->(organization WHERE id = $org)) OR ($filters.department_id = NONE AND $filters.organization_id = NONE AND $filters.status != NONE AND status = $filters.status AND @.{..}(->assigned->role->is_under->department)->is_under->(department WHERE created_by = $user))),
+             			(SELECT * FROM user WHERE ($filters.department_id = NONE AND $filters.organization_id != NONE AND $filters.status != NONE AND $filters.role_id != NONE AND status = $filters.status AND ->assigned->(role WHERE (created_by = $user AND id = $role))->is_under->(organization WHERE id = $org)) OR ($filters.department_id != NONE AND $filters.organization_id != NONE AND $filters.status != NONE AND $filters.role_id != NONE AND status = $filters.status AND ->assigned->(role WHERE (created_by = $user AND id = $role))->is_under->(department WHERE id = $dept)->is_under->(organization WHERE id = $org)) OR ($filters.department_id = NONE AND $filters.organization_id = NONE AND $filters.status != NONE AND $filters.role_id != NONE AND status = $filters.status AND ->assigned->(role WHERE created_by = $user AND id = $role)))
+              		]);
 
-                				IF !$organization.exists()
-               					{
-              						THROW 'Invalid Input';
-               					}
-                				;
+              		RETURN $filtered_users;
 
-                				(SELECT * FROM user WHERE ->assigned->role->is_under->(organization WHERE id = $organization AND created_by = $user));
+                } ELSE {
 
-                                }
-              		ELSE IF $filters.role_id != NONE
-             			{
+              		LET $scoped_users = <set> array::flatten([
+             			(SELECT * FROM user WHERE ->assigned->role->is_under->(organization WHERE created_by = $user)),
+             			(SELECT * FROM user WHERE ->assigned->role->is_under->(department WHERE created_by = $user)),
+             			(SELECT * FROM user WHERE @.{..}(->assigned->role->is_under->department)->is_under->(organization WHERE created_by = $user)),
+             			(SELECT * FROM user WHERE @.{..}(->assigned->role->is_under->department)->is_under->(department WHERE created_by = $user)),
+             			(SELECT * FROM user WHERE ->assigned->(role WHERE created_by = $user))
+              		]);
 
-                				LET $role = type::thing('role', $filters.role_id);
+                    RETURN $scoped_users;
 
-                				IF !$role.exists()
-               					{
-              						THROW 'Invalid Input';
-               					}
-                				;
-
-                				(SELECT * FROM user WHERE ->assigned->(role WHERE id = $role AND created_by = $user));
-
-                                }
-              		ELSE IF $filters.department_id != NONE
-             			{
-
-                				LET $department = type::thing('department', $filters.department_id);
-
-                				IF !$department.exists()
-               					{
-              						THROW 'Invalid Input';
-               					}
-                				;
-
-                				(SELECT * FROM user WHERE ->assigned->role->is_under->(department WHERE id = $department AND created_by = $user));
-
-                                }
-              		ELSE IF $filters.status != NONE
-             			{ <set>array::flatten([(SELECT * FROM user WHERE ->assigned->role->is_under->(organization WHERE created_by = $user) AND status = $filters.status), (SELECT * FROM user WHERE ->assigned->role->is_under->(department WHERE created_by = $user) AND status = $filters.status), (SELECT * FROM user WHERE @.{..}(->assigned->role->is_under->department)->is_under->(organization WHERE created_by = $user) AND status = $filters.status), (SELECT * FROM user WHERE @.{..}(->assigned->role->is_under->department)->is_under->(department WHERE created_by = $user) AND status = $filters.status), (SELECT * FROM user WHERE ->assigned->(role WHERE created_by = $user) AND status = $filters.status)]) }
-              		;
-               	}
-                                ELSE
-               	{ <set>array::flatten([(SELECT * FROM user WHERE ->assigned->role->is_under->(organization WHERE created_by = $user)), (SELECT * FROM user WHERE ->assigned->role->is_under->(department WHERE created_by = $user)), (SELECT * FROM user WHERE @.{..}(->assigned->role->is_under->department)->is_under->(organization WHERE created_by = $user)), (SELECT * FROM user WHERE @.{..}(->assigned->role->is_under->department)->is_under->(department WHERE created_by = $user)), (SELECT * FROM user WHERE ->assigned->(role WHERE created_by = $user))]) }
+                }
                 ;
                 COMMIT TRANSACTION;
                 "#
