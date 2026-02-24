@@ -113,14 +113,36 @@ async fn main() -> Result<(), Error> {
 
     // Bring in some needed env vars
     let deployment_env = env::var("ENVIRONMENT").unwrap_or_else(|_| "prod".to_string()); // default to production because it's the most secure
-    let allowed_services_cors = env::var("ALLOWED_SERVICES_CORS")
-        .expect("Missing the ALLOWED_SERVICES environment variable.");
-    let payments_http_port = env::var("PAYMENTS_HTTP_PORT")
-        .expect("Missing the PAYMENTS_HTTP_PORT environment variable.");
-    let payments_grpc_port = env::var("PAYMENTS_GRPC_PORT")
-        .expect("Missing the PAYMENTS_GRPC_PORT environment variable.");
-    let mqtt_host = env::var("MQTT_HOST").expect("Missing the MQTT_HOST environment variable.");
-    let mqtt_port = env::var("MQTT_PORT").expect("Missing the MQTT_PORT environment variable.");
+    let allowed_services_cors = env::var("ALLOWED_SERVICES_CORS").map_err(|e| {
+        tracing::error!("Config Error: {}", e);
+        Error::new(ErrorKind::Other, "ALLOWED_SERVICES_CORS not set")
+    })?;
+    let payments_http_port = env::var("PAYMENTS_HTTP_PORT").map_err(|e| {
+        tracing::error!("Config Error: {}", e);
+        Error::new(ErrorKind::Other, "PAYMENTS_HTTP_PORT not set")
+    })?;
+    let payments_grpc_port = env::var("PAYMENTS_GRPC_PORT").map_err(|e| {
+        tracing::error!("Config Error: {}", e);
+        Error::new(ErrorKind::Other, "PAYMENTS_GRPC_PORT not set")
+    })?;
+    let mqtt_host = env::var("MQTT_HOST").map_err(|e| {
+        tracing::error!("Config Error: {}", e);
+        Error::new(ErrorKind::Other, "MQTT_HOST not set")
+    })?;
+    let mqtt_port = env::var("MQTT_PORT").map_err(|e| {
+        tracing::error!("Config Error: {}", e);
+        Error::new(ErrorKind::Other, "MQTT_PORT not set")
+    })?;
+    let governor_burst_size = env::var("PAYMENTS_RATE_LIMIT_BURST_SIZE")
+        .unwrap_or_else(|_| "1".to_string())
+        .parse::<u32>()
+        .map_err(|e| {
+            tracing::error!("Config Error: {}", e);
+            Error::new(
+                ErrorKind::Other,
+                "PAYMENTS_RATE_LIMIT_BURST_SIZE must be a number",
+            )
+        })?;
 
     let mut schema_builder =
         Schema::build(Query::default(), Mutation::default(), EmptySubscription);
@@ -146,7 +168,7 @@ async fn main() -> Result<(), Error> {
     // and replenishes one element every two seconds
     let governor_conf = GovernorConfigBuilder::default()
         .per_second(2)
-        .burst_size(5)
+        .burst_size(governor_burst_size)
         .finish()
         .unwrap();
 
@@ -215,12 +237,15 @@ async fn main() -> Result<(), Error> {
 
     match tokio::net::TcpListener::bind(format!("0.0.0.0:{}", payments_http_port)).await {
         Ok(http_listener) => {
-            let _http_server = serve(http_listener, app)
-                .await
-                .map_err(|e| {
-                    tracing::error!("Failed to create HTTP server: {}", e);
-                })
-                .ok();
+            let _http_server = serve(
+                http_listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to create HTTP server: {}", e);
+            })
+            .ok();
         }
         Err(e) => {
             tracing::error!("Failed to create TCP listener: {}", e);
