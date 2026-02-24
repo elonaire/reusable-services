@@ -16,11 +16,7 @@ impl FileQuery {
     pub async fn fetch_file_id(&self, ctx: &Context<'_>, file_name: String) -> Result<String> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
-            ExtendedError::new(
-                "Server Error",
-                Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
-            )
-            .build()
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
 
         let file_id_res = get_file_id(db, file_name).await;
@@ -29,11 +25,10 @@ impl FileQuery {
             Ok(file_id) => Ok(file_id),
             Err(e) => {
                 tracing::error!("Error fetching file ID: {}", e);
-                Err(ExtendedError::new(
-                    "Error fetching file ID",
-                    Some(StatusCode::BAD_REQUEST.as_u16()),
+                Err(
+                    ExtendedError::new("Error fetching file ID", StatusCode::BAD_REQUEST.as_str())
+                        .build(),
                 )
-                .build())
             }
         }
     }
@@ -41,11 +36,7 @@ impl FileQuery {
     pub async fn fetch_file_name(&self, ctx: &Context<'_>, file_id: String) -> Result<String> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
-            ExtendedError::new(
-                "Server Error",
-                Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
-            )
-            .build()
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
 
         let file_name_res = get_system_filename(db, file_id).await;
@@ -56,7 +47,7 @@ impl FileQuery {
                 tracing::error!("Error fetching file name: {}", e);
                 Err(ExtendedError::new(
                     "Error fetching file name",
-                    Some(StatusCode::BAD_REQUEST.as_u16()),
+                    StatusCode::BAD_REQUEST.as_str(),
                 )
                 .build())
             }
@@ -66,11 +57,7 @@ impl FileQuery {
     pub async fn serve_md_files(&self, _ctx: &Context<'_>, file_name: String) -> Result<String> {
         let files_service = env::var("FILES_SERVICE").map_err(|e| {
             tracing::error!("Missing the FILES_SERVICE environment variable.: {}", e);
-            ExtendedError::new(
-                "Server Error",
-                Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
-            )
-            .build()
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
 
         let file_url = format!("{}/view/{}", files_service, file_name);
@@ -85,7 +72,7 @@ impl FileQuery {
                         tracing::error!("Error serving MD file: {:?}", e);
                         ExtendedError::new(
                             "Server Error",
-                            Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16()),
+                            StatusCode::INTERNAL_SERVER_ERROR.as_str(),
                         )
                         .build()
                     })?)

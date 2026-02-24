@@ -1,22 +1,22 @@
 [package]
 name = "lib"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
-cookie = "0.18.1"
-async-graphql = "7.0.15"
-serde = "1.0.218"
-axum = "0.8.1"
-surrealdb = "2.2.1"
-hyper = "1.6.0"
-tonic = "0.12.3"
-prost = "0.13.5"
-tracing = "0.1.41"
-async-trait = "0.1.87"
-tonic-middleware = "0.2.3"
+cookie = { workspace = true }
+async-graphql = { workspace = true }
+serde = { workspace = true }
+axum = { workspace = true }
+surrealdb = { workspace = true }
+hyper = { workspace = true }
+tonic = { workspace = true }
+prost = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+tonic-middleware = { workspace = true }
+rumqttc = { workspace = true }
+tokio = { workspace = true }
 
 [build-dependencies]
-tonic-build = "0.12.3"
+tonic-build = { workspace = true }

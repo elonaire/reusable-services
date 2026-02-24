@@ -7,11 +7,79 @@ members = [
     "services/acl-service",
     "services/files",
     "services/email",
+    "services/payments",
 ]
 
+[workspace.dependencies]
+# Web / HTTP
+axum = "0.8.6"
+hyper = "1.7.0"
+tower-http = { version = "0.6.6", features = ["cors"] }
+tower_governor = "0.8.0"
+reqwest = { version = "0.12.23", features = ["json"] }
+
+# Async runtime
+tokio = { version = "1.47.1", features = ["full"] }
+async-trait = "0.1.89"
+
+# GraphQL
+async-graphql = "7.0.17"
+async-graphql-axum = "7.0.17"
+
+# gRPC / Protobuf
+tonic = "0.12.3"
+tonic-build = "0.12.3"
+tonic-middleware = "0.2.3"
+prost = "0.13.5"
+
+# Database
+surrealdb = "2.3.10"
+
+# Serialization
+serde = "1.0.228"
+serde_json = "1.0.145"
+prost-types = "0.13.5"
+
+# Tracing / Logging
+tracing = "0.1.41"
+tracing-subscriber = "0.3.20"
+tracing-appender = "0.2.3"
+
+# Messaging
+rumqttc = "0.24.0"
+
+# Utilities
+chrono = "0.4.42"
+dotenvy = "0.15.7"
+cookie = "0.18.1"
+uuid = { version = "1.20.0", features = [
+    "v4",
+    "fast-rng",
+    "macro-diagnostics",
+] }
+base64 = "0.22.1"
+
+# Crypto / Auth
+bcrypt = "0.17.1"
+jwt-simple = "=0.11.9"
+oauth2 = "5.0.0"
+rsa = "0.9.8"
+rand = "0.8"
+hmac = "0.12.1"
+sha2 = "0.10.8"
+hex = "0.4.3"
+
+# Misc
+axum-cookie = "0.2.3"
+markdown = "1.0.0"
+lettre = { version = "0.11.19", features = ["builder", "serde", "rustls-tls"] }
+
+# Internal
+lib = { path = "lib" }
+
 [profile.release]
-strip = true      # Automatically strip symbols from the binary.
-opt-level = 'z'   # Optimize for size
-lto = true        # Enable link-time optimization
-codegen-units = 1 # Reduce number of codegen units to increase optimizations
-panic = 'abort'   # Abort on panic
+strip = true
+opt-level = 'z'
+lto = true
+codegen-units = 1
+panic = 'abort'

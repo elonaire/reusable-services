@@ -1,20 +1,26 @@
 mod graphql;
 mod grpc;
+mod mqtt;
 mod rest;
 mod utils;
 
 use dotenvy::dotenv;
 use lib::{
     integration::grpc::clients::email_service::email_service_server::EmailServiceServer,
-    middleware::auth::grpc::AuthMiddleware,
+    middleware::auth::grpc::AuthMiddleware, utils::mqtt::MqttClient,
 };
+use mqtt::{events::handle_events, subscriptions::register_subscriptions};
+use rumqttc::v5::AsyncClient;
 use std::{
     env,
     io::{Error, ErrorKind},
     net::SocketAddr,
+    sync::Arc,
+    time::Duration,
 };
 use tonic::transport::Server;
 use tonic_middleware::MiddlewareLayer;
+use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 
 use async_graphql::{EmptySubscription, Schema};
@@ -45,6 +51,10 @@ use graphql::resolvers::mutation::Mutation;
 
 type MySchema = Schema<Query, Mutation, EmptySubscription>;
 
+pub struct AppState {
+    pub mqtt_client: AsyncClient,
+}
+
 async fn graphql_handler(
     schema: Extension<MySchema>,
     // db: Extension<Arc<Surreal<Client>>>,
@@ -68,7 +78,7 @@ async fn graphql_handler(
 
     // Debug the response
     if response.errors.len() > 0 {
-        tracing::debug!("GraphQL Error: {:?}", response.errors);
+        tracing::error!("GraphQL Error: {:?}", response.errors);
     } else {
         tracing::info!("GraphQL request completed without errors");
     }
@@ -79,17 +89,58 @@ async fn graphql_handler(
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
+    // Persist the server logs to a file on a daily basis using "tracing_subscriber"
+    let file_appender = tracing_appender::rolling::daily("./logs", "email.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
+    let stdout = std::io::stdout
+        .with_filter(|meta| {
+            meta.target() != "h2::codec::framed_write"
+                && meta.target() != "h2::codec::framed_read"
+                && meta.target() != "rumqttc::v5::state"
+        })
+        .with_max_level(tracing::Level::DEBUG); // Log to console at DEBUG level
+
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_writer(stdout.and(non_blocking))
+        .init();
+
     dotenv().ok();
     // let db = Arc::new(database::connection::create_db_connection().await.unwrap());
 
     // Bring in some needed env vars
     let deployment_env = env::var("ENVIRONMENT").unwrap_or_else(|_| "prod".to_string()); // default to production because it's the most secure
-    let allowed_services_cors = env::var("ALLOWED_SERVICES_CORS")
-        .expect("Missing the ALLOWED_SERVICES environment variable.");
-    let email_http_port =
-        env::var("EMAIL_HTTP_PORT").expect("Missing the EMAIL_HTTP_PORT environment variable.");
-    let email_grpc_port =
-        env::var("EMAIL_GRPC_PORT").expect("Missing the EMAIL_GRPC_PORT environment variable.");
+    let allowed_services_cors = env::var("ALLOWED_SERVICES_CORS").map_err(|e| {
+        tracing::error!("Config Error: {}", e);
+        Error::new(ErrorKind::Other, "ALLOWED_SERVICES_CORS not set")
+    })?;
+    let email_http_port = env::var("EMAIL_HTTP_PORT").map_err(|e| {
+        tracing::error!("Config Error: {}", e);
+        Error::new(ErrorKind::Other, "EMAIL_HTTP_PORT not set")
+    })?;
+    let email_grpc_port = env::var("EMAIL_GRPC_PORT").map_err(|e| {
+        tracing::error!("Config Error: {}", e);
+        Error::new(ErrorKind::Other, "EMAIL_GRPC_PORT not set")
+    })?;
+    let mqtt_host = env::var("MQTT_HOST").map_err(|e| {
+        tracing::error!("Config Error: {}", e);
+        Error::new(ErrorKind::Other, "MQTT_HOST not set")
+    })?;
+    let mqtt_port = env::var("MQTT_PORT").map_err(|e| {
+        tracing::error!("Config Error: {}", e);
+        Error::new(ErrorKind::Other, "MQTT_PORT not set")
+    })?;
+    let governor_burst_size = env::var("EMAIL_RATE_LIMIT_BURST_SIZE")
+        .unwrap_or_else(|_| "5".to_string())
+        .parse::<u32>()
+        .map_err(|e| {
+            tracing::error!("Config Error: {}", e);
+            Error::new(
+                ErrorKind::Other,
+                "EMAIL_RATE_LIMIT_BURST_SIZE must be a number",
+            )
+        })?;
 
     // Initialize the schema builder
     let mut schema_builder =
@@ -109,25 +160,38 @@ async fn main() -> Result<(), Error> {
         .filter_map(|endpoint| endpoint.trim().parse::<HeaderValue>().ok())
         .collect();
 
-    // Persist the server logs to a file on a daily basis using "tracing_subscriber"
-    let file_appender = tracing_appender::rolling::daily("./logs", "email.log");
-    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+    let (client, mut eventloop) =
+        MqttClient::new("email-service", &mqtt_host, mqtt_port.parse().unwrap()).await?;
 
-    let stdout = std::io::stdout
-        .with_filter(|meta| {
-            meta.target() != "h2::codec::framed_write" && meta.target() != "h2::codec::framed_read"
-        })
-        .with_max_level(tracing::Level::DEBUG); // Log to console at DEBUG level
+    register_subscriptions(&client).await;
 
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
-        .with_writer(stdout.and(non_blocking))
-        .init();
+    // Allow bursts with up to five requests per IP address
+    // and replenishes one element every two seconds
+    let governor_conf = GovernorConfigBuilder::default()
+        .per_second(2)
+        .burst_size(governor_burst_size)
+        .finish()
+        .unwrap();
+
+    let governor_limiter = governor_conf.limiter().clone();
+    let interval = Duration::from_secs(60);
+    // a separate background task to clean up
+    std::thread::spawn(move || loop {
+        std::thread::sleep(interval);
+        tracing::info!("rate limiting storage size: {}", governor_limiter.len());
+        governor_limiter.retain_recent();
+    });
+
+    let shared_state = Arc::new(AppState {
+        mqtt_client: client,
+    });
 
     let app = Router::new()
         .route("/", post(graphql_handler))
         .route("/healthz", get(|| async { StatusCode::OK }))
         .route("/ready", get(|| async { StatusCode::OK }))
+        .layer(GovernorLayer::new(governor_conf))
+        .layer(Extension(shared_state))
         .layer(Extension(schema))
         // .layer(Extension(db))
         .layer(
@@ -155,7 +219,10 @@ async fn main() -> Result<(), Error> {
     let grpc_address: SocketAddr = format!("0.0.0.0:{}", email_grpc_port)
         .as_str()
         .parse()
-        .expect("The gRPC address must be set");
+        .map_err(|e| {
+            tracing::error!("Config Error: {}", e);
+            Error::new(ErrorKind::Other, "gRPC address not set")
+        })?;
     let tonic_auth_middleware = AuthMiddleware::default();
 
     tokio::spawn(async move {
@@ -171,14 +238,23 @@ async fn main() -> Result<(), Error> {
             .ok();
     });
 
+    tokio::spawn(async move {
+        while let Ok(event) = eventloop.poll().await {
+            handle_events(&event).await;
+        }
+    });
+
     match tokio::net::TcpListener::bind(format!("0.0.0.0:{}", email_http_port)).await {
         Ok(http_listener) => {
-            let _http_server = serve(http_listener, app)
-                .await
-                .map_err(|e| {
-                    tracing::error!("Failed to create HTTP server: {}", e);
-                })
-                .ok();
+            let _http_server = serve(
+                http_listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to create HTTP server: {}", e);
+            })
+            .ok();
         }
         Err(e) => {
             tracing::error!("Failed to create TCP listener: {}", e);

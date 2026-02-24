@@ -1,9 +1,7 @@
-use std::collections::HashMap;
-
 use async_graphql::{ComplexObject, Enum, InputObject, SimpleObject};
 use chrono::{DateTime, Datelike, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
-use surrealdb::sql::Thing;
+use surrealdb::RecordId;
 
 use crate::utils::auth::OAuthClientName;
 
@@ -28,12 +26,8 @@ pub enum AccountStatus {
     Deleted,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject, Default)]
-#[graphql(input_name = "UserInput")]
-#[graphql(complex)]
-pub struct User {
-    #[graphql(skip)]
-    pub id: Option<Thing>,
+#[derive(Clone, Debug, Serialize, Deserialize, InputObject, Default)]
+pub struct UserInput {
     pub user_name: Option<String>,
     pub first_name: Option<String>,
     pub middle_name: Option<String>,
@@ -45,8 +39,6 @@ pub struct User {
     pub phone: Option<String>,
     #[graphql(secret)]
     pub password: String,
-    pub created_at: Option<String>,
-    pub updated_at: Option<String>,
     #[graphql(skip)]
     pub status: AccountStatus,
     #[graphql(skip)]
@@ -59,40 +51,11 @@ pub struct User {
     pub address: Option<String>,
 }
 
-#[ComplexObject]
-impl User {
-    async fn id(&self) -> String {
-        self.id.as_ref().map(|t| &t.id).expect("id").to_raw()
-    }
-
-    async fn full_name(&self) -> String {
-        format!(
-            "{} {} {}",
-            self.first_name.as_ref().unwrap_or(&"".to_string()),
-            self.middle_name.as_ref().unwrap_or(&"".to_string()),
-            self.last_name.as_ref().unwrap_or(&"".to_string())
-        )
-    }
-
-    async fn age(&self) -> Option<u32> {
-        // calculate age from &self.dob
-        match &self.dob.as_ref() {
-            Some(dob) => {
-                let dob = DateTime::parse_from_rfc3339(dob).ok()?;
-                let from_ymd = NaiveDate::from_ymd_opt(dob.year(), dob.month(), dob.day())?;
-                let today = Utc::now().date_naive();
-                today.years_since(from_ymd)
-            }
-            None => None,
-        }
-    }
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
 #[graphql(complex)]
-pub struct UserOutput {
-    #[graphql(skip)]
-    pub id: Option<Thing>,
+pub struct User {
+    #[graphql(skip, secret)]
+    pub id: RecordId,
     pub user_name: Option<String>,
     pub first_name: Option<String>,
     pub middle_name: Option<String>,
@@ -102,6 +65,8 @@ pub struct UserOutput {
     pub email: String,
     pub country: Option<String>,
     pub phone: Option<String>,
+    #[graphql(secret)]
+    pub password: Option<String>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
     pub status: Option<AccountStatus>,
@@ -114,9 +79,9 @@ pub struct UserOutput {
 }
 
 #[ComplexObject]
-impl UserOutput {
+impl User {
     async fn id(&self) -> String {
-        self.id.as_ref().map(|t| &t.id).expect("id").to_raw()
+        self.id.key().to_string()
     }
 
     async fn full_name(&self) -> String {
@@ -140,6 +105,14 @@ impl UserOutput {
             None => None,
         }
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, InputObject, Default)]
+pub struct FetchUsersQueryFilters {
+    pub organization_id: Option<String>,
+    pub department_id: Option<String>,
+    pub role_id: Option<String>,
+    pub status: Option<AccountStatus>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
@@ -296,9 +269,12 @@ pub struct GithubUserProfile {
     pub repos_url: String,
     pub events_url: String,
     pub received_events_url: String,
+    #[serde(rename = "type")]
     pub r#type: String,
     pub site_admin: bool,
-    pub name: String,
+
+    // Optional user details (nullable in API)
+    pub name: Option<String>,
     pub company: Option<String>,
     pub blog: Option<String>,
     pub location: Option<String>,
@@ -306,19 +282,20 @@ pub struct GithubUserProfile {
     pub hireable: Option<bool>,
     pub bio: Option<String>,
     pub twitter_username: Option<String>,
+
+    // Stats
     pub public_repos: u64,
     pub public_gists: u64,
     pub followers: u64,
     pub following: u64,
+
+    // Dates
     pub created_at: String,
     pub updated_at: String,
-    pub private_gists: u64,
-    pub total_private_repos: u64,
-    pub owned_private_repos: u64,
-    pub disk_usage: u64,
-    pub collaborators: u64,
-    pub two_factor_authentication: bool,
-    pub plan: Plan,
+
+    // New fields not in your old struct
+    pub user_view_type: String,
+    pub notification_email: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
@@ -334,18 +311,11 @@ pub enum OAuthUser {
     Github(GithubUserProfile),
 }
 
-// #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
-// #[graphql(input_name = "ProfessionInput")]
-// pub struct Profession {
-//     pub user_id: String,
-//     pub occupation: String,
-//     pub description: String,
-//     pub start_date: String,
-// }
-
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
 #[graphql(input_name = "UserUpdateInput")]
 pub struct UserUpdate {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub first_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -372,5 +342,3 @@ pub struct UserUpdate {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub address: Option<String>,
 }
-
-pub type SurrealRelationQueryResponse<T> = HashMap<String, Vec<T>>;

@@ -10,6 +10,7 @@ use tonic::{
 use crate::integration::grpc::clients::{
     acl_service::acl_client::AclClient, email_service::email_service_client::EmailServiceClient,
     files_service::files_service_client::FilesServiceClient,
+    payments_service::payments_service_client::PaymentsServiceClient,
 };
 
 // Define the trait for gRPC clients
@@ -22,6 +23,35 @@ pub struct AuthMetaData<'a, T> {
     pub auth_header: Option<&'a HeaderValue>,
     pub cookie_header: Option<&'a HeaderValue>,
     pub constructed_grpc_request: Option<&'a mut Request<T>>,
+}
+
+impl<'a, T> std::fmt::Debug for AuthMetaData<'a, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Safely format header values as strings
+        let auth_header = self
+            .auth_header
+            .map(|h| h.to_str().unwrap_or("<invalid UTF-8>"))
+            .unwrap_or("<none>");
+        let cookie_header = self
+            .cookie_header
+            .map(|h| h.to_str().unwrap_or("<invalid UTF-8>"))
+            .unwrap_or("<none>");
+
+        f.debug_struct("AuthMetaData")
+            .field("auth_header", &auth_header)
+            .field("cookie_header", &cookie_header)
+            // You can’t safely print a &mut Request<T> without borrowing it
+            // So just indicate its presence
+            .field(
+                "constructed_grpc_request",
+                &self
+                    .constructed_grpc_request
+                    .as_ref()
+                    .map(|_| "<some request>")
+                    .unwrap_or("<none>"),
+            )
+            .finish()
+    }
 }
 
 // Implement the trait for AclClient<Channel>
@@ -54,6 +84,17 @@ impl GrpcClient for FilesServiceClient<Channel> {
             .connect()
             .await?;
         Ok(FilesServiceClient::new(channel))
+    }
+}
+
+// Implement the trait for PaymentsServiceClient<Channel>
+#[async_trait]
+impl GrpcClient for PaymentsServiceClient<Channel> {
+    async fn connect<'a>(endpoint: &'a str) -> Result<Self, Error> {
+        let channel = Endpoint::from_shared(endpoint.to_string())?
+            .connect()
+            .await?;
+        Ok(PaymentsServiceClient::new(channel))
     }
 }
 
