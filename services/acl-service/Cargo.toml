@@ -36,7 +36,7 @@ rsa = "0.9.8"
 rand = "0.8"
 base64 = "0.22.1"
 uuid = "1.20.0"
-tower_governor = "=0.8.0"
+tower_governor = "0.8.0"
 
 [lints.rust]
 unsafe_code = "forbid"

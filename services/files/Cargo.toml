@@ -28,7 +28,7 @@ tracing-appender = "0.2.3"
 tonic = "0.12.3"
 prost = "0.13.5"
 tonic-middleware = "0.2.3"
-tower_governor = "=0.8.0"
+tower_governor = "0.8.0"
 
 [lints.rust]
 unsafe_code = "forbid"
