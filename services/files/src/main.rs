@@ -9,6 +9,7 @@ use std::{
     io::{Error, ErrorKind},
     net::SocketAddr,
     sync::Arc,
+    time::Duration,
 };
 
 use async_graphql::{EmptySubscription, Schema};
@@ -40,6 +41,7 @@ use rest::handlers::{download_file, get_image, upload};
 use surrealdb::{engine::remote::ws::Client, Surreal};
 use tonic::transport::Server;
 use tonic_middleware::MiddlewareLayer;
+use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
 use tower_http::cors::CorsLayer;
 
 use graphql::resolvers::mutation::Mutation;
@@ -141,6 +143,23 @@ async fn main() -> Result<(), Error> {
         .filter_map(|endpoint| endpoint.trim().parse::<HeaderValue>().ok())
         .collect();
 
+    // Allow bursts with up to five requests per IP address
+    // and replenishes one element every two seconds
+    let governor_conf = GovernorConfigBuilder::default()
+        .per_second(2)
+        .burst_size(5)
+        .finish()
+        .unwrap();
+
+    let governor_limiter = governor_conf.limiter().clone();
+    let interval = Duration::from_secs(60);
+    // a separate background task to clean up
+    std::thread::spawn(move || loop {
+        std::thread::sleep(interval);
+        tracing::info!("rate limiting storage size: {}", governor_limiter.len());
+        governor_limiter.retain_recent();
+    });
+
     let app = Router::new()
         .route("/upload", post(upload))
         .route("/download/{file_name}", get(download_file))
@@ -149,6 +168,7 @@ async fn main() -> Result<(), Error> {
         .route("/view/{file_name}", get(get_image))
         .route("/healthz", get(|| async { StatusCode::OK }))
         .route("/ready", get(|| async { StatusCode::OK }))
+        .layer(GovernorLayer::new(governor_conf))
         .layer(Extension(schema))
         .layer(Extension(db.clone()))
         .layer(DefaultBodyLimit::max(100 * 1024 * 1024))

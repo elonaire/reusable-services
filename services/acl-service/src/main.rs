@@ -9,6 +9,7 @@ use std::{
     io::{Error, ErrorKind},
     net::SocketAddr,
     sync::Arc,
+    time::Duration,
     vec,
 };
 
@@ -36,6 +37,7 @@ use rest::handlers::{exchange_code_for_token, oauth_callback_handler, verify_ema
 use rumqttc::v5::AsyncClient;
 use surrealdb::{engine::remote::ws::Client, Surreal};
 use tonic::transport::Server;
+use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
 use tower_http::cors::CorsLayer;
 
 use graphql::resolvers::mutation::Mutation;
@@ -169,6 +171,23 @@ async fn main() -> Result<(), Error> {
 
     tokio::spawn(async move { while let Ok(_event) = eventloop.poll().await {} });
 
+    // Allow bursts with up to five requests per IP address
+    // and replenishes one element every two seconds
+    let governor_conf = GovernorConfigBuilder::default()
+        .per_second(2)
+        .burst_size(5)
+        .finish()
+        .unwrap();
+
+    let governor_limiter = governor_conf.limiter().clone();
+    let interval = Duration::from_secs(60);
+    // a separate background task to clean up
+    std::thread::spawn(move || loop {
+        std::thread::sleep(interval);
+        tracing::info!("rate limiting storage size: {}", governor_limiter.len());
+        governor_limiter.retain_recent();
+    });
+
     let shared_state = Arc::new(AppState {
         mqtt_client: client,
     });
@@ -180,6 +199,7 @@ async fn main() -> Result<(), Error> {
         .route("/healthz", get(|| async { StatusCode::OK }))
         .route("/ready", get(|| async { StatusCode::OK }))
         .route("/verify-email", get(verify_email_handler))
+        .layer(GovernorLayer::new(governor_conf))
         .layer(Extension(shared_state))
         .layer(CookieLayer::strict())
         .layer(Extension(schema))

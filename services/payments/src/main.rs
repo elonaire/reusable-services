@@ -9,6 +9,7 @@ use std::{
     io::{Error, ErrorKind},
     net::SocketAddr,
     sync::Arc,
+    time::Duration,
 };
 
 use async_graphql::{EmptySubscription, Schema};
@@ -42,6 +43,7 @@ use rumqttc::v5::AsyncClient;
 use surrealdb::{engine::remote::ws::Client, Surreal};
 use tonic::transport::Server;
 use tonic_middleware::MiddlewareLayer;
+use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
 use tower_http::cors::CorsLayer;
 
 use graphql::resolvers::mutation::Mutation;
@@ -140,6 +142,23 @@ async fn main() -> Result<(), Error> {
     let (client, mut eventloop) =
         MqttClient::new("payments-service", &mqtt_host, mqtt_port.parse().unwrap()).await?;
 
+    // Allow bursts with up to five requests per IP address
+    // and replenishes one element every two seconds
+    let governor_conf = GovernorConfigBuilder::default()
+        .per_second(2)
+        .burst_size(5)
+        .finish()
+        .unwrap();
+
+    let governor_limiter = governor_conf.limiter().clone();
+    let interval = Duration::from_secs(60);
+    // a separate background task to clean up
+    std::thread::spawn(move || loop {
+        std::thread::sleep(interval);
+        tracing::info!("rate limiting storage size: {}", governor_limiter.len());
+        governor_limiter.retain_recent();
+    });
+
     let shared_state = Arc::new(AppState {
         mqtt_client: client,
     });
@@ -147,6 +166,7 @@ async fn main() -> Result<(), Error> {
     let app = Router::new()
         .route("/", post(graphql_handler))
         .route("/paystack/webhook", post(handle_paystack_webhook))
+        .layer(GovernorLayer::new(governor_conf))
         .layer(Extension(shared_state))
         .layer(Extension(schema))
         .layer(Extension(db.clone()))

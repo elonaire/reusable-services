@@ -28,6 +28,7 @@ prost = "0.13.5"
 async-trait = "0.1.87"
 tonic-middleware = "0.2.3"
 rumqttc = "0.24.0"
+tower_governor = "=0.8.0"
 
 [lints.rust]
 unsafe_code = "forbid"
