@@ -420,18 +420,18 @@ jobs:
 
       - name: Log in to Docker Registry
         uses: docker/login-action@v3
-        # with:
-        #   registry: registry.techietenka.com
-        #   username: ${{ secrets.REGISTRY_USERNAME }}
-        #   password: ${{ secrets.REGISTRY_PASSWORD }}
+        with:
+          registry: registry.techietenka.com
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
 
       - name: Set up Docker Buildx
         # uses: docker/setup-buildx-action@v1
         uses: docker/setup-buildx-action@v3
-        with:
-          version: "lab:latest"
-          driver: cloud
-          endpoint: "elonaire/elonaire-builder"
+        # with:
+        #   version: "lab:latest"
+        #   driver: cloud
+        #   endpoint: "elonaire/elonaire-builder"
 
       - name: Build the Docker image
         run: |
