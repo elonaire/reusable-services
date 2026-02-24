@@ -4,31 +4,31 @@ version = "0.2.0"
 edition = "2021"
 
 [dependencies]
-axum = "0.8.1"
-async-graphql = "7.0.15"
-async-graphql-axum = "7.0.15"
-tokio = { version = "1.43.0", features = ["full"] }
-hyper = "1.6.0"
-tower-http = { version = "0.6.2", features = ["cors"] }
-surrealdb = "2.2.1"
-chrono = "0.4.40"
-serde = "1.0.218"
-dotenvy = "0.15.7"
-reqwest = { version = "0.12.12", features = ["json"] }
-lib = { path = "../../lib" }
-serde_json = "1.0.140"
-hmac = "0.12.1"
-sha2 = "0.10.8"
-hex = "0.4.3"
-tracing-subscriber = "0.3.19"
-tracing = "0.1.41"
-tracing-appender = "0.2.3"
-tonic = "0.12.3"
-prost = "0.13.5"
-async-trait = "0.1.87"
-tonic-middleware = "0.2.3"
-rumqttc = "0.24.0"
-tower_governor = "0.8.0"
+axum = { workspace = true }
+async-graphql = { workspace = true }
+async-graphql-axum = { workspace = true }
+tokio = { workspace = true }
+hyper = { workspace = true }
+tower-http = { workspace = true }
+surrealdb = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+dotenvy = { workspace = true }
+reqwest = { workspace = true }
+lib = { workspace = true }
+serde_json = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing = { workspace = true }
+tracing-appender = { workspace = true }
+tonic = { workspace = true }
+prost = { workspace = true }
+async-trait = { workspace = true }
+tonic-middleware = { workspace = true }
+rumqttc = { workspace = true }
+tower_governor = { workspace = true }
 
 [lints.rust]
 unsafe_code = "forbid"
