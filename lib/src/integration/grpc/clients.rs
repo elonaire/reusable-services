@@ -15,12 +15,54 @@ pub mod files_service {
     include!("out/files.rs");
 }
 
+pub mod payments_service {
+    include!("out/payments.rs");
+}
+
+impl From<payments_service::UserPaymentDetails> for utils::models::UserPaymentDetails {
+    fn from(user: payments_service::UserPaymentDetails) -> Self {
+        Self {
+            email: user.email,
+            amount: user.amount,
+            reference: user.reference,
+        }
+    }
+}
+
 /// For easy conversion to protobuf
-impl From<utils::models::AuthStatus> for acl_service::AuthStatus {
+impl From<utils::models::AuthStatus> for acl_service::ConfirmAuthenticationResponse {
     fn from(auth_status: utils::models::AuthStatus) -> Self {
         Self {
             sub: auth_status.sub,
             is_auth: auth_status.is_auth,
+            current_role: auth_status.current_role,
+            new_access_token: auth_status.new_access_token.unwrap_or(String::new()),
+        }
+    }
+}
+
+/// For easy conversion to protobuf
+impl From<acl_service::AuthStatus> for utils::models::AuthStatus {
+    fn from(auth_status: acl_service::AuthStatus) -> Self {
+        Self {
+            sub: auth_status.sub,
+            is_auth: auth_status.is_auth,
+            current_role: auth_status.current_role,
+            new_access_token: Some(auth_status.new_access_token),
+        }
+    }
+}
+
+/// For easy conversion to protobuf
+impl From<acl_service::AuthorizationConstraint> for utils::models::AuthorizationConstraint {
+    fn from(authorization_constraint: acl_service::AuthorizationConstraint) -> Self {
+        Self {
+            permissions: authorization_constraint.permissions,
+            privilege: authorization_constraint
+                .privilege
+                .unwrap()
+                .try_into()
+                .unwrap(),
         }
     }
 }
@@ -36,8 +78,8 @@ impl From<email_service::EmailUser> for utils::models::EmailUser {
 }
 
 /// For easy conversion to protobuf
-impl From<email_service::Email> for utils::models::Email {
-    fn from(email: email_service::Email) -> Self {
+impl From<email_service::SendEmailRequest> for utils::models::Email {
+    fn from(email: email_service::SendEmailRequest) -> Self {
         Self {
             recipient: email.recipient.map_or_else(
                 || utils::models::EmailUser {
@@ -53,11 +95,35 @@ impl From<email_service::Email> for utils::models::Email {
     }
 }
 
-impl From<files_service::PurchaseFileDetails> for utils::models::PurchaseFileDetails {
-    fn from(file_details: files_service::PurchaseFileDetails) -> Self {
+impl From<files_service::PurchaseFileRequest> for utils::models::PurchaseFileDetails {
+    fn from(file_details: files_service::PurchaseFileRequest) -> Self {
         Self {
             file_id: file_details.file_id, // Ensuring `Option<String>`
             buyer_id: file_details.buyer_id,
+        }
+    }
+}
+
+/// For easy conversion to protobuf
+impl From<acl_service::ConfirmAuthenticationResponse> for utils::models::AuthStatus {
+    fn from(auth_status: acl_service::ConfirmAuthenticationResponse) -> Self {
+        Self {
+            sub: auth_status.sub,
+            is_auth: auth_status.is_auth,
+            current_role: auth_status.current_role,
+            new_access_token: Some(auth_status.new_access_token),
+        }
+    }
+}
+
+/// For easy conversion to protobuf
+impl From<files_service::CreateFileFromContentRequest> for utils::models::CreateFileInfo {
+    fn from(file_info: files_service::CreateFileFromContentRequest) -> Self {
+        Self {
+            extension: file_info.extension.try_into().unwrap(),
+            content: file_info.content,
+            file_name: file_info.file_name,
+            is_free: file_info.is_free,
         }
     }
 }

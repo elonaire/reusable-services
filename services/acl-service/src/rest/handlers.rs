@@ -20,7 +20,7 @@ use tokio::fs;
 use crate::{
     graphql::schemas::user::{AuthDetails, GithubUserProfile, GoogleUserInfo, OAuthUser},
     utils::auth::{
-        create_oauth_user_if_not_exists, decode_token_string, fetch_default_user_roles,
+        create_oauth_user_if_not_exists, decode_token_string, fetch_user_roles,
         initiate_auth_code_grant_flow, sign_jwt, verify_oauth_token, OAuthClientName,
     },
 };
@@ -131,7 +131,7 @@ pub async fn exchange_code_for_token(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    // // Now you can trade it for an access token.
+    // Now you can trade it for an access token.
     let token_result = oauth_client
         .exchange_code(auth_code)
         // Set the PKCE code verifier.
@@ -143,7 +143,17 @@ pub async fn exchange_code_for_token(
             StatusCode::FORBIDDEN
         })?;
 
-    let token = token_result.access_token().secret();
+    let borrowed_token_result = &token_result;
+
+    if let Some(refresh_token) = borrowed_token_result.refresh_token() {
+        let refresh_token_cookie = CookieBuilder::new("t", refresh_token.secret().to_owned())
+            .path("/")
+            .build();
+
+        cookie.add(refresh_token_cookie);
+    };
+
+    let token = borrowed_token_result.access_token().secret();
 
     let token_header = HeaderValue::from_str(&format!("Bearer {}", token)).map_err(|e| {
         tracing::error!("Failed to create token header: {}", e);
@@ -160,14 +170,18 @@ pub async fn exchange_code_for_token(
                     StatusCode::UNAUTHORIZED
                 })?;
 
-            let _create_user = create_oauth_user_if_not_exists::<Arc<Surreal<Client>>>(
+            let created_user = create_oauth_user_if_not_exists::<Arc<Surreal<Client>>>(
                 &db,
                 OAuthClientName::Google,
                 &OAuthUser::Google(user.clone()),
             )
-            .await;
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to create user: {}", e);
+                StatusCode::UNAUTHORIZED
+            })?;
 
-            let user_roles = fetch_default_user_roles(&db, &user.resource_name)
+            let user_roles = fetch_user_roles(&db, &created_user.id.key().to_string(), None)
                 .await
                 .map_err(|e| {
                     tracing::error!("Failed to fetch default roles: {}", e);
@@ -193,7 +207,7 @@ pub async fn exchange_code_for_token(
 
             Ok((AuthDetails {
                 url: None,
-                token: Some(token_str),
+                token: Some(token.to_owned()),
             })
             .into())
         }
@@ -206,14 +220,18 @@ pub async fn exchange_code_for_token(
                         StatusCode::UNAUTHORIZED
                     })?;
 
-            let _create_user = create_oauth_user_if_not_exists::<Arc<Surreal<Client>>>(
+            let created_user = create_oauth_user_if_not_exists::<Arc<Surreal<Client>>>(
                 &db,
                 OAuthClientName::Github,
                 &OAuthUser::Github(user.clone()),
             )
-            .await;
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to create user: {}", e);
+                StatusCode::UNAUTHORIZED
+            })?;
 
-            let user_roles = fetch_default_user_roles(&db, &user.id.to_string())
+            let user_roles = fetch_user_roles(&db, &created_user.id.key().to_string(), None)
                 .await
                 .map_err(|e| {
                     tracing::error!("Failed to fetch user roles: {}", e);
@@ -239,7 +257,7 @@ pub async fn exchange_code_for_token(
 
             Ok((AuthDetails {
                 url: None,
-                token: Some(token_str),
+                token: Some(token.to_owned()),
             })
             .into())
         }

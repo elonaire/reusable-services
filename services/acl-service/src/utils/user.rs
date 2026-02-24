@@ -2,11 +2,11 @@ use std::io::{Error, ErrorKind};
 
 use lib::utils::custom_traits::AsSurrealClient;
 
-use crate::graphql::schemas::user::User;
+use crate::graphql::schemas::user::{User, UserInput};
 
 pub async fn create_user<T: Clone + AsSurrealClient>(
     db: &T,
-    user: User,
+    user: UserInput,
 ) -> Result<Option<User>, Error> {
     let response: Option<User> =
         db.as_client()

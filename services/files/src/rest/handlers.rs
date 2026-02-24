@@ -6,17 +6,15 @@ use axum::{
 };
 use lib::{
     integration::foreign_key::add_foreign_key_if_not_exists,
-    utils::models::{ForeignKey, User},
+    utils::models::{AuthStatus, ForeignKey, User},
+};
+use tokio::{
+    fs::{remove_file, File},
+    io::{AsyncReadExt, AsyncWriteExt},
 };
 use uuid::Uuid;
 
-use std::{
-    env,
-    fs::{self, File},
-    io::Write,
-    path::Path,
-    sync::Arc,
-};
+use std::{env, path::Path, sync::Arc};
 use surrealdb::{engine::remote::ws::Client, Surreal};
 
 use crate::graphql::schemas::general::{UploadedFile, UploadedFileResponse};
@@ -25,7 +23,7 @@ use crate::graphql::schemas::general::{UploadedFile, UploadedFileResponse};
 
 pub async fn upload(
     Extension(db): Extension<Arc<Surreal<Client>>>,
-    Extension(current_user): Extension<String>,
+    Extension(auth_status): Extension<AuthStatus>,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
     let upload_dir = env::var("FILE_UPLOADS_DIR");
@@ -38,7 +36,7 @@ pub async fn upload(
     let user_fk_body = ForeignKey {
         table: "user_id".into(),
         column: "user_id".into(),
-        foreign_key: current_user,
+        foreign_key: auth_status.sub,
     };
 
     let user_fk =
@@ -48,22 +46,15 @@ pub async fn upload(
         return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
     }
 
-    let user_id_raw = user_fk
-        .unwrap()
-        .id
-        .as_ref()
-        .map(|t| &t.id)
-        .expect("id")
-        .to_raw();
+    let user_id_raw = user_fk.unwrap().id.key().to_string();
 
     let mut total_size: u64 = 0;
-    let mut filename = String::new();
-    let system_filename = Uuid::new_v4();
-    let mut mime_type = String::new();
+    let mut filename;
+    let mut mime_type;
     let upload_dir = upload_dir.unwrap();
-    let filepath = format!("{}{}", &upload_dir, system_filename);
-    let mut field_name = String::new();
-    let mut is_free = true;
+    let mut field_name;
+    let mut is_free;
+    let mut all_uploaded_files_response = Vec::new() as Vec<UploadedFileResponse>;
 
     // Ensure the directory exists
     if let Err(e) = std::fs::create_dir_all(&upload_dir) {
@@ -72,6 +63,8 @@ pub async fn upload(
     }
 
     while let Some(field) = multipart.next_field().await.unwrap_or_else(|_| None) {
+        let system_filename = Uuid::new_v4();
+        let filepath = Path::new(&upload_dir).join(&system_filename.to_string());
         let mut field = field;
 
         // Extract field name and filename
@@ -79,7 +72,6 @@ pub async fn upload(
             .file_name()
             .map(|name| name.to_string())
             .unwrap_or_else(|| "unknown".to_string());
-        // filepath = format!("{}/{}", &upload_dir, filename);
         // Extract the MIME type
         mime_type = field
             .content_type()
@@ -91,17 +83,14 @@ pub async fn upload(
             .map(|name| name.to_string())
             .unwrap_or_else(|| "unknown".to_string());
 
-        match field_name.as_str() {
-            "premium_file" => {
-                is_free = false;
-            }
-            _ => {
-                is_free = true;
-            }
-        }
+        if field_name.contains("premium") {
+            is_free = false;
+        } else {
+            is_free = true;
+        };
 
         // Create and open the file for writing
-        let mut file = match File::create(&filepath) {
+        let mut file = match File::create(&filepath).await {
             Ok(file) => file,
             Err(e) => {
                 tracing::error!("Failed to create file: {}", e);
@@ -116,105 +105,99 @@ pub async fn upload(
             Ok(None) => None,
             Err(e) => {
                 tracing::error!("Failed to read chunk: {}", e);
-                let _ = std::fs::remove_file(&filepath);
+                let _ = remove_file(&filepath).await;
                 return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file")
                     .into_response();
             }
         } {
             total_size += chunk.len() as u64;
-            if let Err(e) = file.write_all(&chunk) {
+            if let Err(e) = file.write_all(&chunk).await {
                 tracing::error!("Failed to write chunk: {}", e);
                 // Clean up file on error
-                let _ = std::fs::remove_file(&filepath);
+                let _ = remove_file(&filepath).await;
                 return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file")
                     .into_response();
             }
         }
 
         // Ensure file is successfully flushed
-        if let Err(e) = file.flush() {
+        if let Err(e) = file.flush().await {
             tracing::error!("Failed to flush file: {}", e);
             // Clean up file on error
-            let _ = std::fs::remove_file(&filepath);
-            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file").into_response();
-        }
-    }
-
-    // Insert uploaded files into the database
-    let db_query_result = db
-        .query(
-            "
-            BEGIN TRANSACTION;
-            LET $user = type::thing($user_id);
-
-            IF !$user.exists() {
-                THROW 'Invalid Input';
-            };
-
-            LET $new_file = (CREATE file CONTENT {
-               	owner: type::thing($user),
-               	name: $name,
-                size: $size,
-                mime_type: $mime_type,
-                system_filename: $system_filename,
-                is_free: $is_free
-            });
-            RETURN $new_file[0];
-            COMMIT TRANSACTION;
-            ",
-        )
-        .bind(("user_id", format!("user_id:{}", user_id_raw)))
-        .bind(("name", filename))
-        .bind(("size", total_size))
-        .bind(("mime_type", mime_type))
-        .bind(("is_free", is_free))
-        .bind(("system_filename", format!("{}", system_filename)))
-        .await;
-
-    if let Err(e) = &db_query_result {
-        tracing::error!("Failed to insert file into database: {}", e);
-        let _ = std::fs::remove_file(&filepath);
-
-        return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file").into_response();
-    } else {
-        let stored_file = db_query_result.unwrap().take(0);
-
-        if let Err(e) = stored_file {
-            tracing::error!("Failed to retrieve file from database: {}", e);
-            let _ = std::fs::remove_file(&filepath);
-
+            let _ = remove_file(&filepath).await;
             return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file").into_response();
         }
 
-        let stored_file: Option<UploadedFile> = stored_file.unwrap();
+        // Insert uploaded files into the database
+        let db_query_result = db
+            .query(
+                "
+                BEGIN TRANSACTION;
+                LET $user = type::thing('user_id', $user_id);
 
-        if stored_file.is_none() {
+                IF !$user.exists() {
+                    THROW 'Invalid Input';
+                };
+
+                LET $new_file = (CREATE file CONTENT {
+                   	owner: $user,
+                   	name: $name,
+                    size: $size,
+                    mime_type: $mime_type,
+                    system_filename: $system_filename,
+                    is_free: $is_free
+                });
+                RETURN $new_file[0];
+                COMMIT TRANSACTION;
+                ",
+            )
+            .bind(("user_id", user_id_raw.clone()))
+            .bind(("name", filename))
+            .bind(("size", total_size))
+            .bind(("mime_type", mime_type))
+            .bind(("is_free", is_free))
+            .bind(("system_filename", format!("{}", system_filename)))
+            .await;
+
+        if let Err(e) = &db_query_result {
+            tracing::error!("Failed to insert file into database: {}", e);
+            let _ = remove_file(&filepath).await;
+
             return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file").into_response();
-        }
+        } else {
+            let stored_file = db_query_result.unwrap().take(0);
 
-        let stored_file = stored_file.unwrap();
+            if let Err(e) = stored_file {
+                tracing::error!("Failed to retrieve file from database: {}", e);
+                let _ = remove_file(&filepath).await;
 
-        (
-            StatusCode::CREATED,
-            Json(UploadedFileResponse {
+                return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file")
+                    .into_response();
+            }
+
+            let stored_file: Option<UploadedFile> = stored_file.unwrap();
+
+            if stored_file.is_none() {
+                return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file")
+                    .into_response();
+            }
+
+            let stored_file = stored_file.unwrap();
+
+            all_uploaded_files_response.push(UploadedFileResponse {
                 field_name,
                 file_name: stored_file.system_filename,
-                file_id: stored_file
-                    .id
-                    .as_ref()
-                    .map(|t| &t.id)
-                    .unwrap()
-                    .to_raw()
-                    .clone(),
-            }),
-        )
-            .into_response()
+                file_id: stored_file.id.key().to_string(),
+            });
+        }
     }
+
+    (StatusCode::CREATED, Json(all_uploaded_files_response)).into_response()
 }
 
 pub async fn download_file(
     Extension(db): Extension<Arc<Surreal<Client>>>,
-    Extension(current_user): Extension<String>,
+    Extension(auth_status): Extension<AuthStatus>,
     AxumUrlParams(file_name): AxumUrlParams<String>,
 ) -> Result<Response, StatusCode> {
     let upload_dir = env::var("FILE_UPLOADS_DIR");
@@ -228,12 +211,16 @@ pub async fn download_file(
     let path = Path::new(&upload_dir).join(&file_name);
 
     if path.exists() {
-        let bytes = fs::read(&path).map_err(|_| StatusCode::NOT_FOUND)?;
+        let mut file = File::open(&path).await.map_err(|_| StatusCode::NOT_FOUND)?;
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer)
+            .await
+            .map_err(|_| StatusCode::NOT_FOUND)?;
 
         let mut file_details_query = db
             .query(
                 "
-                SELECT * FROM file WHERE system_filename=$file_name
+                SELECT * FROM ONLY file WHERE system_filename=$file_name LIMIT 1
                 ",
             )
             .bind(("file_name", file_name.clone()))
@@ -263,7 +250,7 @@ pub async fn download_file(
                             COMMIT TRANSACTION;
                             "
                         )
-                            .bind(("user_id", current_user.clone()))
+                            .bind(("user_id", auth_status.sub.clone()))
                             .bind(("file_name", file_name.clone()))
                             .await
                             .map_err(|e| {
@@ -295,7 +282,7 @@ pub async fn download_file(
                                     COMMIT TRANSACTION;
                                     "
                                 )
-                                    .bind(("user_id", current_user))
+                                    .bind(("user_id", auth_status.sub))
                                     .bind(("file_name", file_name.clone()))
                                     .await
                                     .map_err(|e| {
@@ -331,7 +318,7 @@ pub async fn download_file(
                         format!("attachment; filename=\"{}\"", &file_details.name),
                     )
                     .header("Content-Type", content_type.to_string())
-                    .body(bytes.into())
+                    .body(buffer.into())
                     .map_err(|err| {
                         tracing::error!("Failed to build response: {}", err);
                         StatusCode::INTERNAL_SERVER_ERROR
@@ -360,12 +347,16 @@ pub async fn get_image(
     let path = Path::new(&upload_dir).join(&file_name);
 
     if path.exists() {
-        let bytes = fs::read(path).map_err(|_| StatusCode::NOT_FOUND)?;
+        let mut file = File::open(&path).await.map_err(|_| StatusCode::NOT_FOUND)?;
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer)
+            .await
+            .map_err(|_| StatusCode::NOT_FOUND)?;
 
         let mut file_details_query = db
             .query(
                 "
-                SELECT * FROM file WHERE system_filename=$file_name
+                SELECT * FROM ONLY file WHERE system_filename=$file_name LIMIT 1
                 ",
             )
             .bind(("file_name", file_name.clone()))
@@ -386,7 +377,7 @@ pub async fn get_image(
 
                 let response = Response::builder()
                     .header("Content-Type", content_type.to_string())
-                    .body(bytes.into())
+                    .body(buffer.into())
                     .map_err(|e| {
                         tracing::error!("Failed database query: {}", e);
                         StatusCode::INTERNAL_SERVER_ERROR

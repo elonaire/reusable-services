@@ -9,6 +9,7 @@ use std::{
     io::{Error, ErrorKind},
     net::SocketAddr,
     sync::Arc,
+    time::Duration,
 };
 
 use async_graphql::{EmptySubscription, Schema};
@@ -40,6 +41,7 @@ use rest::handlers::{download_file, get_image, upload};
 use surrealdb::{engine::remote::ws::Client, Surreal};
 use tonic::transport::Server;
 use tonic_middleware::MiddlewareLayer;
+use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
 use tower_http::cors::CorsLayer;
 
 use graphql::resolvers::mutation::Mutation;
@@ -71,7 +73,7 @@ async fn graphql_handler(
 
     // Debug the response
     if response.errors.len() > 0 {
-        tracing::debug!("GraphQL Error: {:?}", response.errors);
+        tracing::error!("GraphQL Error: {:?}", response.errors);
     } else {
         tracing::info!("GraphQL request completed without errors");
     }
@@ -82,6 +84,21 @@ async fn graphql_handler(
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
+    // Persist the server logs to a file on a daily basis using "tracing_subscriber"
+    let file_appender = tracing_appender::rolling::daily("./logs", "files.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
+    let stdout = std::io::stdout
+        .with_filter(|meta| {
+            meta.target() != "h2::codec::framed_write" && meta.target() != "h2::codec::framed_read"
+        })
+        .with_max_level(tracing::Level::DEBUG); // Log to console at DEBUG level
+
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_writer(stdout.and(non_blocking))
+        .init();
+
     let connection_pool = database::connection::create_db_connection()
         .await
         .map_err(|e| {
@@ -95,12 +112,18 @@ async fn main() -> Result<(), Error> {
 
     // Bring in some needed env vars
     let deployment_env = env::var("ENVIRONMENT").unwrap_or_else(|_| "prod".to_string()); // default to production because it's the most secure
-    let allowed_services_cors = env::var("ALLOWED_SERVICES_CORS")
-        .expect("Missing the ALLOWED_SERVICES environment variable.");
-    let files_http_port =
-        env::var("FILES_HTTP_PORT").expect("Missing the FILES_HTTP_PORT environment variable.");
-    let files_grpc_port =
-        env::var("FILES_GRPC_PORT").expect("Missing the FILES_GRPC_PORT environment variable.");
+    let allowed_services_cors = env::var("ALLOWED_SERVICES_CORS").map_err(|e| {
+        tracing::error!("Config Error: {}", e);
+        Error::new(ErrorKind::Other, "ALLOWED_SERVICES_CORS not set")
+    })?;
+    let files_http_port = env::var("FILES_HTTP_PORT").map_err(|e| {
+        tracing::error!("Config Error: {}", e);
+        Error::new(ErrorKind::Other, "FILES_HTTP_PORT not set")
+    })?;
+    let files_grpc_port = env::var("FILES_GRPC_PORT").map_err(|e| {
+        tracing::error!("Config Error: {}", e);
+        Error::new(ErrorKind::Other, "FILES_GRPC_PORT not set")
+    })?;
 
     // Initialize the schema builder
     let mut schema_builder =
@@ -120,20 +143,22 @@ async fn main() -> Result<(), Error> {
         .filter_map(|endpoint| endpoint.trim().parse::<HeaderValue>().ok())
         .collect();
 
-    // Persist the server logs to a file on a daily basis using "tracing_subscriber"
-    let file_appender = tracing_appender::rolling::daily("./logs", "files.log");
-    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+    // Allow bursts with up to five requests per IP address
+    // and replenishes one element every two seconds
+    let governor_conf = GovernorConfigBuilder::default()
+        .per_second(2)
+        .burst_size(5)
+        .finish()
+        .unwrap();
 
-    let stdout = std::io::stdout
-        .with_filter(|meta| {
-            meta.target() != "h2::codec::framed_write" && meta.target() != "h2::codec::framed_read"
-        })
-        .with_max_level(tracing::Level::DEBUG); // Log to console at DEBUG level
-
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
-        .with_writer(stdout.and(non_blocking))
-        .init();
+    let governor_limiter = governor_conf.limiter().clone();
+    let interval = Duration::from_secs(60);
+    // a separate background task to clean up
+    std::thread::spawn(move || loop {
+        std::thread::sleep(interval);
+        tracing::info!("rate limiting storage size: {}", governor_limiter.len());
+        governor_limiter.retain_recent();
+    });
 
     let app = Router::new()
         .route("/upload", post(upload))
@@ -143,6 +168,7 @@ async fn main() -> Result<(), Error> {
         .route("/view/{file_name}", get(get_image))
         .route("/healthz", get(|| async { StatusCode::OK }))
         .route("/ready", get(|| async { StatusCode::OK }))
+        .layer(GovernorLayer::new(governor_conf))
         .layer(Extension(schema))
         .layer(Extension(db.clone()))
         .layer(DefaultBodyLimit::max(100 * 1024 * 1024))
@@ -171,7 +197,10 @@ async fn main() -> Result<(), Error> {
     let grpc_address: SocketAddr = format!("0.0.0.0:{}", files_grpc_port)
         .as_str()
         .parse()
-        .expect("The gRPC address must be set");
+        .map_err(|e| {
+            tracing::error!("Config Error: {}", e);
+            Error::new(ErrorKind::Other, "gRPC address not set")
+        })?;
     let tonic_auth_middleware = AuthMiddleware::default();
 
     tokio::spawn(async move {

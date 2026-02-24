@@ -9,6 +9,7 @@ use std::{
     io::{Error, ErrorKind},
     net::SocketAddr,
     sync::Arc,
+    time::Duration,
     vec,
 };
 
@@ -36,6 +37,7 @@ use rest::handlers::{exchange_code_for_token, oauth_callback_handler, verify_ema
 use rumqttc::v5::AsyncClient;
 use surrealdb::{engine::remote::ws::Client, Surreal};
 use tonic::transport::Server;
+use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
 use tower_http::cors::CorsLayer;
 
 use graphql::resolvers::mutation::Mutation;
@@ -44,6 +46,7 @@ use tracing_subscriber::fmt::writer::MakeWriterExt;
 use lib::{
     integration::grpc::clients::acl_service::acl_server::AclServer, utils::mqtt::MqttClient,
 };
+use uuid::Uuid;
 
 type MySchema = Schema<Query, Mutation, EmptySubscription>;
 
@@ -61,8 +64,13 @@ async fn graphql_handler(
     let mut request = req.0;
 
     let db = db.clone();
-    let headers = headers.clone();
+    let mut headers = headers.clone();
     let mqtt_client = mqtt_client.clone();
+    let request_id = Uuid::new_v4();
+    headers.insert(
+        "x-request-id",
+        HeaderValue::from_str(&request_id.to_string()).unwrap_or(HeaderValue::from_static("")),
+    );
 
     request = request.data(db);
     request = request.data(headers);
@@ -82,7 +90,7 @@ async fn graphql_handler(
 
     // Debug the response
     if response.errors.len() > 0 {
-        tracing::debug!("GraphQL Error: {:?}", response.errors);
+        tracing::error!("GraphQL Error: {:?}", response.errors);
     } else {
         tracing::info!("GraphQL request completed without errors");
     }
@@ -93,6 +101,23 @@ async fn graphql_handler(
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
+    // Persist the server logs to a file on a daily basis using "tracing_subscriber"
+    let file_appender = tracing_appender::rolling::daily("./logs", "acl.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
+    let stdout = std::io::stdout
+        .with_filter(|meta| {
+            meta.target() != "h2::codec::framed_write"
+                && meta.target() != "h2::codec::framed_read"
+                && meta.target() != "rumqttc::v5::state"
+        })
+        .with_max_level(tracing::Level::DEBUG); // Log to console at DEBUG level
+
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_writer(stdout.and(non_blocking))
+        .init();
+
     let connection_pool = database::connection::create_db_connection()
         .await
         .map_err(|e| {
@@ -103,14 +128,26 @@ async fn main() -> Result<(), Error> {
 
     // Bring in some needed env vars
     let deployment_env = env::var("ENVIRONMENT").unwrap_or_else(|_| "prod".to_string()); // default to production because it's the most secure
-    let allowed_services_cors = env::var("ALLOWED_SERVICES_CORS")
-        .expect("Missing the ALLOWED_SERVICES environment variable.");
-    let acl_http_port =
-        env::var("ACL_HTTP_PORT").expect("Missing the ACL_HTTP_PORT environment variable.");
-    let acl_grpc_port =
-        env::var("ACL_GRPC_PORT").expect("Missing the ACL_GRPC_PORT environment variable.");
-    let mqtt_host = env::var("MQTT_HOST").expect("Missing the MQTT_HOST environment variable.");
-    let mqtt_port = env::var("MQTT_PORT").expect("Missing the MQTT_PORT environment variable.");
+    let allowed_services_cors = env::var("ALLOWED_SERVICES_CORS").map_err(|e| {
+        tracing::error!("Config Error: {}", e);
+        Error::new(ErrorKind::Other, "ALLOWED_SERVICES_CORS not set")
+    })?;
+    let acl_http_port = env::var("ACL_HTTP_PORT").map_err(|e| {
+        tracing::error!("Config Error: {}", e);
+        Error::new(ErrorKind::Other, "ACL_HTTP_PORT not set")
+    })?;
+    let acl_grpc_port = env::var("ACL_GRPC_PORT").map_err(|e| {
+        tracing::error!("Config Error: {}", e);
+        Error::new(ErrorKind::Other, "ACL_GRPC_PORT not set")
+    })?;
+    let mqtt_host = env::var("MQTT_HOST").map_err(|e| {
+        tracing::error!("Config Error: {}", e);
+        Error::new(ErrorKind::Other, "MQTT_HOST not set")
+    })?;
+    let mqtt_port = env::var("MQTT_PORT").map_err(|e| {
+        tracing::error!("Config Error: {}", e);
+        Error::new(ErrorKind::Other, "MQTT_PORT not set")
+    })?;
 
     // Initialize the schema builder
     let mut schema_builder = Schema::build(Query, Mutation, EmptySubscription);
@@ -129,27 +166,27 @@ async fn main() -> Result<(), Error> {
         .filter_map(|endpoint| endpoint.trim().parse::<HeaderValue>().ok())
         .collect();
 
-    // Persist the server logs to a file on a daily basis using "tracing_subscriber"
-    let file_appender = tracing_appender::rolling::daily("./logs", "acl.log");
-    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
-
-    let stdout = std::io::stdout
-        .with_filter(|meta| {
-            meta.target() != "h2::codec::framed_write"
-                && meta.target() != "h2::codec::framed_read"
-                && meta.target() != "rumqttc::v5::state"
-        })
-        .with_max_level(tracing::Level::DEBUG); // Log to console at DEBUG level
-
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
-        .with_writer(stdout.and(non_blocking))
-        .init();
-
     let (client, mut eventloop) =
         MqttClient::new("acl-service", &mqtt_host, mqtt_port.parse().unwrap()).await?;
 
     tokio::spawn(async move { while let Ok(_event) = eventloop.poll().await {} });
+
+    // Allow bursts with up to five requests per IP address
+    // and replenishes one element every two seconds
+    let governor_conf = GovernorConfigBuilder::default()
+        .per_second(2)
+        .burst_size(5)
+        .finish()
+        .unwrap();
+
+    let governor_limiter = governor_conf.limiter().clone();
+    let interval = Duration::from_secs(60);
+    // a separate background task to clean up
+    std::thread::spawn(move || loop {
+        std::thread::sleep(interval);
+        tracing::info!("rate limiting storage size: {}", governor_limiter.len());
+        governor_limiter.retain_recent();
+    });
 
     let shared_state = Arc::new(AppState {
         mqtt_client: client,
@@ -162,6 +199,7 @@ async fn main() -> Result<(), Error> {
         .route("/healthz", get(|| async { StatusCode::OK }))
         .route("/ready", get(|| async { StatusCode::OK }))
         .route("/verify-email", get(verify_email_handler))
+        .layer(GovernorLayer::new(governor_conf))
         .layer(Extension(shared_state))
         .layer(CookieLayer::strict())
         .layer(Extension(schema))
@@ -191,13 +229,14 @@ async fn main() -> Result<(), Error> {
     let grpc_address: SocketAddr = format!("0.0.0.0:{}", acl_grpc_port)
         .as_str()
         .parse()
-        .expect("The gRPC address must be set");
-    // let tonic_auth_middleware = AuthMiddleware::default();
+        .map_err(|e| {
+            tracing::error!("Config Error: {}", e);
+            Error::new(ErrorKind::Other, "gRPC address not set")
+        })?;
 
     tokio::spawn(async move {
         // let the thread panic if gRPC server fails to start
         Server::builder()
-            // .layer(MiddlewareLayer::new(tonic_auth_middleware))
             .add_service(AclServer::new(acl_grpc))
             .serve(grpc_address)
             .await

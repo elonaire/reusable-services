@@ -24,7 +24,7 @@ impl MqttClient {
 
         let mut mqttoptions = MqttOptions::new(id, host, port);
         mqttoptions.set_keep_alive(Duration::from_secs(5));
-        mqttoptions.set_credentials(mosquitto_user.as_str(), mosquitto_user_password.as_str());
+        mqttoptions.set_credentials(&mosquitto_user, &mosquitto_user_password);
         Ok(AsyncClient::new(mqttoptions, 10))
     }
 }

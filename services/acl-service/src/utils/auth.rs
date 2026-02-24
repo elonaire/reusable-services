@@ -1,5 +1,7 @@
 use axum::http::HeaderValue;
 use jwt_simple::prelude::*;
+use lib::utils::custom_traits::AuthMetadataContext;
+use lib::utils::models::{AdminPrivilege, AuthorizationConstraint, MetadataView};
 use lib::utils::{
     auth::AuthClaim, cookie_parser::parse_cookies, custom_traits::AsSurrealClient,
     models::AuthStatus,
@@ -29,11 +31,10 @@ use oauth2::{
 use serde::{Deserialize, Serialize};
 
 use crate::graphql::schemas::role::SystemRole;
-use crate::graphql::schemas::user::{GoogleUserInfo, OAuthUser, SurrealRelationQueryResponse};
-use crate::graphql::schemas::{
-    role::{AdminPrivilege, AuthorizationConstraint},
-    user::{AccountStatus, GithubUserProfile, User, UserLogins, UserOutput},
+use crate::graphql::schemas::user::{
+    AccountStatus, GithubUserProfile, User, UserInput, UserLogins,
 };
+use crate::graphql::schemas::user::{GoogleUserInfo, OAuthUser};
 use crate::utils::user::create_user;
 
 pub type OAuthClientInstance = Client<
@@ -92,28 +93,19 @@ pub async fn initiate_auth_code_grant_flow(
     let client = match oauth_client {
         OAuthClientName::Google => BasicClient::new(ClientId::new(
             env::var("GOOGLE_OAUTH_CLIENT_ID").map_err(|e| {
-                tracing::error!(
-                    "Missing the GOOGLE_OAUTH_CLIENT_ID environment variable.: {}",
-                    e
-                );
+                tracing::error!("Config Error: {}", e);
                 Error::new(ErrorKind::Other, "Server Error")
             })?,
         ))
         .set_client_secret(ClientSecret::new(
             env::var("GOOGLE_OAUTH_CLIENT_SECRET").map_err(|e| {
-                tracing::error!(
-                    "Missing the GOOGLE_OAUTH_CLIENT_SECRET environment variable.: {}",
-                    e
-                );
+                tracing::error!("Config Error: {}", e);
                 Error::new(ErrorKind::Other, "Server Error")
             })?,
         ))
         .set_auth_uri(
             AuthUrl::new(env::var("GOOGLE_OAUTH_AUTHORIZE_URL").map_err(|e| {
-                tracing::error!(
-                    "Missing the GOOGLE_OAUTH_AUTHORIZE_URL environment variable.: {}",
-                    e
-                );
+                tracing::error!("Config Error: {}", e);
                 Error::new(ErrorKind::Other, "Server Error")
             })?)
             .map_err(|e| {
@@ -123,10 +115,7 @@ pub async fn initiate_auth_code_grant_flow(
         )
         .set_token_uri(
             TokenUrl::new(env::var("GOOGLE_OAUTH_ACCESS_TOKEN_URL").map_err(|e| {
-                tracing::error!(
-                    "Missing the GOOGLE_OAUTH_ACCESS_TOKEN_URL environment variable.: {}",
-                    e
-                );
+                tracing::error!("Config Error: {}", e);
                 Error::new(ErrorKind::Other, "Server Error")
             })?)
             .map_err(|e| {
@@ -136,10 +125,7 @@ pub async fn initiate_auth_code_grant_flow(
         )
         .set_revocation_url(
             RevocationUrl::new(env::var("GOOGLE_OAUTH_REVOKE_TOKEN_URL").map_err(|e| {
-                tracing::error!(
-                    "Missing the GOOGLE_OAUTH_REVOKE_TOKEN_URL environment variable.: {}",
-                    e
-                );
+                tracing::error!("Config Error: {}", e);
                 Error::new(ErrorKind::Other, "Server Error")
             })?)
             .map_err(|e| {
@@ -149,28 +135,19 @@ pub async fn initiate_auth_code_grant_flow(
         ),
         OAuthClientName::Github => BasicClient::new(ClientId::new(
             env::var("GITHUB_OAUTH_CLIENT_ID").map_err(|e| {
-                tracing::error!(
-                    "Missing the GITHUB_OAUTH_CLIENT_ID environment variable.: {}",
-                    e
-                );
+                tracing::error!("Config Error: {}", e);
                 Error::new(ErrorKind::Other, "Server Error")
             })?,
         ))
         .set_client_secret(ClientSecret::new(
             env::var("GITHUB_OAUTH_CLIENT_SECRET").map_err(|e| {
-                tracing::error!(
-                    "Missing the GITHUB_OAUTH_CLIENT_SECRET environment variable.: {}",
-                    e
-                );
+                tracing::error!("Config Error: {}", e);
                 Error::new(ErrorKind::Other, "Server Error")
             })?,
         ))
         .set_auth_uri(
             AuthUrl::new(env::var("GITHUB_OAUTH_AUTHORIZE_URL").map_err(|e| {
-                tracing::error!(
-                    "Missing the GITHUB_OAUTH_AUTHORIZE_URL environment variable.: {}",
-                    e
-                );
+                tracing::error!("Config Error: {}", e);
                 Error::new(ErrorKind::Other, "Server Error")
             })?)
             .map_err(|e| {
@@ -180,10 +157,7 @@ pub async fn initiate_auth_code_grant_flow(
         )
         .set_token_uri(
             TokenUrl::new(env::var("GITHUB_OAUTH_ACCESS_TOKEN_URL").map_err(|e| {
-                tracing::error!(
-                    "Missing the GITHUB_OAUTH_ACCESS_TOKEN_URL environment variable.: {}",
-                    e
-                );
+                tracing::error!("Config Error: {}", e);
                 Error::new(ErrorKind::Other, "Server Error")
             })?)
             .map_err(|e| {
@@ -192,7 +166,11 @@ pub async fn initiate_auth_code_grant_flow(
             })?,
         )
         .set_revocation_url(
-            RevocationUrl::new("http://localhost:3007".to_string()).map_err(|e| {
+            RevocationUrl::new(env::var("GITHUB_OAUTH_REVOKE_TOKEN_URL").map_err(|e| {
+                tracing::error!("Config Error: {}", e);
+                Error::new(ErrorKind::Other, "Server Error")
+            })?)
+            .map_err(|e| {
                 tracing::error!("Failed to create RevocationUrl.: {}", e);
                 Error::new(ErrorKind::Other, "Server Error")
             })?,
@@ -200,10 +178,10 @@ pub async fn initiate_auth_code_grant_flow(
     };
 
     Ok(client.set_redirect_uri(
-        RedirectUrl::new(
-            env::var("OAUTH_REDIRECT_URI")
-                .expect("Missing the OAUTH_REDIRECT_URI environment variable."),
-        )
+        RedirectUrl::new(env::var("OAUTH_REDIRECT_URI").map_err(|e| {
+            tracing::error!("Config Error: {}", e);
+            Error::new(ErrorKind::Other, "Server Error")
+        })?)
         .map_err(|e| {
             tracing::error!("Failed to create RedirectUrl.: {}", e);
             Error::new(ErrorKind::Other, "Server Error")
@@ -252,7 +230,7 @@ pub async fn navigate_to_redirect_url(
     ctx.insert_http_header(
         SET_COOKIE,
         format!(
-            "oauth_client={}; HttpOnly; SameSite=Lax; Path=/; Secure",
+            "oauth_client={}; HttpOnly; SameSite=Strict; Path=/; Secure",
             oauth_client_name.fmt()
         ),
     );
@@ -261,7 +239,7 @@ pub async fn navigate_to_redirect_url(
     ctx.append_http_header(
         SET_COOKIE,
         format!(
-            "j={}; Max-Age={}; HttpOnly; SameSite=Lax; Path=/; Secure",
+            "j={}; Max-Age={}; HttpOnly; SameSite=Strict; Path=/; Secure",
             csrf_token.secret(),
             sensitive_cookies_expiry_duration.as_secs()
         ),
@@ -269,7 +247,7 @@ pub async fn navigate_to_redirect_url(
     ctx.append_http_header(
         SET_COOKIE,
         format!(
-            "k={}; Max-Age={}; HttpOnly; SameSite=Lax; Path=/; Secure",
+            "k={}; Max-Age={}; HttpOnly; SameSite=Strict; Path=/; Secure",
             pkce_verifier.secret(),
             sensitive_cookies_expiry_duration.as_secs()
         ),
@@ -332,13 +310,15 @@ pub async fn decode_token_string(token: &String) -> Result<JWTClaims<AuthClaim>,
 }
 
 /// A utility function to confirm auth by parsing relevant headers. Useful for authenticating clients. Includes refresh token handling and OAuth
-// TODO: Pass an optional generic context parameter to support both REST and GraphQL refresh token handling - to attach new access token to context headers.
-pub async fn confirm_authentication<T: Clone + AsSurrealClient>(
-    header_map: Option<&HeaderMap>,
-    db: &T,
-    // role: &String,
-) -> Result<AuthStatus, Error> {
-    // let header_map = ctx.data_opt::<HeaderMap>();
+pub async fn confirm_authentication<T, C>(db: &T, ctx: &C) -> Result<AuthStatus, Error>
+where
+    T: Clone + AsSurrealClient,
+    C: AuthMetadataContext + Sync,
+{
+    let metadata_view = ctx.request_metadata();
+
+    // Unified approach - works for both HTTP and gRPC!
+    let header_map = metadata_view.as_header_map();
     // Process request headers as needed
     match header_map {
         Some(headers) => {
@@ -348,8 +328,9 @@ pub async fn confirm_authentication<T: Clone + AsSurrealClient>(
                     // Check if Cookie header is present
                     match headers.get(COOKIE) {
                         Some(cookie_header) => {
-                            let cookies_str = cookie_header.to_str().map_err(|_| {
-                                Error::new(ErrorKind::InvalidData, "Invalid cookie format")
+                            let cookies_str = cookie_header.to_str().map_err(|e| {
+                                tracing::error!("Invalid cookie format: {:?}", e);
+                                Error::new(ErrorKind::InvalidData, "Invalid request!")
                             })?;
                             let cookies = parse_cookies(cookies_str);
 
@@ -361,6 +342,13 @@ pub async fn confirm_authentication<T: Clone + AsSurrealClient>(
 
                                         match &token_claims {
                                             Ok(claims) => {
+                                                if claims.custom.roles.len() == 0 {
+                                                    tracing::error!("Token role claims are empty");
+                                                    return Err(Error::new(
+                                                        ErrorKind::InvalidData,
+                                                        "Unauthorized!",
+                                                    ));
+                                                }
                                                 // Token verification successful
                                                 Ok(AuthStatus {
                                                     is_auth: true,
@@ -370,15 +358,23 @@ pub async fn confirm_authentication<T: Clone + AsSurrealClient>(
                                                         .map(|t| t.to_string())
                                                         .unwrap_or("".to_string()),
                                                     current_role: claims.custom.roles[0].clone(),
+                                                    new_access_token: None,
                                                 })
                                             }
-                                            Err(_err) => handle_refresh_token(&cookies, db).await,
+                                            Err(_err) => {
+                                                handle_refresh_token(&cookies, db, ctx).await
+                                            }
                                         }
                                     } else {
                                         match cookies.get("oauth_user_roles_jwt") {
                                             Some(oauth_user_roles_jwt) => {
+                                                tracing::debug!(
+                                                    "oauth_user_roles_jwt: {oauth_user_roles_jwt}"
+                                                );
+
+                                                // The "Bearer" hack is for the purpose of uniformity for the 'decode_token' function
                                                 let token_claims = decode_token(
-                                                    &HeaderValue::from_str(oauth_user_roles_jwt)
+                                                    &HeaderValue::from_str(&format!("Bearer {oauth_user_roles_jwt}"))
                                                         .map_err(|e| {
                                                             tracing::error!("Failed to convert str to headervalue: {}", e);
                                                             Error::new(
@@ -413,6 +409,7 @@ pub async fn confirm_authentication<T: Clone + AsSurrealClient>(
                                                                         .custom
                                                                         .roles[0]
                                                                         .clone(),
+                                                                    new_access_token: None,
                                                                 });
                                                             }
                                                             OAuthClientName::Github => {
@@ -432,21 +429,15 @@ pub async fn confirm_authentication<T: Clone + AsSurrealClient>(
                                                                         .custom
                                                                         .roles[0]
                                                                         .clone(),
+                                                                    new_access_token: None,
                                                                 });
                                                             }
                                                         }
-                                                        // Ok(AuthStatus {
-                                                        //     is_auth: true,
-                                                        //     sub: claims
-                                                        //         .subject
-                                                        //         .as_ref()
-                                                        //         .map(|t| t.to_string())
-                                                        //         .unwrap_or("".to_string()),
-                                                        //     current_role: claims.custom.roles[0].clone(),
-                                                        // })
                                                     }
-                                                    Err(_err) => {
-                                                        tracing::error!("Failed to decode jwt!");
+                                                    Err(err) => {
+                                                        tracing::error!(
+                                                            "Failed to decode jwt! - {err}"
+                                                        );
                                                         Err(Error::new(
                                                             ErrorKind::PermissionDenied,
                                                             "Not Authorized!",
@@ -492,10 +483,15 @@ pub async fn confirm_authentication<T: Clone + AsSurrealClient>(
 }
 
 /// A utility function to handle refresh tokens
-async fn handle_refresh_token<T: Clone + AsSurrealClient>(
+async fn handle_refresh_token<T, C>(
     cookies: &HashMap<String, String>,
     db: &T,
-) -> Result<AuthStatus, Error> {
+    ctx: &C,
+) -> Result<AuthStatus, Error>
+where
+    T: Clone + AsSurrealClient,
+    C: AuthMetadataContext + Sync,
+{
     let converted_jwt_secret_key = get_converted_jwt_secret_key().await?;
     match cookies.get("t") {
         Some(refresh_token) => {
@@ -523,20 +519,11 @@ async fn handle_refresh_token<T: Clone + AsSurrealClient>(
                                 roles: refresh_claims.custom.roles.clone(),
                             };
 
-                            let token_expiry_duration = Duration::from_secs(15 * 60);
-                            let _token = sign_jwt(
+                            let token_expiry_duration = Duration::from_secs(1 * 60);
+                            let token = sign_jwt(
                                 &auth_claim,
                                 token_expiry_duration,
-                                &user
-                                    .id
-                                    .as_ref()
-                                    .map(|t| &t.id)
-                                    .ok_or("Invalid ID")
-                                    .map_err(|e| {
-                                        tracing::error!("{}", e);
-                                        Error::new(ErrorKind::PermissionDenied, "Unauthorized")
-                                    })?
-                                    .to_raw(),
+                                &user.id.key().to_string(),
                             )
                             .await
                             .map_err(|e| {
@@ -544,27 +531,21 @@ async fn handle_refresh_token<T: Clone + AsSurrealClient>(
                                 Error::new(ErrorKind::PermissionDenied, "Unauthorized")
                             })?;
 
-                            // TODO: Handle these with the respective functionality for REST and GraphQL contexts(Hint: Might use a Trait for this)
-                            // ctx.insert_http_header(
-                            //     SET_COOKIE,
-                            //     format!("oauth_client=; HttpOnly; SameSite=Strict"),
-                            // );
+                            // Set response headers using the AuthMetadataContext trait - works for REST, gRPC, and GraphQL!
+                            ctx.set_response_metadata(
+                                "set-cookie",
+                                "oauth_client=; HttpOnly; SameSite=Strict; Path=/; Secure",
+                            )
+                            .await;
 
-                            // ctx.append_http_header("New-Access-Token", format!("Bearer {}", token));
+                            ctx.append_response_metadata("new-access-token", &token)
+                                .await;
 
                             return Ok(AuthStatus {
                                 is_auth: true,
-                                sub: user
-                                    .id
-                                    .as_ref()
-                                    .map(|t| &t.id)
-                                    .ok_or("Invalid ID")
-                                    .map_err(|e| {
-                                        tracing::error!("{}", e);
-                                        Error::new(ErrorKind::PermissionDenied, "Unauthorized")
-                                    })?
-                                    .to_raw(),
+                                sub: user.id.key().to_string(),
                                 current_role: refresh_claims.custom.roles[0].clone(),
+                                new_access_token: Some(token),
                             });
                         }
                         None => {
@@ -634,12 +615,17 @@ pub async fn verify_login_credentials<T: Clone + AsSurrealClient>(
 
     match response {
         Some(user) => {
-            if bcrypt::verify(&user_details.password.unwrap(), &user.password.as_str()).map_err(
-                |e| {
-                    tracing::error!("Failed to verify user credentials: {}", e);
-                    Error::new(ErrorKind::PermissionDenied, "Invalid username or password")
-                },
-            )? && user.status == AccountStatus::Active
+            let existing_password = user.password.clone();
+            if existing_password.is_none() {
+                tracing::error!("Cannot update password for user with no password");
+                return Err(Error::new(ErrorKind::Other, "Invalid user details!"));
+            }
+            let existing_password = existing_password.unwrap();
+
+            if bcrypt::verify(&user_details.password.unwrap(), &existing_password).map_err(|e| {
+                tracing::error!("Failed to verify user credentials: {}", e);
+                Error::new(ErrorKind::PermissionDenied, "Invalid username or password")
+            })? && user.status == Some(AccountStatus::Active)
             {
                 Ok(user)
             } else {
@@ -679,14 +665,14 @@ pub async fn get_user_email<T: Clone + AsSurrealClient>(
     db: &T,
     user_id: &str,
 ) -> Result<String, Error> {
-    let result: Option<UserOutput> =
-        db.as_client()
-            .select(("user", user_id))
-            .await
-            .map_err(|e| {
-                tracing::error!("{}", e);
-                Error::new(ErrorKind::Other, "Database query failed")
-            })?;
+    let result: Option<User> = db
+        .as_client()
+        .select(("user", user_id))
+        .await
+        .map_err(|e| {
+            tracing::error!("{}", e);
+            Error::new(ErrorKind::Other, "Database query failed")
+        })?;
 
     match result {
         Some(user) => Ok(user.email),
@@ -701,117 +687,86 @@ pub async fn get_user_email<T: Clone + AsSurrealClient>(
 pub async fn confirm_authorization<T: Clone + AsSurrealClient>(
     db: &T,
     auth_status: &AuthStatus,
-    auth_constraint: AuthorizationConstraint,
+    auth_constraint: &AuthorizationConstraint,
 ) -> Result<bool, Error> {
-    let mut is_admin_privileged = false;
-    let mut is_role_privileged = false;
+    let formated_query =  match &auth_constraint.privilege {
+        AdminPrivilege::Admin => format!(
+            "
+            BEGIN TRANSACTION;
+            LET $user = type::thing('user', $user_id);
+            IF !$user.exists() {{
+          		THROW 'Invalid Input';
+           	}};
 
-    match &auth_constraint.privilege {
-        Some(privilege) => {
-            let formated_query = match privilege {
-                AdminPrivilege::Admin => format!(
-                    "
-                    BEGIN TRANSACTION;
-                    LET $user = type::thing('user', $user_id);
-                    IF !$user.exists() {{
-                        THROW 'Invalid Input';
-                    }};
-                    LET $existing_roles = (SELECT <-(assigned WHERE in = $user) as admin_roles FROM role WHERE (role_name = $current_role_name AND is_admin = true) OR is_super_admin = true)[0]['admin_roles'];
-                    IF $existing_roles IS NOT NONE AND array::len($existing_roles) > 0 {{
-                        RETURN $existing_roles.map(|$existing_role: any| record::id($existing_role));
-                    }} ELSE {{
-                        RETURN [];
-                    }};
-                    COMMIT TRANSACTION;
-                    "
-                ),
-                AdminPrivilege::SuperAdmin => format!(
-                    "
-                    BEGIN TRANSACTION;
-                    LET $user = type::thing('user', $user_id);
-                    IF !$user.exists() {{
-                        THROW 'Invalid Input';
-                    }};
-                    LET $existing_roles = (SELECT <-(assigned WHERE in = $user) AS super_admin_roles FROM role WHERE is_super_admin = true AND role_name = $current_role_name)[0]['super_admin_roles'];
-                    IF $existing_roles IS NOT NONE AND array::len($existing_roles) > 0 {{
-                        RETURN $existing_roles.map(|$existing_role: any| record::id($existing_role));
-                    }} ELSE {{
-                        RETURN [];
-                    }};
-                    COMMIT TRANSACTION;
-                    "
-                ),
-            };
+            LET $matching_roles = (SELECT ->assigned->(role WHERE (role_name = $current_role_name AND (is_admin OR is_super_admin) AND ->granted->(permission WHERE is_admin OR is_super_admin).name CONTAINSALL $permission_constraints)) AS admin_roles FROM ONLY $user)['admin_roles'];
+            IF $matching_roles != NONE AND array::len($matching_roles) > 0 {{
+          		RETURN $matching_roles.map(|$matching_role: any| record::id($matching_role));
+           	}} ELSE {{
+          		RETURN [];
+           	}};
 
-            let mut admin_privilege_check_query = db
-                .as_client()
-                .query(formated_query.as_str())
-                .bind(("user_id", auth_status.sub.clone()))
-                .bind(("current_role_name", auth_status.current_role.clone()))
-                .await
-                .map_err(|e| {
-                    tracing::error!("{}", e);
-                    Error::new(ErrorKind::Other, "Database query failed")
-                })?;
+            COMMIT TRANSACTION;
+            "
+        ),
+        AdminPrivilege::SuperAdmin => format!(
+            "
+            BEGIN TRANSACTION;
+            LET $user = type::thing('user', $user_id);
+            IF !$user.exists() {{
+          		THROW 'Invalid Input';
+           	}};
+            LET $matching_roles = (SELECT ->assigned->(role WHERE role_name = $current_role_name AND is_super_admin AND ->granted->(permission WHERE is_super_admin OR is_admin).name CONTAINSALL $permission_constraints) AS super_admin_roles FROM ONLY $user)['super_admin_roles'];
+            IF $matching_roles != NONE AND array::len($matching_roles) > 0 {{
+          		RETURN $matching_roles.map(|$matching_role: any| record::id($matching_role));
+           	}} ELSE {{
+          		RETURN [];
+           	}};
 
-            // Get the first result from the first query
-            let response: Vec<String> = admin_privilege_check_query.take(0).map_err(|e| {
-                tracing::error!("admin_privilege_check_query: {}", e);
-                Error::new(ErrorKind::Other, "Database query deserialization failed")
-            })?;
+            COMMIT TRANSACTION;
+            "
+        ),
+        AdminPrivilege::None => format!(
+            "
+            BEGIN TRANSACTION;
+            LET $user = type::thing('user', $user_id);
+            IF !$user.exists() {{
+          		THROW 'Invalid Input';
+           	}};
 
-            is_admin_privileged = response.len() > 0;
-        }
-        None => {}
+            LET $matching_roles = (SELECT ->assigned->(role WHERE role_name = $current_role_name AND ->granted->permission.name CONTAINSALL $permission_constraints) AS user_roles FROM ONLY $user)['user_roles'];
+            IF $matching_roles != NONE AND array::len($matching_roles) > 0 {{
+          		RETURN $matching_roles.map(|$matching_role: any| record::id($matching_role));
+           	}} ELSE {{
+          		RETURN [];
+           	}};
+
+            COMMIT TRANSACTION;
+            "
+        ),
     };
 
-    if auth_constraint.roles.len() > 0 {
-        let mut role_privilege_check_query = db
-            .as_client()
-            .query(
-                "
-                BEGIN TRANSACTION;
-                LET $user = type::thing('user', $user_id);
-                IF !$user.exists() {
-                    THROW 'Invalid Input';
-                };
-                LET $existing_roles = (SELECT <-(assigned WHERE in = $user) AS user_roles FROM role WHERE role_name IN $role_constraints AND $current_role_name IN $role_constraints)[0]['user_roles'];
-                IF $existing_roles IS NOT NONE AND array::len($existing_roles) > 0 {{
-                    RETURN $existing_roles.map(|$existing_role: any| record::id($existing_role));
-                }} ELSE {{
-                    RETURN [];
-                }};
-                COMMIT TRANSACTION;
-                "
-            )
-            .bind(("user_id", auth_status.sub.clone()))
-            .bind(("role_constraints", auth_constraint.roles.iter().map(|role| role.to_uppercase()).collect::<Vec<String>>()))
-            .bind(("current_role_name", auth_status.current_role.clone()))
-            .await
-            .map_err(|e| {
-                tracing::error!("{}", e);
-                Error::new(ErrorKind::Other, "Database query failed")
-            })?;
-
-        // Get the first result from the first query
-        let response: Vec<String> = role_privilege_check_query.take(0).map_err(|e| {
-            tracing::error!("role_privilege_check_query: {}", e);
-            Error::new(ErrorKind::Other, "Database query deserialization failed")
+    let mut admin_privilege_check_query = db
+        .as_client()
+        .query(formated_query.as_str())
+        .bind(("user_id", auth_status.sub.to_owned()))
+        .bind(("current_role_name", auth_status.current_role.to_owned()))
+        .bind((
+            "permission_constraints",
+            auth_constraint.permissions.to_vec(),
+        ))
+        .await
+        .map_err(|e| {
+            tracing::error!("{}", e);
+            Error::new(ErrorKind::Other, "Database query failed")
         })?;
 
-        is_role_privileged = response.len() > 0;
-    };
+    // Get the first result from the first query
+    let response: Vec<String> = admin_privilege_check_query.take(0).map_err(|e| {
+        tracing::error!("admin_privilege_check_query: {}", e);
+        Error::new(ErrorKind::Other, "Database query deserialization failed")
+    })?;
 
-    Ok((auth_constraint.roles.len() > 0
-        && is_role_privileged
-        && auth_constraint.privilege.is_some()
-        && is_admin_privileged)
-        || (auth_constraint.roles.len() > 0
-            && is_role_privileged
-            && auth_constraint.privilege.is_none())
-        || (auth_constraint.roles.len() == 0
-            && auth_constraint.privilege.is_some()
-            && is_admin_privileged))
+    Ok(response.len() > 0)
 }
 
 /// A generic utility function to verify OAuth tokens for Google, GitHub, and other OAuth providers
@@ -910,21 +865,11 @@ pub async fn verify_oauth_token<T: for<'de> Deserialize<'de> + std::fmt::Debug>(
                     Error::new(ErrorKind::Other, "OAuth request to GitHub failed")
                 })?;
 
-            // let response_text =
-            //     response.text().await.map_err(|e| {
-            //         tracing::debug!(
-            //             "Failed to read response body: {:?}",
-            //             e
-            //         );
-            //         Error::new(
-            //             ErrorKind::Other,
-            //             "Failed to read response body",
-            //         )
-            //     })?;
-            // tracing::debug!(
-            //     "Rate limit response: {}",
-            //     response_text
-            // );
+            // let response_text = response.text().await.map_err(|e| {
+            //     tracing::debug!("Failed to read response body: {:?}", e);
+            //     Error::new(ErrorKind::Other, "Failed to read response body")
+            // })?;
+            // tracing::debug!("Rate limit response: {}", response_text);
 
             let user_data = response.json::<T>().await.map_err(|e| {
                 tracing::error!("GitHub Token deserialization failed: {}", e);
@@ -940,7 +885,7 @@ pub async fn create_oauth_user_if_not_exists<T: Clone + AsSurrealClient>(
     db: &T,
     oauth_client_name: OAuthClientName,
     user: &OAuthUser,
-) -> Result<(), Error> {
+) -> Result<User, Error> {
     match oauth_client_name {
         OAuthClientName::Google => {
             if let OAuthUser::Google(google_user) = user {
@@ -959,13 +904,13 @@ pub async fn create_oauth_user_if_not_exists<T: Clone + AsSurrealClient>(
                         Error::new(ErrorKind::Other, "Internal Server error")
                     })?;
 
-                let existing_user: Option<UserOutput> = db_query.take(0).map_err(|e| {
+                let existing_user: Option<User> = db_query.take(0).map_err(|e| {
                     tracing::error!("Deserialization Error: {}", e);
                     Error::new(ErrorKind::Other, "Internal Server error")
                 })?;
 
                 match existing_user {
-                    Some(_existing_user) => Ok(()),
+                    Some(existing_user) => Ok(existing_user),
                     None => {
                         let email = google_user
                             .email_addresses
@@ -977,17 +922,20 @@ pub async fn create_oauth_user_if_not_exists<T: Clone + AsSurrealClient>(
                             return Err(Error::new(ErrorKind::Other, "No primary email found"));
                         }
 
-                        let user = User {
+                        let user = UserInput {
                             email: email.unwrap().value.clone(),
                             oauth_client: Some(OAuthClientName::Google),
                             oauth_user_id: Some(google_user.resource_name.clone()),
                             status: AccountStatus::Active,
-                            ..User::default()
+                            ..UserInput::default()
                         };
 
-                        let _created_user = create_user(db, user).await?;
+                        let created_user = create_user(db, user).await?;
 
-                        Ok(())
+                        match created_user {
+                            Some(user) => Ok(user),
+                            None => Err(Error::new(ErrorKind::Other, "Failed to create user!")),
+                        }
                     }
                 }
             } else {
@@ -1013,13 +961,13 @@ pub async fn create_oauth_user_if_not_exists<T: Clone + AsSurrealClient>(
                         Error::new(ErrorKind::Other, "Internal Server error")
                     })?;
 
-                let existing_user: Option<UserOutput> = db_query.take(0).map_err(|e| {
+                let existing_user: Option<User> = db_query.take(0).map_err(|e| {
                     tracing::error!("Deserialization Error: {}", e);
                     Error::new(ErrorKind::Other, "Internal Server error")
                 })?;
 
                 match existing_user {
-                    Some(_existing_user) => Ok(()),
+                    Some(existing_user) => Ok(existing_user),
                     None => {
                         let email = github_user.email.as_ref();
 
@@ -1027,17 +975,20 @@ pub async fn create_oauth_user_if_not_exists<T: Clone + AsSurrealClient>(
                             tracing::error!("No primary email found");
                             return Err(Error::new(ErrorKind::Other, "No primary email found"));
                         }
-                        let user = User {
+                        let user = UserInput {
                             email: email.unwrap().to_owned(),
                             oauth_client: Some(OAuthClientName::Github),
                             oauth_user_id: Some(github_user.id.to_string()),
                             status: AccountStatus::Active,
-                            ..User::default()
+                            ..UserInput::default()
                         };
 
-                        let _created_user = create_user(db, user).await?;
+                        let created_user = create_user(db, user).await?;
 
-                        Ok(())
+                        match created_user {
+                            Some(user) => Ok(user),
+                            None => Err(Error::new(ErrorKind::Other, "Failed to create user!")),
+                        }
                     }
                 }
             } else {
@@ -1049,41 +1000,64 @@ pub async fn create_oauth_user_if_not_exists<T: Clone + AsSurrealClient>(
     }
 }
 
-pub async fn fetch_default_user_roles<T: Clone + AsSurrealClient>(
+pub async fn fetch_user_roles<T: Clone + AsSurrealClient>(
     db: &T,
     user_id: &str,
+    role_id: Option<&str>,
 ) -> Result<Vec<String>, Error> {
     let owned_user_id = user_id.to_string();
+    let owned_role_id = role_id.unwrap_or("").to_owned();
 
     let mut user_roles_res = db
         .as_client()
         .query(
             "
-            SELECT ->(assigned WHERE is_default=true)->role.* AS roles FROM ONLY user WHERE id = type::thing('user', $user_id) OR oauth_user_id = $user_id LIMIT 1
-        ",
+            BEGIN TRANSACTION;
+            LET $user = type::thing('user', $user_id);
+            IF !$user.exists() {
+          		THROW 'User does not exist';
+           	};
+
+            LET $roles = (SELECT ->(assigned WHERE is_default=true)->role.* AS roles FROM ONLY user WHERE id = $user LIMIT 1)['roles'];
+            RETURN $roles;
+            COMMIT TRANSACTION;
+            "
+        )
+        // Apparently SurrealDB formats the query string before executing it. It may result in unexpected behavior.
+        .query(
+            "
+            BEGIN TRANSACTION;
+            LET $role = type::thing('role', $role_id);
+            LET $user = type::thing('user', $user_id);
+            IF !$role.exists() {
+          		THROW 'Role does not exist';
+           	};
+            IF !$user.exists() {
+          		THROW 'User does not exist';
+           	};
+
+            LET $roles = (SELECT ->assigned->(role WHERE id = $role)[*] AS roles FROM ONLY user WHERE id = $user LIMIT 1)['roles'];
+            RETURN $roles;
+            COMMIT TRANSACTION;
+            "
         )
         .bind(("user_id", owned_user_id))
+        .bind(("role_id", owned_role_id))
         .await
-        .map_err(|_e| Error::new(ErrorKind::Other, "DB Query failed: Get Roles"))?;
-    let user_roles: Option<SurrealRelationQueryResponse<SystemRole>> =
-        user_roles_res.take(0).map_err(|e| {
+        .map_err(|e| {
             tracing::error!("Failed to get roles: {}", e);
-            Error::new(ErrorKind::Other, "Failed to get roles")
+            Error::new(ErrorKind::Other, "DB Query failed: Get Roles")
         })?;
+    let user_roles: Vec<String> = match role_id {
+        Some(_) => user_roles_res.take((1, "role_name")).map_err(|e| {
+            tracing::error!("Failed to deserialize roles(take(1)): {}", e);
+            Error::new(ErrorKind::Other, "Failed to fetch roles")
+        })?,
+        None => user_roles_res.take((0, "role_name")).map_err(|e| {
+            tracing::error!("Failed to deserialize roles(take(0)): {}", e);
+            Error::new(ErrorKind::Other, "Failed to fetch roles")
+        })?,
+    };
 
-    match user_roles {
-        Some(roles) => Ok(roles
-            .get("roles")
-            .unwrap_or(&vec![] as &Vec<SystemRole>)
-            .into_iter()
-            .map(|role| {
-                let name_str = format!("{}", role.role_name);
-                name_str
-            })
-            .collect()),
-        None => {
-            tracing::error!("Cannot get authenticated without roles");
-            Err(Error::new(ErrorKind::PermissionDenied, "Forbidden"))
-        }
-    }
+    Ok(user_roles)
 }

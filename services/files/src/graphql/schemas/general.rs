@@ -1,12 +1,12 @@
 use async_graphql::{ComplexObject, SimpleObject};
 use serde::{Deserialize, Serialize};
-use surrealdb::sql::Thing;
+use surrealdb::RecordId;
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
 #[graphql(complex)]
 pub struct UploadedFile {
     #[graphql(skip)]
-    pub id: Option<Thing>,
+    pub id: RecordId,
     pub name: String,
     pub size: u64,
     pub mime_type: String,
@@ -18,7 +18,7 @@ pub struct UploadedFile {
 #[ComplexObject]
 impl UploadedFile {
     async fn id(&self) -> String {
-        self.id.as_ref().map(|t| &t.id).expect("id").to_raw()
+        self.id.key().to_string()
     }
 }
 

@@ -2,26 +2,49 @@ syntax = "proto3";
 package files;
 
 service FilesService {
-    rpc GetFileId(FileName) returns (FileId);
-    rpc GetFileName(FileId) returns (FileName);
-    rpc PurchaseFile(PurchaseFileDetails) returns (PurchaseFileResponse);
+    rpc FetchFileId(FetchFileIdRequest) returns (FetchFileIdResponse);
+    rpc FetchFileName(FetchFileNameRequest) returns (FetchFileNameResponse);
+    rpc PurchaseFile(PurchaseFileRequest) returns (PurchaseFileResponse);
+    rpc CreateFileFromContent(CreateFileFromContentRequest) returns (CreateFileFromContentResponse);
 }
 
-message FileName {
+message FetchFileIdRequest {
     string file_name = 1;
 }
 
-message Empty {}
-
-message FileId {
+message FetchFileIdResponse {
     string file_id = 1;
 }
 
-message PurchaseFileDetails {
+message FetchFileNameRequest {
+    string file_id = 1;
+}
+
+message FetchFileNameResponse {
+    string file_name = 1;
+}
+
+message PurchaseFileRequest {
     string file_id = 1;
     string buyer_id = 2;
 }
 
 message PurchaseFileResponse {
     bool success = 1;
+}
+
+message CreateFileFromContentRequest {
+    string file_name = 1;
+    string content = 2;
+    AllowedCreateFileExtension extension = 3;
+    bool is_free = 4;
+}
+
+enum AllowedCreateFileExtension {
+  MARKDOWN = 0;
+  TXT = 1;
+}
+
+message CreateFileFromContentResponse {
+    string file_id = 1;
 }

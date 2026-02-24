@@ -1,94 +1,194 @@
-use async_graphql::{Enum, InputObject, SimpleObject};
+use async_graphql::{ComplexObject, InputObject, SimpleObject};
+use lib::utils::models::AdminPrivilege;
 use serde::{Deserialize, Serialize};
-use surrealdb::sql::Thing;
+use surrealdb::RecordId;
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
 pub struct RoleInput {
     pub role_name: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
-pub struct DepartmentUnder {
-    pub id: String,
-    pub body: DepartmentUnderBody,
+    #[graphql(skip)]
+    pub created_by: Option<RecordId>,
+    #[graphql(skip)]
+    pub is_admin: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
 pub struct RoleMetadata {
-    pub role_type: RoleType,
-    pub organization: Option<OrganizationInput>,
-    pub department: Option<DepartmentInput>,
-    pub admin_permissions: Option<Vec<AdminPermission>>,
-    pub department_is_under: Option<DepartmentUnder>,
+    pub admin_privilege: AdminPrivilege,
+    pub organization_id: Option<String>,
+    pub department_id: Option<String>,
+    pub permission_ids: Option<Vec<String>>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
-pub enum AdminPermission {
-    #[graphql(name = "CreateOrganization")]
-    CreateOrganization,
-    #[graphql(name = "CreateDepartment")]
-    CreateDepartment,
-    #[graphql(name = "CreateRole")]
-    CreateRole,
-    #[graphql(name = "AssignRole")]
-    AssignRole,
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
+#[graphql(complex)]
+pub struct SystemRole {
+    #[graphql(skip)]
+    pub id: RecordId,
+    pub role_name: String,
+    #[graphql(skip)]
+    pub created_by: RecordId,
+    pub created_at: Option<String>,
+    pub is_admin: Option<bool>,
+    pub is_default: Option<bool>,
+    pub is_super_admin: Option<bool>,
+    pub updated_at: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
-pub enum DepartmentUnderBody {
-    #[graphql(name = "Organization")]
-    Organization,
-    #[graphql(name = "Department")]
-    Department,
+#[ComplexObject]
+impl SystemRole {
+    async fn id(&self) -> String {
+        self.id.key().to_string()
+    }
+
+    async fn created_by(&self) -> String {
+        self.created_by.key().to_string()
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
 pub struct OrganizationInput {
     pub org_name: String,
+    #[graphql(skip)]
+    pub created_by: Option<RecordId>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
+#[graphql(complex)]
 pub struct Organization {
+    #[graphql(skip)]
+    pub id: RecordId,
     pub org_name: String,
+    #[graphql(skip)]
+    pub created_by: RecordId,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
+}
+
+#[ComplexObject]
+impl Organization {
+    async fn id(&self) -> String {
+        self.id.key().to_string()
+    }
+
+    async fn created_by(&self) -> String {
+        self.created_by.key().to_string()
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
 pub struct DepartmentInput {
     pub dep_name: String,
+    #[graphql(skip)]
+    pub created_by: Option<RecordId>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
+pub struct DepartmentMetadata {
+    pub organization_id: Option<String>,
+    pub department_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
+#[graphql(complex)]
 pub struct Department {
+    #[graphql(skip)]
+    pub id: RecordId,
     pub dep_name: String,
+    #[graphql(skip)]
+    pub created_by: RecordId,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
-pub struct SystemRole {
+#[ComplexObject]
+impl Department {
+    async fn id(&self) -> String {
+        self.id.key().to_string()
+    }
+
+    async fn created_by(&self) -> String {
+        self.created_by.key().to_string()
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
+pub struct PermissionInput {
+    pub name: String,
     #[graphql(skip)]
-    pub id: Option<Thing>,
-    pub role_name: String,
+    pub created_by: Option<RecordId>,
+    #[graphql(skip)]
+    pub is_admin: bool,
+    #[graphql(skip)]
+    pub is_super_admin: bool,
+    #[graphql(skip)]
+    pub resource: Option<RecordId>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum AdminPrivilege {
-    Admin,
-    SuperAdmin,
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
+pub struct PermissionMetadata {
+    pub admin_privilege: AdminPrivilege,
+    pub resource_id: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct AuthorizationConstraint {
-    pub roles: Vec<String>,
-    pub privilege: Option<AdminPrivilege>,
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
+#[graphql(complex)]
+pub struct Permission {
+    #[graphql(skip)]
+    pub id: RecordId,
+    pub name: String,
+    #[graphql(skip)]
+    pub created_by: RecordId,
+    pub resource: Resource,
+    pub is_admin: bool,
+    pub is_super_admin: bool,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
-pub enum RoleType {
-    #[graphql(name = "Admin")]
-    Admin,
-    #[graphql(name = "Other")]
-    Other,
+#[ComplexObject]
+impl Permission {
+    async fn id(&self) -> String {
+        self.id.key().to_string()
+    }
+
+    async fn created_by(&self) -> String {
+        self.created_by.key().to_string()
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
+pub struct ResourceInput {
+    pub name: String,
+    #[graphql(skip)]
+    pub created_by: Option<RecordId>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
+#[graphql(complex)]
+pub struct Resource {
+    #[graphql(skip)]
+    pub id: RecordId,
+    pub name: String,
+    #[graphql(skip)]
+    pub created_by: RecordId,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+#[ComplexObject]
+impl Resource {
+    async fn id(&self) -> String {
+        self.id.key().to_string()
+    }
+
+    async fn created_by(&self) -> String {
+        self.created_by.key().to_string()
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
+pub struct ResourceMetadata {
+    pub organization_id: Option<String>,
+    pub department_id: Option<String>,
 }
