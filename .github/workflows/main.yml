@@ -210,7 +210,7 @@ jobs:
       matrix:
         platform:
           - linux/amd64
-          # - linux/arm64
+          - linux/arm64
     needs: [check_service_changes]
     if: ${{ needs.check_service_changes.outputs.email_service_should_deploy == 'true' }}
 
