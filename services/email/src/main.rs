@@ -132,7 +132,7 @@ async fn main() -> Result<(), Error> {
         Error::new(ErrorKind::Other, "MQTT_PORT not set")
     })?;
     let governor_burst_size = env::var("EMAIL_RATE_LIMIT_BURST_SIZE")
-        .unwrap_or_else(|_| "20".to_string())
+        .unwrap_or_else(|_| "5".to_string())
         .parse::<u32>()
         .map_err(|e| {
             tracing::error!("Config Error: {}", e);
