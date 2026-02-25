@@ -506,7 +506,7 @@ jobs:
         working-directory: ${{ runner.temp }}/digests
         run: |
           docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf '${{ env.FILES_REGISTRY_IMAGE }}@sha256:%s ' *)
+            $(printf '${{ env.PAYMENTS_REGISTRY_IMAGE }}@sha256:%s ' *)
 
   automerge:
     runs-on: ubuntu-latest
