@@ -24,6 +24,8 @@ WORKDIR /app
 COPY . .
 # Create the output directory for grpc
 RUN mkdir lib/src/integration/grpc/out
+# Standardize dir structure for database schemas
+RUN mkdir -p services/${SERVICE_NAME}/src/database/schemas
 
 # Build for release
 RUN cargo build --release --package ${SERVICE_NAME}
