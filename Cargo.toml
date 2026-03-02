@@ -73,6 +73,7 @@ hex = "0.4.3"
 axum-cookie = "0.2.3"
 markdown = "1.0.0"
 lettre = { version = "0.11.19", features = ["builder", "serde", "rustls-tls"] }
+image = "0.25.9"
 
 # Internal
 lib = { path = "lib" }
