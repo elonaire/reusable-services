@@ -1,9 +1,10 @@
 use axum::{
-    extract::{Extension, Multipart, Path as AxumUrlParams},
+    extract::{Extension, Multipart, Path as AxumUrlParams, Query},
     http::StatusCode,
     response::{IntoResponse, Response},
     Json,
 };
+use image::{ImageFormat, ImageReader};
 use lib::{
     integration::foreign_key::add_foreign_key_if_not_exists,
     utils::models::{AuthStatus, ForeignKey, User},
@@ -14,12 +15,16 @@ use tokio::{
 };
 use uuid::Uuid;
 
-use std::{env, path::Path, sync::Arc};
+use std::{env, io::Cursor, path::Path, sync::Arc};
 use surrealdb::{engine::remote::ws::Client, Surreal};
 
 use crate::graphql::schemas::general::{UploadedFile, UploadedFileResponse};
 
-// use crate::graphql::schemas::general::UploadedFile;
+#[derive(serde::Deserialize)]
+pub struct ImageResizeParams {
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+}
 
 pub async fn upload(
     Extension(db): Extension<Arc<Surreal<Client>>>,
@@ -335,6 +340,7 @@ pub async fn download_file(
 pub async fn get_image(
     Extension(db): Extension<Arc<Surreal<Client>>>,
     AxumUrlParams(file_name): AxumUrlParams<String>,
+    Query(resize_params): Query<ImageResizeParams>,
 ) -> Result<Response, StatusCode> {
     let upload_dir = env::var("FILE_UPLOADS_DIR");
 
@@ -375,11 +381,26 @@ pub async fn get_image(
             Some(file_details) => {
                 let content_type = file_details.mime_type;
 
+                // Resize only if query params are provided and the file is an image we can process
+                let final_buffer = match (resize_params.width, resize_params.height) {
+                    (None, None) => buffer,
+                    (width, height) => {
+                        match resize_image(&buffer, &content_type, width, height) {
+                            Ok(resized) => resized,
+                            Err(e) => {
+                                // Non-fatal: log and fall back to the original
+                                tracing::warn!("Could not resize image, serving original: {}", e);
+                                buffer
+                            }
+                        }
+                    }
+                };
+
                 let response = Response::builder()
-                    .header("Content-Type", content_type.to_string())
-                    .body(buffer.into())
+                    .header("Content-Type", &content_type)
+                    .body(final_buffer.into())
                     .map_err(|e| {
-                        tracing::error!("Failed database query: {}", e);
+                        tracing::error!("Failed to build response: {}", e);
                         StatusCode::INTERNAL_SERVER_ERROR
                     })?;
                 Ok(response)
@@ -389,4 +410,40 @@ pub async fn get_image(
     } else {
         Err(StatusCode::NOT_FOUND)
     }
+}
+
+fn resize_image(
+    buffer: &[u8],
+    content_type: &str,
+    width: Option<u32>,
+    height: Option<u32>,
+) -> Result<Vec<u8>, StatusCode> {
+    let format = match content_type {
+        "image/jpeg" | "image/jpg" => ImageFormat::Jpeg,
+        "image/png" => ImageFormat::Png,
+        "image/webp" => ImageFormat::WebP,
+        "image/gif" => ImageFormat::Gif,
+        _ => return Err(StatusCode::BAD_REQUEST),
+    };
+
+    let img = ImageReader::with_format(Cursor::new(buffer), format)
+        .decode()
+        .map_err(|e| {
+            tracing::error!("Failed to decode image: {:?}", e);
+            StatusCode::BAD_REQUEST
+        })?;
+
+    let resized = match (width, height) {
+        (Some(w), Some(h)) => img.resize(w, h, image::imageops::FilterType::Lanczos3),
+        (Some(w), None) => img.resize(w, img.height(), image::imageops::FilterType::Lanczos3),
+        (None, Some(h)) => img.resize(img.width(), h, image::imageops::FilterType::Lanczos3),
+        (None, None) => return Err(StatusCode::BAD_REQUEST),
+    };
+
+    let mut output = Cursor::new(Vec::new());
+    resized.write_to(&mut output, format).map_err(|e| {
+        tracing::error!("Failed to write image: {:?}", e);
+        StatusCode::BAD_REQUEST
+    })?;
+    Ok(output.into_inner())
 }
