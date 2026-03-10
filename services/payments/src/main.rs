@@ -17,7 +17,7 @@ use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use axum::{
     extract::Extension,
     http::{HeaderMap, HeaderValue},
-    routing::post,
+    routing::{get, post},
     serve, Router,
 };
 
@@ -28,7 +28,7 @@ use hyper::{
         ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS,
         AUTHORIZATION, CONTENT_TYPE, COOKIE, SET_COOKIE,
     },
-    Method,
+    Method, StatusCode,
 };
 
 use grpc::server::PaymentsServiceImplementation;
@@ -188,6 +188,8 @@ async fn main() -> Result<(), Error> {
     let app = Router::new()
         .route("/", post(graphql_handler))
         .route("/paystack/webhook", post(handle_paystack_webhook))
+        .route("/healthz", get(|| async { StatusCode::OK }))
+        .route("/ready", get(|| async { StatusCode::OK }))
         .layer(GovernorLayer::new(governor_conf))
         .layer(Extension(shared_state))
         .layer(Extension(schema))
