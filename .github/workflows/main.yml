@@ -426,7 +426,7 @@ jobs:
         run: |
           platform=${{ matrix.platform }}
           echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
-          echo "PAYMENTS_REGISTRY_IMAGE=registry.techietenka.com/acl-service" >> $GITHUB_ENV
+          echo "PAYMENTS_REGISTRY_IMAGE=registry.techietenka.com/payments-service" >> $GITHUB_ENV
 
       - name: Docker meta
         id: meta
