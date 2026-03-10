@@ -1,16 +1,26 @@
 use async_trait::async_trait;
-use hyper::header::HeaderValue;
-use std::io::{Error as StdError, ErrorKind};
+use hyper::{
+    header::{HeaderValue, AUTHORIZATION, COOKIE},
+    HeaderMap,
+};
+use std::{
+    env,
+    io::{Error as StdError, ErrorKind},
+};
 use tonic::{
     metadata::MetadataValue,
     transport::{Channel, Endpoint, Error},
     Request,
 };
 
-use crate::integration::grpc::clients::{
-    acl_service::acl_client::AclClient, email_service::email_service_client::EmailServiceClient,
-    files_service::files_service_client::FilesServiceClient,
-    payments_service::payments_service_client::PaymentsServiceClient,
+use crate::{
+    integration::grpc::clients::{
+        acl_service::{acl_client::AclClient, ConfirmAuthorizationRequest},
+        email_service::email_service_client::EmailServiceClient,
+        files_service::files_service_client::FilesServiceClient,
+        payments_service::payments_service_client::PaymentsServiceClient,
+    },
+    utils::models::{AuthStatus, AuthorizationConstraint},
 };
 
 // Define the trait for gRPC clients
@@ -165,4 +175,54 @@ async fn add_auth_headers_to_request<R>(
         .insert("cookie", cookie);
 
     Ok(())
+}
+
+pub async fn confirm_authorization(
+    auth_status: &AuthStatus,
+    authorization_constraint: &AuthorizationConstraint,
+    headers: &HeaderMap,
+) -> Result<bool, StdError> {
+    let auth_header = headers.get(AUTHORIZATION);
+    let cookie_header = headers.get(COOKIE);
+
+    let mut request = tonic::Request::new(ConfirmAuthorizationRequest {
+        auth_status: Some(auth_status.to_owned().into()),
+        authorization_constraint: Some(authorization_constraint.to_owned().into()),
+    });
+
+    let auth_metadata: AuthMetaData<ConfirmAuthorizationRequest> = AuthMetaData {
+        auth_header: auth_header,
+        cookie_header: cookie_header,
+        constructed_grpc_request: Some(&mut request),
+    };
+
+    let acl_service_grpc = env::var("OAUTH_SERVICE_GRPC").map_err(|e| {
+        tracing::error!(
+            "Missing the OAUTH_SERVICE_GRPC environment variable.: {}",
+            e
+        );
+        StdError::new(ErrorKind::Other, "Server Error")
+    })?;
+
+    let mut acl_grpc_client =
+        create_grpc_client::<ConfirmAuthorizationRequest, AclClient<Channel>>(
+            &acl_service_grpc,
+            true,
+            Some(auth_metadata),
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to connect to ACL service: {}", e);
+            StdError::new(ErrorKind::Other, "Failed to connect to ACL service")
+        })?;
+
+    let response = acl_grpc_client.confirm_authorization(request).await;
+
+    match response {
+        Ok(response) => {
+            let is_authorized = response.into_inner().is_auth;
+            Ok(is_authorized)
+        }
+        Err(_e) => Err(StdError::new(ErrorKind::PermissionDenied, "Unauthorized")),
+    }
 }

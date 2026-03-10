@@ -498,7 +498,7 @@ impl Mutation {
     /// Sign out
     async fn sign_out(&self, ctx: &Context<'_>) -> Result<GraphQLApiResponse<bool>> {
         // Clear the refresh token cookie
-        ctx.insert_http_header(SET_COOKIE, format!("t=; Max-Age=0"));
+        ctx.insert_http_header(SET_COOKIE, format!("t=; Path=/; Max-Age=0"));
 
         // TODO: Add logic to revoke tokens/delete sessions
 

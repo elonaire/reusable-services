@@ -26,6 +26,7 @@ prost = { workspace = true }
 tonic-middleware = { workspace = true }
 tower_governor = { workspace = true }
 image = { workspace = true }
+kamadak-exif = { workspace = true }
 
 [lints.rust]
 unsafe_code = "forbid"

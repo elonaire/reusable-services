@@ -16,4 +16,4 @@ DEFINE FIELD created_at ON TABLE currency TYPE datetime
 DEFINE FIELD updated_at ON TABLE currency TYPE datetime
     VALUE time::now();
 --Full-text search
-DEFINE INDEX currencyNameIndex ON currency FIELDS name SEARCH ANALYZER currency_analyzer BM25(1.2,0.75) HIGHLIGHTS;
+DEFINE INDEX currencyNameIndex ON TABLE currency FIELDS name SEARCH ANALYZER currency_analyzer BM25(1.2,0.75) HIGHLIGHTS;
