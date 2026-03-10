@@ -53,6 +53,17 @@ impl From<acl_service::AuthStatus> for utils::models::AuthStatus {
     }
 }
 
+impl From<utils::models::AuthStatus> for acl_service::AuthStatus {
+    fn from(auth_status: utils::models::AuthStatus) -> Self {
+        Self {
+            sub: auth_status.sub,
+            is_auth: auth_status.is_auth,
+            current_role: auth_status.current_role,
+            new_access_token: auth_status.new_access_token.unwrap_or(String::new()),
+        }
+    }
+}
+
 /// For easy conversion to protobuf
 impl From<acl_service::AuthorizationConstraint> for utils::models::AuthorizationConstraint {
     fn from(authorization_constraint: acl_service::AuthorizationConstraint) -> Self {
@@ -63,6 +74,16 @@ impl From<acl_service::AuthorizationConstraint> for utils::models::Authorization
                 .unwrap()
                 .try_into()
                 .unwrap(),
+        }
+    }
+}
+
+/// For easy conversion to protobuf
+impl From<utils::models::AuthorizationConstraint> for acl_service::AuthorizationConstraint {
+    fn from(authorization_constraint: utils::models::AuthorizationConstraint) -> Self {
+        Self {
+            permissions: authorization_constraint.permissions,
+            privilege: Some(authorization_constraint.privilege.try_into().unwrap()),
         }
     }
 }

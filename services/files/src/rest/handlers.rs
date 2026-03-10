@@ -4,6 +4,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use exif::{In, Tag};
 use image::{ImageFormat, ImageReader};
 use lib::{
     integration::foreign_key::add_foreign_key_if_not_exists,
@@ -15,7 +16,12 @@ use tokio::{
 };
 use uuid::Uuid;
 
-use std::{env, io::Cursor, path::Path, sync::Arc};
+use std::{
+    env,
+    io::{BufReader, Cursor},
+    path::Path,
+    sync::Arc,
+};
 use surrealdb::{engine::remote::ws::Client, Surreal};
 
 use crate::graphql::schemas::general::{UploadedFile, UploadedFileResponse};
@@ -433,10 +439,13 @@ fn resize_image(
             StatusCode::BAD_REQUEST
         })?;
 
+    // Apply EXIF orientation before resizing
+    let img = apply_exif_orientation(img, buffer);
+
     let resized = match (width, height) {
         (Some(w), Some(h)) => img.resize(w, h, image::imageops::FilterType::Lanczos3),
-        (Some(w), None) => img.resize(w, img.height(), image::imageops::FilterType::Lanczos3),
-        (None, Some(h)) => img.resize(img.width(), h, image::imageops::FilterType::Lanczos3),
+        (Some(w), None) => img.resize(w, u32::MAX, image::imageops::FilterType::Lanczos3),
+        (None, Some(h)) => img.resize(u32::MAX, h, image::imageops::FilterType::Lanczos3),
         (None, None) => return Err(StatusCode::BAD_REQUEST),
     };
 
@@ -445,5 +454,30 @@ fn resize_image(
         tracing::error!("Failed to write image: {:?}", e);
         StatusCode::BAD_REQUEST
     })?;
+
     Ok(output.into_inner())
+}
+
+fn apply_exif_orientation(img: image::DynamicImage, buffer: &[u8]) -> image::DynamicImage {
+    let mut reader = BufReader::new(Cursor::new(buffer));
+    let exif_reader = exif::Reader::new();
+
+    let Ok(exif) = exif_reader.read_from_container(&mut reader) else {
+        return img;
+    };
+
+    let Some(orientation) = exif.get_field(Tag::Orientation, In::PRIMARY) else {
+        return img;
+    };
+
+    match orientation.value.get_uint(0) {
+        Some(2) => img.fliph(),
+        Some(3) => img.rotate180(),
+        Some(4) => img.flipv(),
+        Some(5) => img.rotate90().fliph(),
+        Some(6) => img.rotate90(),
+        Some(7) => img.rotate270().fliph(),
+        Some(8) => img.rotate270(),
+        _ => img, // 1 or unknown — no transform needed
+    }
 }
