@@ -1,3 +1,4 @@
+mod database;
 mod graphql;
 mod grpc;
 mod mqtt;
@@ -42,9 +43,8 @@ use hyper::{
     Method, StatusCode,
 };
 
-// use serde::Deserialize;
-// use surrealdb::{engine::remote::ws::Client, Result, Surreal};
 use grpc::server::EmailServiceImplementation;
+use surrealdb::{engine::remote::ws::Client, Surreal};
 use tower_http::cors::CorsLayer;
 
 use graphql::resolvers::mutation::Mutation;
@@ -57,12 +57,12 @@ pub struct AppState {
 
 async fn graphql_handler(
     schema: Extension<MySchema>,
-    // db: Extension<Arc<Surreal<Client>>>,
+    db: Extension<Arc<Surreal<Client>>>,
     headers: HeaderMap,
     req: GraphQLRequest,
 ) -> GraphQLResponse {
     let mut request = req.0;
-    // request = request.data(db.clone());
+    request = request.data(db.clone());
     request = request.data(headers.clone());
     let operation_name = request.operation_name.clone();
 
@@ -107,7 +107,7 @@ async fn main() -> Result<(), Error> {
         .init();
 
     dotenv().ok();
-    // let db = Arc::new(database::connection::create_db_connection().await.unwrap());
+    let db = Arc::new(database::connection::create_db_connection().await.unwrap());
 
     // Bring in some needed env vars
     let deployment_env = env::var("ENVIRONMENT").unwrap_or_else(|_| "prod".to_string()); // default to production because it's the most secure
@@ -193,7 +193,7 @@ async fn main() -> Result<(), Error> {
         .layer(GovernorLayer::new(governor_conf))
         .layer(Extension(shared_state))
         .layer(Extension(schema))
-        // .layer(Extension(db))
+        .layer(Extension(db))
         .layer(
             CorsLayer::new()
                 .allow_origin(origins)
