@@ -147,8 +147,8 @@ impl Query {
                         .query(
                             "
                             BEGIN TRANSACTION;
-                            LET $user = type::thing('user', $user_id);
-                            LET $found_user = (SELECT * OMIT password, user_name, status FROM ONLY $user LIMIT 1);
+                            LET $user_record = type::thing('user', $user_id);
+                            LET $found_user = (SELECT * OMIT password, user_name, status FROM ONLY user WHERE id = $user_record OR oauth_user_id = $user_id LIMIT 1);
                             RETURN $found_user;
                             COMMIT TRANSACTION;
                             "
