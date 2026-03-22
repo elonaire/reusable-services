@@ -53,8 +53,6 @@ impl Query {
             return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
         }
 
-        tracing::debug!("filters: {:?}", filters);
-
         let mut fetch_users_query = db
             .query(
                 r#"
@@ -161,7 +159,7 @@ impl Query {
                     })?;
 
                     let user: Option<User> = user_query.take(0).map_err(|e| {
-                        tracing::debug!("User deserialization error: {}", e);
+                        tracing::error!("User deserialization error: {}", e);
                         ExtendedError::new(
                             "Server Error",
                             StatusCode::INTERNAL_SERVER_ERROR.as_str(),
@@ -315,7 +313,7 @@ impl Query {
         })?;
 
         let user: Option<User> = user_query.take(0).map_err(|e| {
-            tracing::debug!("User deserialization error: {}", e);
+            tracing::error!("User deserialization error: {}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
 

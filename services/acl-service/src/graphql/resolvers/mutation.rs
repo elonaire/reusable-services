@@ -1002,8 +1002,6 @@ impl Mutation {
                         match cookies.get("oauth_client") {
                             Some(oauth_client) => {
                                 if oauth_client.is_empty() {
-                                    tracing::debug!("auth_claim: {:?}", auth_claim);
-
                                     let access_token_expiry_duration =
                                         Duration::from_secs(5 * 24 * 60 * 60); // days by hours by minutes by 60 seconds
 

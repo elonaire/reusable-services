@@ -50,7 +50,6 @@ pub async fn oauth_callback_handler(
     // Extract the csrf_state, oauth_client, pkce_verifier cookies
     // Extract cookies from the headers
     let cookie_header = headers.get(AXUM_COOKIE).and_then(|v| v.to_str().ok());
-    tracing::debug!("cookie_header: {cookie_header:?}");
 
     if params.0.state.is_none() || params.0.code.is_none() || cookie_header.is_none() {
         tracing::error!("Either state or code params is missing!");

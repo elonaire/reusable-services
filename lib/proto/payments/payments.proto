@@ -9,6 +9,7 @@ message UserPaymentDetails {
     string email = 1;
     uint64 amount = 2;
     string reference = 3;
+    optional string currency = 4;
 }
 
 message PaymentIntegrationResponse {

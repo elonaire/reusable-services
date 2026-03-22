@@ -26,6 +26,13 @@ pub enum AccountStatus {
     Deleted,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, Default, SimpleObject, InputObject)]
+#[graphql(input_name = "UserSocialInput")]
+pub struct UserSocial {
+    pub name: String,
+    pub url: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, InputObject, Default)]
 pub struct UserInput {
     pub user_name: Option<String>,
@@ -49,6 +56,7 @@ pub struct UserInput {
     pub bio: Option<String>,
     pub website: Option<String>,
     pub address: Option<String>,
+    pub socials: Option<Vec<UserSocial>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
@@ -76,6 +84,7 @@ pub struct User {
     pub bio: Option<String>,
     pub website: Option<String>,
     pub address: Option<String>,
+    pub socials: Option<Vec<UserSocial>>,
 }
 
 #[ComplexObject]

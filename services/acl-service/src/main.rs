@@ -75,7 +75,7 @@ async fn graphql_handler(
     request = request.data(db);
     request = request.data(headers);
     request = request.data(mqtt_client);
-    tracing::debug!("Request data set!");
+
     let operation_name = request.operation_name.clone();
 
     // Log request info(I just want to deploy ACL again)
