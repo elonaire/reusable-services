@@ -434,13 +434,13 @@ impl Mutation {
 
                         ctx.insert_http_header(
                             SET_COOKIE,
-                            format!("oauth_client=; SameSite=Lax; Secure; HttpOnly; Path=/"),
+                            format!("oauth_client=; SameSite=Lax; Secure; HttpOnly; Domain=.techietenka.com; Path=/"),
                         );
 
                         ctx.append_http_header(
                             SET_COOKIE,
                             format!(
-                                "t={}; Max-Age={}; SameSite=Lax; Secure; HttpOnly; Path=/",
+                                "t={}; Max-Age={}; SameSite=Lax; Secure; HttpOnly; Domain=.techietenka.com; Path=/",
                                 refresh_token_str,
                                 refresh_token_expiry_duration.as_secs(),
                             ),
@@ -985,17 +985,6 @@ impl Mutation {
                                 .build()
                         })?;
 
-                        // Check if Host header is present
-                        let g_host = match headers.get("Origin") {
-                            Some(host) => {
-                                // remove http:// or https:// and port(:port_number)
-                                host.to_str().unwrap().split("//").collect::<Vec<&str>>()[1]
-                                    .split(":")
-                                    .collect::<Vec<&str>>()[0]
-                            }
-                            None => "127.0.0.1",
-                        };
-
                         let api_response: ApiResponse<AuthDetails>;
 
                         // Check if oauth_client cookie is present
@@ -1024,10 +1013,9 @@ impl Mutation {
                                     ctx.append_http_header(
                                         SET_COOKIE,
                                         format!(
-                                            "t={}; Max-Age={}; SameSite=Strict; Secure; Domain={}; HttpOnly; Path=/",
+                                            "t={}; Max-Age={}; SameSite=Lax; Secure; HttpOnly; Domain=.techietenka.com; Path=/",
                                             refresh_token_str,
                                             refresh_token_expiry_duration.as_secs(),
-                                            g_host
                                         ),
                                     );
 
@@ -1054,10 +1042,9 @@ impl Mutation {
                                     ctx.append_http_header(
                                         SET_COOKIE,
                                         format!(
-                                            "oauth_user_roles_jwt={}; Max-Age={}; SameSite=Strict; Secure; Domain={}; HttpOnly; Path=/",
+                                            "oauth_user_roles_jwt={}; Max-Age={}; SameSite=Lax; Secure; HttpOnly; Domain=.techietenka.com; Path=/",
                                             refresh_token_str,
                                             refresh_token_expiry_duration.as_secs(),
-                                            g_host
                                         ),
                                     );
 
