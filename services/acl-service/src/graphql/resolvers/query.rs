@@ -53,8 +53,6 @@ impl Query {
             return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
         }
 
-        tracing::debug!("filters: {:?}", filters);
-
         let mut fetch_users_query = db
             .query(
                 r#"
@@ -147,8 +145,8 @@ impl Query {
                         .query(
                             "
                             BEGIN TRANSACTION;
-                            LET $user = type::thing('user', $user_id);
-                            LET $found_user = (SELECT * OMIT password, user_name, status FROM ONLY $user LIMIT 1);
+                            LET $user_record = type::thing('user', $user_id);
+                            LET $found_user = (SELECT * OMIT password, user_name, status FROM ONLY user WHERE id = $user_record OR oauth_user_id = $user_id LIMIT 1);
                             RETURN $found_user;
                             COMMIT TRANSACTION;
                             "
@@ -161,7 +159,7 @@ impl Query {
                     })?;
 
                     let user: Option<User> = user_query.take(0).map_err(|e| {
-                        tracing::debug!("User deserialization error: {}", e);
+                        tracing::error!("User deserialization error: {}", e);
                         ExtendedError::new(
                             "Server Error",
                             StatusCode::INTERNAL_SERVER_ERROR.as_str(),
@@ -315,7 +313,7 @@ impl Query {
         })?;
 
         let user: Option<User> = user_query.take(0).map_err(|e| {
-            tracing::debug!("User deserialization error: {}", e);
+            tracing::error!("User deserialization error: {}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
 

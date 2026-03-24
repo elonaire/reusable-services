@@ -6,6 +6,7 @@ service Acl {
   rpc SignInAsService(SignInAsServiceRequest) returns (SignInAsServiceResponse);
   rpc GetUserEmail(GetUserEmailRequest) returns (GetUserEmailResponse);
   rpc ConfirmAuthorization(ConfirmAuthorizationRequest) returns (ConfirmAuthorizationResponse);
+  rpc FetchSiteOwnerId(FetchSiteOwnerIdRequest) returns (FetchSiteOwnerIdResponse);
 }
 
 message ConfirmAuthorizationRequest {
@@ -17,7 +18,8 @@ message AuthStatus {
   bool is_auth = 1;
   string sub = 2;
   string current_role = 3;
-  string new_access_token = 4;
+  optional string new_access_token = 4;
+  repeated string current_role_permissions = 5;
 }
 
 enum AdminPrivilege {
@@ -39,7 +41,8 @@ message ConfirmAuthenticationResponse {
   bool is_auth = 1;
   string sub = 2;
   string current_role = 3;
-  string new_access_token = 4;
+  optional string new_access_token = 4;
+  repeated string current_role_permissions = 5;
 }
 
 message ConfirmAuthenticationRequest {}
@@ -56,4 +59,10 @@ message GetUserEmailRequest {
 
 message GetUserEmailResponse {
   string email = 1;
+}
+
+message FetchSiteOwnerIdRequest {}
+
+message FetchSiteOwnerIdResponse {
+  string user_id = 1;
 }

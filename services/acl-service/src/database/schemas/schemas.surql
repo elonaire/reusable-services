@@ -2,7 +2,7 @@
 -- DEFINE CONFIG GRAPHQL AUTO;
 
 -- A schema-full user table.
-DEFINE TABLE user SCHEMAFULL;
+DEFINE TABLE OVERWRITE user SCHEMAFULL;
 -- define some fields.
 DEFINE FIELD user_name ON TABLE user TYPE option<string>
     ASSERT string::matches($value, "^[a-z0-9_]+$");
@@ -12,7 +12,7 @@ DEFINE FIELD middle_name ON TABLE user TYPE option<string>;
 DEFINE FIELD last_name ON TABLE user TYPE option<string>;
 DEFINE FIELD gender ON TABLE user TYPE option<string>
 -- Allow only these values in the array
-  ASSERT $value INSIDE ['Male', 'Female', 'Other', None];
+  ASSERT $value INSIDE ['Male', 'Female', 'Other', NONE];
 DEFINE FIELD dob ON TABLE user VALUE
   IF $value IS NOT NONE { <datetime>$value } ELSE { NONE };
 -- DEFINE FIELD dob ON TABLE user TYPE option<datetime> VALUE time::now();
@@ -24,7 +24,7 @@ DEFINE FIELD phone ON TABLE user TYPE option<string>;
   -- ASSERT string::len($value) == 10;
 DEFINE INDEX userPhoneIndex ON TABLE user COLUMNS phone UNIQUE;
 DEFINE FIELD password ON TABLE user TYPE option<string>
-  DEFAULT None;
+  DEFAULT NONE;
 DEFINE EVENT enforce_blank_password_constraint ON TABLE user WHEN $event = 'CREATE' THEN {
     IF $after.password IS NONE AND ($after.oauth_client IS NONE OR $after.oauth_user_id IS NONE) {
         THROW 'Forbidden.';
@@ -40,19 +40,23 @@ DEFINE FIELD status ON TABLE user TYPE string
   ASSERT $value INSIDE ['Active', 'Inactive', 'Suspended', 'Deleted'];
 DEFINE FIELD oauth_client ON TABLE user TYPE option<string>
 -- Allow only these values in the array
-  ASSERT $value INSIDE ['Google', 'Github', None];
+  ASSERT $value INSIDE ['Google', 'Github', NONE];
 DEFINE FIELD oauth_user_id ON TABLE user TYPE option<string>
-  DEFAULT None;
+  DEFAULT NONE;
 DEFINE FIELD address ON TABLE user TYPE option<string>
-  DEFAULT None;
+  DEFAULT NONE;
 DEFINE FIELD profile_picture ON TABLE user TYPE option<string>
   ASSERT string::is::url($value)
-  DEFAULT None;
+  DEFAULT NONE;
 DEFINE FIELD bio ON TABLE user TYPE option<string>
-  DEFAULT None;
+  DEFAULT NONE;
 DEFINE FIELD website ON TABLE user TYPE option<string>
   ASSERT string::is::url($value)
-  DEFAULT None;
+  DEFAULT NONE;
+DEFINE FIELD OVERWRITE socials ON TABLE user TYPE option<array<{ name: string, url: string }>>
+    DEFAULT NONE;
+DEFINE FIELD OVERWRITE socials[*].url ON TABLE user TYPE string
+    ASSERT string::is::url($value);
 DEFINE FIELD created_at ON TABLE user TYPE datetime
   DEFAULT time::now() READONLY;
 DEFINE FIELD updated_at ON TABLE user TYPE datetime
