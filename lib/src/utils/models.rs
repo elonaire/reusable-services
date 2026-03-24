@@ -9,7 +9,7 @@ use tokio::sync::Mutex;
 use tonic::metadata::MetadataMap;
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
-pub struct User {
+pub struct UserId {
     #[graphql(skip)]
     pub id: RecordId,
     pub user_id: String,
@@ -29,6 +29,7 @@ pub struct AuthStatus {
     pub sub: String,
     pub current_role: String,
     pub new_access_token: Option<String>,
+    pub current_role_permissions: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
@@ -167,7 +168,7 @@ pub struct InitializePaymentResponseData {
 pub struct UserPaymentDetails {
     pub email: String,
     pub amount: u64,
-    // pub currency: Option<String>,
+    pub currency: Option<String>,
     pub reference: String,
     // pub metadata: Option<PaymentDetailsMetaData>,
 }

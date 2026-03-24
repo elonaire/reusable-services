@@ -432,39 +432,19 @@ impl Mutation {
                             .build()
                         })?;
 
-                        match ctx.data_opt::<HeaderMap>() {
-                            Some(headers) => {
-                                // Check if Host header is present
-                                let g_host = match headers.get("Origin") {
-                                    Some(host) => {
-                                        // remove http:// or https:// and port(:port_number)
-                                        host.to_str().unwrap().split("//").collect::<Vec<&str>>()[1]
-                                            .split(":")
-                                            .collect::<Vec<&str>>()[0]
-                                    }
-                                    None => "127.0.0.1",
-                                };
+                        ctx.insert_http_header(
+                            SET_COOKIE,
+                            format!("oauth_client=; SameSite=Lax; Secure; HttpOnly; Path=/"),
+                        );
 
-                                ctx.insert_http_header(
-                                    SET_COOKIE,
-                                    format!(
-                                        "oauth_client=; SameSite=Strict; Secure; Domain={}; HttpOnly; Path=/",
-                                        g_host
-                                    ),
-                                );
-
-                                ctx.append_http_header(
-                                    SET_COOKIE,
-                                    format!(
-                                        "t={}; Max-Age={}; SameSite=Strict; Secure; Domain={}; HttpOnly; Path=/",
-                                        refresh_token_str,
-                                        refresh_token_expiry_duration.as_secs(),
-                                        g_host
-                                    ),
-                                );
-                            }
-                            None => {}
-                        }
+                        ctx.append_http_header(
+                            SET_COOKIE,
+                            format!(
+                                "t={}; Max-Age={}; SameSite=Lax; Secure; HttpOnly; Path=/",
+                                refresh_token_str,
+                                refresh_token_expiry_duration.as_secs(),
+                            ),
+                        );
 
                         api_response = synthesize_graphql_response(
                             ctx,
@@ -1022,8 +1002,6 @@ impl Mutation {
                         match cookies.get("oauth_client") {
                             Some(oauth_client) => {
                                 if oauth_client.is_empty() {
-                                    tracing::debug!("auth_claim: {:?}", auth_claim);
-
                                     let access_token_expiry_duration =
                                         Duration::from_secs(5 * 24 * 60 * 60); // days by hours by minutes by 60 seconds
 

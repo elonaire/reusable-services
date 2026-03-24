@@ -6,7 +6,8 @@ use hyper::HeaderMap;
 use jwt_simple::prelude::*;
 use lib::integration::grpc::clients::acl_service::{
     ConfirmAuthenticationRequest, ConfirmAuthenticationResponse, ConfirmAuthorizationRequest,
-    ConfirmAuthorizationResponse, SignInAsServiceRequest, SignInAsServiceResponse,
+    ConfirmAuthorizationResponse, FetchSiteOwnerIdRequest, FetchSiteOwnerIdResponse,
+    SignInAsServiceRequest, SignInAsServiceResponse,
 };
 use lib::utils::auth::AuthClaim;
 use lib::utils::models::{AuthStatus, AuthorizationConstraint, GrpcAuthContext};
@@ -20,6 +21,7 @@ use crate::utils::auth::{
     confirm_authentication, confirm_authorization, get_user_email, sign_jwt,
     verify_login_credentials,
 };
+use crate::utils::user::fetch_site_owner_id;
 
 use lib::integration::grpc::clients::acl_service::{
     acl_server::Acl, GetUserEmailRequest, GetUserEmailResponse,
@@ -162,6 +164,21 @@ impl Acl for AclServiceImplementation {
             Err(e) => {
                 tracing::error!("Failed to confirm authorization: {}", e);
                 Err(Status::permission_denied("Failed to confirm authorization"))
+            }
+        }
+    }
+
+    async fn fetch_site_owner_id(
+        &self,
+        _request: Request<FetchSiteOwnerIdRequest>,
+    ) -> Result<Response<FetchSiteOwnerIdResponse>, Status> {
+        match fetch_site_owner_id(&self.db).await {
+            Ok(owner_id) => Ok(Response::new(FetchSiteOwnerIdResponse {
+                user_id: owner_id,
+            })),
+            Err(e) => {
+                tracing::error!("Failed to fetch site owner ID: {}", e);
+                Err(Status::internal("Failed to fetch site owner ID"))
             }
         }
     }

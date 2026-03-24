@@ -25,14 +25,15 @@ use reqwest::{header::HeaderMap as ReqWestHeaderMap, Client as ReqWestClient};
 
 use oauth2::{
     AuthUrl, Client, ClientId, ClientSecret, CsrfToken, EmptyExtraTokenFields, PkceCodeChallenge,
-    RedirectUrl, RevocationErrorResponseType, RevocationUrl, Scope, StandardErrorResponse,
-    StandardRevocableToken, StandardTokenIntrospectionResponse, StandardTokenResponse, TokenUrl,
+    RedirectUrl, RefreshToken, RevocationErrorResponseType, RevocationUrl, Scope,
+    StandardErrorResponse, StandardRevocableToken, StandardTokenIntrospectionResponse,
+    StandardTokenResponse, TokenResponse, TokenUrl,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::graphql::schemas::role::SystemRole;
 use crate::graphql::schemas::user::{
-    AccountStatus, GithubUserProfile, User, UserInput, UserLogins,
+    AccountStatus, GithubUserProfile, OAuthTokenPair, User, UserInput, UserLogins,
 };
 use crate::graphql::schemas::user::{GoogleUserInfo, OAuthUser};
 use crate::utils::user::create_user;
@@ -230,7 +231,7 @@ pub async fn navigate_to_redirect_url(
     ctx.insert_http_header(
         SET_COOKIE,
         format!(
-            "oauth_client={}; HttpOnly; SameSite=Strict; Path=/; Secure",
+            "oauth_client={}; HttpOnly; SameSite=Lax; Path=/; Secure",
             oauth_client_name.fmt()
         ),
     );
@@ -239,7 +240,7 @@ pub async fn navigate_to_redirect_url(
     ctx.append_http_header(
         SET_COOKIE,
         format!(
-            "j={}; Max-Age={}; HttpOnly; SameSite=Strict; Path=/; Secure",
+            "j={}; Max-Age={}; HttpOnly; SameSite=Lax; Path=/; Secure",
             csrf_token.secret(),
             sensitive_cookies_expiry_duration.as_secs()
         ),
@@ -247,7 +248,7 @@ pub async fn navigate_to_redirect_url(
     ctx.append_http_header(
         SET_COOKIE,
         format!(
-            "k={}; Max-Age={}; HttpOnly; SameSite=Strict; Path=/; Secure",
+            "k={}; Max-Age={}; HttpOnly; SameSite=Lax; Path=/; Secure",
             pkce_verifier.secret(),
             sensitive_cookies_expiry_duration.as_secs()
         ),
@@ -316,168 +317,152 @@ where
     C: AuthMetadataContext + Sync,
 {
     let metadata_view = ctx.request_metadata();
+    let header_map = metadata_view.as_header_map().ok_or_else(|| {
+        tracing::error!("Invalid request headers!");
+        Error::new(ErrorKind::Other, "Invalid request!")
+    })?;
 
-    // Unified approach - works for both HTTP and gRPC!
-    let header_map = metadata_view.as_header_map();
-    // Process request headers as needed
-    match header_map {
-        Some(headers) => {
-            // Check if Authorization header is present
-            match headers.get("Authorization") {
-                Some(token) => {
-                    // Check if Cookie header is present
-                    match headers.get(COOKIE) {
-                        Some(cookie_header) => {
-                            let cookies_str = cookie_header.to_str().map_err(|e| {
-                                tracing::error!("Invalid cookie format: {:?}", e);
-                                Error::new(ErrorKind::InvalidData, "Invalid request!")
-                            })?;
-                            let cookies = parse_cookies(cookies_str);
+    let token = header_map.get("Authorization").ok_or_else(|| {
+        tracing::error!("Missing access token!");
+        Error::new(ErrorKind::PermissionDenied, "Not Authorized!")
+    })?;
 
-                            // Check if oauth_client cookie is present
-                            match cookies.get("oauth_client") {
-                                Some(oauth_client) => {
-                                    if oauth_client.is_empty() {
-                                        let token_claims = decode_token(token).await;
+    let cookie_header = header_map.get(COOKIE).ok_or_else(|| {
+        tracing::error!("Missing cookie headers!");
+        Error::new(ErrorKind::PermissionDenied, "Not Authorized!")
+    })?;
 
-                                        match &token_claims {
-                                            Ok(claims) => {
-                                                if claims.custom.roles.len() == 0 {
-                                                    tracing::error!("Token role claims are empty");
-                                                    return Err(Error::new(
-                                                        ErrorKind::InvalidData,
-                                                        "Unauthorized!",
-                                                    ));
-                                                }
-                                                // Token verification successful
-                                                Ok(AuthStatus {
-                                                    is_auth: true,
-                                                    sub: claims
-                                                        .subject
-                                                        .as_ref()
-                                                        .map(|t| t.to_string())
-                                                        .unwrap_or("".to_string()),
-                                                    current_role: claims.custom.roles[0].clone(),
-                                                    new_access_token: None,
-                                                })
-                                            }
-                                            Err(_err) => {
-                                                handle_refresh_token(&cookies, db, ctx).await
-                                            }
-                                        }
-                                    } else {
-                                        match cookies.get("oauth_user_roles_jwt") {
-                                            Some(oauth_user_roles_jwt) => {
-                                                tracing::debug!(
-                                                    "oauth_user_roles_jwt: {oauth_user_roles_jwt}"
-                                                );
+    let cookies_str = cookie_header.to_str().map_err(|e| {
+        tracing::error!("Invalid cookie format: {:?}", e);
+        Error::new(ErrorKind::InvalidData, "Invalid request!")
+    })?;
 
-                                                // The "Bearer" hack is for the purpose of uniformity for the 'decode_token' function
-                                                let token_claims = decode_token(
-                                                    &HeaderValue::from_str(&format!("Bearer {oauth_user_roles_jwt}"))
-                                                        .map_err(|e| {
-                                                            tracing::error!("Failed to convert str to headervalue: {}", e);
-                                                            Error::new(
-                                                                ErrorKind::InvalidData,
-                                                                "Unauthorized!",
-                                                            )
-                                                        })?,
-                                                )
-                                                .await;
+    let cookies = parse_cookies(cookies_str);
 
-                                                match &token_claims {
-                                                    Ok(claims) => {
-                                                        // Token verification successful
-                                                        let oauth_client_name =
-                                                            OAuthClientName::from_str(oauth_client);
+    let oauth_client = cookies.get("oauth_client").ok_or_else(|| {
+        tracing::error!("Missing oauth client id!");
+        Error::new(ErrorKind::PermissionDenied, "Not Authorized!")
+    })?;
 
-                                                        match oauth_client_name {
-                                                            OAuthClientName::Google => {
-                                                                let google_user =
-                                                                    verify_oauth_token::<
-                                                                        GoogleUserInfo,
-                                                                    >(
-                                                                        OAuthClientName::Google,
-                                                                        token,
-                                                                    )
-                                                                    .await?;
+    // Normal auth flow
+    if oauth_client.is_empty() {
+        return handle_normal_auth(token, &cookies, db, ctx).await;
+    }
 
-                                                                return Ok(AuthStatus {
-                                                                    is_auth: true,
-                                                                    sub: google_user.resource_name,
-                                                                    current_role: claims
-                                                                        .custom
-                                                                        .roles[0]
-                                                                        .clone(),
-                                                                    new_access_token: None,
-                                                                });
-                                                            }
-                                                            OAuthClientName::Github => {
-                                                                let github_user =
-                                                                    verify_oauth_token::<
-                                                                        GithubUserProfile,
-                                                                    >(
-                                                                        OAuthClientName::Github,
-                                                                        token,
-                                                                    )
-                                                                    .await?;
+    // OAuth flow
+    handle_oauth_auth(token, &cookies, oauth_client, db, ctx).await
+}
 
-                                                                return Ok(AuthStatus {
-                                                                    is_auth: true,
-                                                                    sub: github_user.id.to_string(),
-                                                                    current_role: claims
-                                                                        .custom
-                                                                        .roles[0]
-                                                                        .clone(),
-                                                                    new_access_token: None,
-                                                                });
-                                                            }
-                                                        }
-                                                    }
-                                                    Err(err) => {
-                                                        tracing::error!(
-                                                            "Failed to decode jwt! - {err}"
-                                                        );
-                                                        Err(Error::new(
-                                                            ErrorKind::PermissionDenied,
-                                                            "Not Authorized!",
-                                                        ))
-                                                    }
-                                                }
-                                            }
-                                            None => {
-                                                tracing::error!(
-                                                    "Missing oauth user permissions jwt!"
-                                                );
-                                                Err(Error::new(
-                                                    ErrorKind::PermissionDenied,
-                                                    "Not Authorized!",
-                                                ))
-                                            }
-                                        }
-                                    }
-                                }
-                                None => {
-                                    tracing::error!("Missing oauth client id!");
-                                    Err(Error::new(ErrorKind::PermissionDenied, "Not Authorized!"))
-                                }
-                            }
-                        }
-                        None => {
-                            tracing::error!("Missing cookie headers!");
-                            Err(Error::new(ErrorKind::PermissionDenied, "Not Authorized!"))
-                        }
-                    }
+async fn handle_normal_auth<T, C>(
+    token: &HeaderValue,
+    cookies: &HashMap<String, String>,
+    db: &T,
+    ctx: &C,
+) -> Result<AuthStatus, Error>
+where
+    T: Clone + AsSurrealClient,
+    C: AuthMetadataContext + Sync,
+{
+    match decode_token(token).await {
+        Ok(claims) => {
+            let Some(sub) = claims.subject else {
+                return Err(Error::new(ErrorKind::Other, "Unauthorized!"));
+            };
+
+            let sub_ref = &sub;
+            if claims.custom.roles.is_empty() {
+                tracing::error!("Token role claims are empty");
+                return Err(Error::new(ErrorKind::InvalidData, "Unauthorized!"));
+            }
+            let current_role = claims.custom.roles[0].clone();
+
+            let current_role_permissions =
+                fetch_current_role_permissions(db, sub_ref, &current_role).await?;
+
+            Ok(AuthStatus {
+                is_auth: true,
+                sub,
+                current_role,
+                new_access_token: None,
+                current_role_permissions,
+            })
+        }
+        Err(_) => handle_refresh_token(cookies, db, ctx).await,
+    }
+}
+
+async fn handle_oauth_auth<T, C>(
+    token: &HeaderValue,
+    cookies: &HashMap<String, String>,
+    oauth_client: &str,
+    db: &T,
+    ctx: &C,
+) -> Result<AuthStatus, Error>
+where
+    T: Clone + AsSurrealClient,
+    C: AuthMetadataContext + Sync,
+{
+    let oauth_user_roles_jwt = cookies.get("oauth_user_roles_jwt").ok_or_else(|| {
+        tracing::error!("Missing oauth user permissions jwt!");
+        Error::new(ErrorKind::PermissionDenied, "Not Authorized!")
+    })?;
+
+    let jwt_header =
+        HeaderValue::from_str(&format!("Bearer {oauth_user_roles_jwt}")).map_err(|e| {
+            tracing::error!("Failed to convert str to headervalue: {}", e);
+            Error::new(ErrorKind::InvalidData, "Unauthorized!")
+        })?;
+
+    let claims = decode_token(&jwt_header).await.map_err(|e| {
+        tracing::error!("Failed to decode jwt! - {e}");
+        Error::new(ErrorKind::PermissionDenied, "Not Authorized!")
+    })?;
+
+    let oauth_client_name = OAuthClientName::from_str(oauth_client);
+    let current_role = claims.custom.roles[0].clone();
+
+    match oauth_client_name {
+        OAuthClientName::Google => {
+            match verify_oauth_token::<GoogleUserInfo>(OAuthClientName::Google, token).await {
+                Ok(user) => {
+                    let user_id_ref = &user.sub;
+                    let current_role_permissions =
+                        fetch_current_role_permissions(db, user_id_ref, &current_role).await?;
+
+                    Ok(AuthStatus {
+                        is_auth: true,
+                        sub: user_id_ref.to_owned(),
+                        current_role: claims.custom.roles[0].clone(),
+                        new_access_token: None,
+                        current_role_permissions,
+                    })
                 }
-                None => {
-                    tracing::error!("Missing access token!");
-                    Err(Error::new(ErrorKind::PermissionDenied, "Not Authorized!"))
+                Err(e) => {
+                    tracing::error!("Error Refreshing Google Token: {e:?}");
+                    handle_oauth_refresh_token(cookies, db, ctx).await
                 }
             }
         }
-        None => {
-            tracing::error!("Invalid request headers!");
-            Err(Error::new(ErrorKind::Other, "Invalid request!"))
+        OAuthClientName::Github => {
+            match verify_oauth_token::<GithubUserProfile>(OAuthClientName::Github, token).await {
+                Ok(user) => {
+                    let user_id_ref = &user.id.to_string();
+                    let current_role_permissions =
+                        fetch_current_role_permissions(db, user_id_ref, &current_role).await?;
+
+                    Ok(AuthStatus {
+                        is_auth: true,
+                        sub: user_id_ref.to_string(),
+                        current_role: claims.custom.roles[0].clone(),
+                        new_access_token: None,
+                        current_role_permissions,
+                    })
+                }
+                Err(e) => {
+                    tracing::error!("Error Refreshing GitHub Token: {e:?}");
+                    handle_oauth_refresh_token(cookies, db, ctx).await
+                }
+            }
         }
     }
 }
@@ -500,13 +485,16 @@ where
 
             match refresh_claims {
                 Ok(refresh_claims) => {
-                    if refresh_claims.subject.is_none() {
+                    let Some(sub) = refresh_claims.subject else {
                         return Err(Error::new(ErrorKind::Other, "Unauthorized!"));
-                    }
+                    };
+
+                    let sub_ref = &sub;
+                    let current_roles = refresh_claims.custom.roles;
 
                     let user: Option<User> = db
                         .as_client()
-                        .select(("user", refresh_claims.subject.unwrap().as_str()))
+                        .select(("user", sub_ref))
                         .await
                         .map_err(|_e| {
                             tracing::error!("User deserialization failed");
@@ -516,7 +504,7 @@ where
                     match user {
                         Some(user) => {
                             let auth_claim = AuthClaim {
-                                roles: refresh_claims.custom.roles.clone(),
+                                roles: current_roles.to_vec(),
                             };
 
                             let token_expiry_duration = Duration::from_secs(1 * 60);
@@ -534,18 +522,23 @@ where
                             // Set response headers using the AuthMetadataContext trait - works for REST, gRPC, and GraphQL!
                             ctx.set_response_metadata(
                                 "set-cookie",
-                                "oauth_client=; HttpOnly; SameSite=Strict; Path=/; Secure",
+                                "oauth_client=; HttpOnly; SameSite=Lax; Path=/; Secure",
                             )
                             .await;
 
                             ctx.append_response_metadata("new-access-token", &token)
                                 .await;
 
+                            let current_role_permissions =
+                                fetch_current_role_permissions(db, sub_ref, &current_roles[0])
+                                    .await?;
+
                             return Ok(AuthStatus {
                                 is_auth: true,
                                 sub: user.id.key().to_string(),
-                                current_role: refresh_claims.custom.roles[0].clone(),
+                                current_role: current_roles[0].clone(),
                                 new_access_token: Some(token),
+                                current_role_permissions,
                             });
                         }
                         None => {
@@ -649,8 +642,6 @@ pub async fn sign_jwt(
     user_id: &str,
 ) -> Result<String, Error> {
     let converted_key = get_converted_jwt_secret_key().await?;
-
-    tracing::debug!("Auth Claim: {:?}", auth_claim);
 
     let mut token_claims = Claims::with_custom_claims(auth_claim.clone(), duration);
     token_claims.subject = Some(user_id.to_string());
@@ -787,32 +778,32 @@ pub async fn verify_oauth_token<T: for<'de> Deserialize<'de> + std::fmt::Debug>(
                 client
                     .request(
                         Method::GET,
-                        "https://people.googleapis.com/v1/people/me?personFields=names,emailAddresses",
+                        "https://www.googleapis.com/oauth2/v3/userinfo"
                     )
                     .headers(req_headers)
                     .send()
                     .await
                     .map_err(|e| {
-                        tracing::debug!("OAuth request to Google failed: {:?}", e);
+                        tracing::error!("OAuth request to Google failed: {:?}", e);
                         Error::new(ErrorKind::Other, "OAuth request to Google failed")
                     })?;
 
             // Log the raw JSON response
-            // let response_text = response
-            //     .text()
-            //     .await
-            //     .map_err(|e| {
-            //         tracing::debug!("Failed to read response body: {:?}", e);
-            //         Error::new(ErrorKind::Other, "Failed to read response body")
-            //     })?;
+            // let response_text = response.text().await.map_err(|e| {
+            //     tracing::debug!("Failed to read response body: {:?}", e);
+            //     Error::new(ErrorKind::Other, "Failed to read response body")
+            // })?;
             // tracing::debug!("Raw response body: {}", response_text);
 
+            // let user_data = serde_json::from_str::<T>(&response_text).map_err(|e| {
+            //     tracing::debug!("Google Token deserialization failed: {:?}", e);
+            //     Error::new(ErrorKind::Other, "Google Token deserialization failed")
+            // })?;
+
             let user_data = response.json::<T>().await.map_err(|e| {
-                tracing::debug!("Google Token deserialization failed: {:?}", e);
+                tracing::error!("Google Token deserialization failed: {:?}", e);
                 Error::new(ErrorKind::Other, "Google Token deserialization failed")
             })?;
-
-            tracing::debug!("user_data: {:?}", user_data);
 
             Ok(user_data)
         }
@@ -861,7 +852,7 @@ pub async fn verify_oauth_token<T: for<'de> Deserialize<'de> + std::fmt::Debug>(
                 .send()
                 .await
                 .map_err(|e| {
-                    tracing::debug!("OAuth request to GitHub failed: {:?}", e);
+                    tracing::error!("OAuth request to GitHub failed: {:?}", e);
                     Error::new(ErrorKind::Other, "OAuth request to GitHub failed")
                 })?;
 
@@ -870,6 +861,11 @@ pub async fn verify_oauth_token<T: for<'de> Deserialize<'de> + std::fmt::Debug>(
             //     Error::new(ErrorKind::Other, "Failed to read response body")
             // })?;
             // tracing::debug!("Rate limit response: {}", response_text);
+
+            // let user_data = serde_json::from_str::<T>(&response_text).map_err(|e| {
+            //     tracing::debug!("GitHub Token deserialization failed: {:?}", e);
+            //     Error::new(ErrorKind::Other, "GitHub Token deserialization failed")
+            // })?;
 
             let user_data = response.json::<T>().await.map_err(|e| {
                 tracing::error!("GitHub Token deserialization failed: {}", e);
@@ -897,7 +893,7 @@ pub async fn create_oauth_user_if_not_exists<T: Clone + AsSurrealClient>(
                         SELECT * FROM ONLY user WHERE oauth_user_id = $oauth_user_id LIMIT 1
                         ",
                     )
-                    .bind(("oauth_user_id", google_user.resource_name.clone()))
+                    .bind(("oauth_user_id", google_user.sub.clone()))
                     .await
                     .map_err(|e| {
                         tracing::error!("DB Query Error: {}", e);
@@ -912,21 +908,22 @@ pub async fn create_oauth_user_if_not_exists<T: Clone + AsSurrealClient>(
                 match existing_user {
                     Some(existing_user) => Ok(existing_user),
                     None => {
-                        let email = google_user
-                            .email_addresses
-                            .iter()
-                            .find(|email| email.metadata.primary);
+                        // let email = google_user
+                        //     .email;
 
-                        if email.is_none() {
-                            tracing::error!("No primary email found");
-                            return Err(Error::new(ErrorKind::Other, "No primary email found"));
-                        }
+                        // if email.is_none() {
+                        //     tracing::error!("No primary email found");
+                        //     return Err(Error::new(ErrorKind::Other, "No primary email found"));
+                        // }
 
                         let user = UserInput {
-                            email: email.unwrap().value.clone(),
+                            email: google_user.email.clone(),
                             oauth_client: Some(OAuthClientName::Google),
-                            oauth_user_id: Some(google_user.resource_name.clone()),
+                            oauth_user_id: Some(google_user.sub.clone()),
                             status: AccountStatus::Active,
+                            profile_picture: google_user.picture.clone(),
+                            first_name: google_user.given_name.clone(),
+                            last_name: google_user.family_name.clone(),
                             ..UserInput::default()
                         };
 
@@ -973,13 +970,29 @@ pub async fn create_oauth_user_if_not_exists<T: Clone + AsSurrealClient>(
 
                         if email.is_none() {
                             tracing::error!("No primary email found");
-                            return Err(Error::new(ErrorKind::Other, "No primary email found"));
+                            return Err(Error::new(ErrorKind::Other, "No primary email found on your GitHub account. Please go to GitHub Settings → Emails and set a primary email, then try again."));
                         }
+
+                        let mut name_parts =
+                            github_user.name.as_deref().unwrap_or("").splitn(2, ' ');
+
+                        let first_name = name_parts
+                            .next()
+                            .filter(|s| !s.is_empty())
+                            .map(str::to_owned);
+                        let last_name = name_parts
+                            .next()
+                            .filter(|s| !s.is_empty())
+                            .map(str::to_owned);
+
                         let user = UserInput {
                             email: email.unwrap().to_owned(),
                             oauth_client: Some(OAuthClientName::Github),
                             oauth_user_id: Some(github_user.id.to_string()),
                             status: AccountStatus::Active,
+                            profile_picture: Some(github_user.avatar_url.clone()),
+                            first_name,
+                            last_name,
                             ..UserInput::default()
                         };
 
@@ -994,7 +1007,7 @@ pub async fn create_oauth_user_if_not_exists<T: Clone + AsSurrealClient>(
             } else {
                 // Handle mismatch
                 tracing::error!("Invalid Github OAuth user!");
-                Err(Error::new(ErrorKind::Other, "Invalid Google OAuth user!"))
+                Err(Error::new(ErrorKind::Other, "Invalid GitHub OAuth user!"))
             }
         }
     }
@@ -1060,4 +1073,167 @@ pub async fn fetch_user_roles<T: Clone + AsSurrealClient>(
     };
 
     Ok(user_roles)
+}
+
+async fn refresh_oauth_access_token(
+    oauth_client_name: OAuthClientName,
+    refresh_token: &str,
+) -> Result<OAuthTokenPair, Error> {
+    let http_client = reqwest::ClientBuilder::new()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| {
+            tracing::error!("Failed to build HTTP client: {}", e);
+            Error::new(ErrorKind::Other, "Internal error")
+        })?;
+
+    let oauth_client = initiate_auth_code_grant_flow(oauth_client_name)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to initiate auth code grant flow: {}", e);
+            Error::new(ErrorKind::Other, "Internal error")
+        })?;
+
+    let token_result = oauth_client
+        .exchange_refresh_token(&RefreshToken::new(refresh_token.to_owned()))
+        .request_async(&http_client)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to refresh OAuth token: {:?}", e);
+            Error::new(ErrorKind::PermissionDenied, "Not Authorized!")
+        })?;
+
+    Ok(OAuthTokenPair {
+        access_token: token_result.access_token().secret().to_owned(),
+        refresh_token: token_result.refresh_token().map(|t| t.secret().to_owned()),
+    })
+}
+
+async fn handle_oauth_refresh_token<T, C>(
+    cookies: &HashMap<String, String>,
+    db: &T,
+    ctx: &C,
+) -> Result<AuthStatus, Error>
+where
+    T: Clone + AsSurrealClient,
+    C: AuthMetadataContext + Sync,
+{
+    let refresh_token = cookies.get("t").ok_or_else(|| {
+        tracing::error!("Missing OAuth refresh token cookie");
+        Error::new(ErrorKind::PermissionDenied, "Not Authorized!")
+    })?;
+
+    let oauth_client_name = cookies.get("oauth_client").ok_or_else(|| {
+        tracing::error!("Missing oauth_client cookie");
+        Error::new(ErrorKind::PermissionDenied, "Not Authorized!")
+    })?;
+
+    let oauth_user_roles_jwt = cookies.get("oauth_user_roles_jwt").ok_or_else(|| {
+        tracing::error!("Missing oauth_user_roles_jwt cookie");
+        Error::new(ErrorKind::PermissionDenied, "Not Authorized!")
+    })?;
+
+    // Decode the roles JWT to get claims (ignore expiry — access token expired, not this)
+    let converted_jwt_secret_key = get_converted_jwt_secret_key().await?;
+    let role_claims = converted_jwt_secret_key
+        .verify_token::<AuthClaim>(oauth_user_roles_jwt, None)
+        .map_err(|e| {
+            tracing::error!("Failed to decode oauth_user_roles_jwt: {}", e);
+            Error::new(ErrorKind::PermissionDenied, "Not Authorized!")
+        })?;
+
+    // Exchange refresh token for new access token (and possibly new refresh token)
+    let token_pair =
+        refresh_oauth_access_token(OAuthClientName::from_str(oauth_client_name), refresh_token)
+            .await?;
+
+    // Rotate the refresh token cookie — GitHub Apps always returns a new one
+    if let Some(new_refresh_token) = &token_pair.refresh_token {
+        ctx.set_response_metadata(
+            "set-cookie",
+            &format!(
+                "t={}; HttpOnly; SameSite=Lax; Path=/; Secure",
+                new_refresh_token
+            ),
+        )
+        .await;
+    }
+
+    let token_header = HeaderValue::from_str(&format!("Bearer {}", token_pair.access_token))
+        .map_err(|e| {
+            tracing::error!("Failed to create token header: {}", e);
+            Error::new(ErrorKind::Other, "Unauthorized!")
+        })?;
+
+    // Verify the new access token with the provider and get sub
+    let sub = match OAuthClientName::from_str(oauth_client_name) {
+        OAuthClientName::Google => {
+            let user = verify_oauth_token::<GoogleUserInfo>(OAuthClientName::Google, &token_header)
+                .await?;
+            user.sub
+        }
+        OAuthClientName::Github => {
+            let user =
+                verify_oauth_token::<GithubUserProfile>(OAuthClientName::Github, &token_header)
+                    .await?;
+            user.id.to_string()
+        }
+    };
+
+    // Send the new access token back to the client
+    ctx.append_response_metadata("new-access-token", &token_pair.access_token)
+        .await;
+    let current_role_id = role_claims.custom.roles[0].clone();
+
+    let current_role_permissions =
+        fetch_current_role_permissions(db, &sub, &current_role_id).await?;
+
+    Ok(AuthStatus {
+        is_auth: true,
+        sub,
+        current_role: current_role_id,
+        new_access_token: Some(token_pair.access_token),
+        current_role_permissions,
+    })
+}
+
+pub async fn fetch_current_role_permissions<T: Clone + AsSurrealClient>(
+    db: &T,
+    user_id: &str,
+    role_name: &str,
+) -> Result<Vec<String>, Error> {
+    let owned_user_id = user_id.to_owned();
+    let owned_role_name = role_name.to_owned();
+
+    let mut query_response = db
+        .as_client()
+        // Apparently SurrealDB formats the query string before executing it. It may result in unexpected behavior.
+        .query(
+            "
+            BEGIN TRANSACTION;
+            LET $role = (SELECT VALUE id FROM ONLY role WHERE role_name = $role_name LIMIT 1);
+            LET $user = type::thing('user', $user_id);
+            IF !$role.exists() {
+          		THROW 'Role does not exist';
+           	};
+
+
+            LET $permissions = (SELECT ->assigned->(role WHERE id = $role)->granted->permission[*] AS permissions FROM ONLY user WHERE id = $user OR oauth_user_id = $user_id LIMIT 1)['permissions'];
+            RETURN $permissions;
+            COMMIT TRANSACTION;
+            "
+        )
+        .bind(("user_id", owned_user_id))
+        .bind(("role_name", owned_role_name))
+        .await
+        .map_err(|e| {
+            tracing::error!("DB Query failed. Failed to get role permissions: {}", e);
+            Error::new(ErrorKind::Other, "Failed to fetch permissions")
+        })?;
+    let user_role_permissions: Vec<String> = query_response.take((0, "name")).map_err(|e| {
+        tracing::error!("Failed to deserialize permissions(take(0)): {}", e);
+        Error::new(ErrorKind::Other, "Failed to fetch permissions")
+    })?;
+
+    Ok(user_role_permissions)
 }

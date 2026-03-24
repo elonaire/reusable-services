@@ -10,7 +10,7 @@ use lib::{
     integration::foreign_key::add_foreign_key_if_not_exists,
     utils::{
         custom_traits::AsSurrealClient,
-        models::{CreateFileInfo, ForeignKey, PurchaseFileDetails, User},
+        models::{CreateFileInfo, ForeignKey, PurchaseFileDetails, UserId},
     },
 };
 use surrealdb::{engine::remote::ws::Client, Surreal};
@@ -101,7 +101,7 @@ pub async fn purchase_file<T: Clone + AsSurrealClient>(
         foreign_key: purchase_details.buyer_id.into(),
     };
 
-    let buyer_result: Option<User> = add_foreign_key_if_not_exists(db, user_fk).await;
+    let buyer_result: Option<UserId> = add_foreign_key_if_not_exists(db, user_fk).await;
 
     let mut purchase_file_query = db
         .as_client()
@@ -172,7 +172,7 @@ pub async fn create_file_from_content<T: Clone + AsSurrealClient>(
         foreign_key: user_id.to_owned(),
     };
 
-    let user_fk: Option<User> = add_foreign_key_if_not_exists(db, user_fk_body).await;
+    let user_fk: Option<UserId> = add_foreign_key_if_not_exists(db, user_fk_body).await;
 
     if user_fk.is_none() {
         return Err(Error::new(

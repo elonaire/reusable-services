@@ -1,11 +1,14 @@
 use async_graphql::{OutputType, SimpleObject};
 use lib::utils::models::{ApiResponse, InitializePaymentResponse};
 
+use crate::graphql::schemas::pandascrow::PandascrowEscrow;
+
 #[derive(SimpleObject)]
 #[graphql(concrete(
     name = "InitializePaymentResResponse",
     params(InitializePaymentResponse)
 ))]
+#[graphql(concrete(name = "PandascrowEscrowResponse", params(PandascrowEscrow)))]
 pub struct GraphQLApiResponse<T: OutputType> {
     pub data: T,
     pub metadata: GraphQLApiResponseMetadata,

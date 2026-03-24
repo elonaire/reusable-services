@@ -12,7 +12,7 @@ pub async fn handle_events(event: &Event) -> () {
                     // Handle Publish event
                     match message.topic.as_ref() {
                         b"email/send" => {
-                            tracing::debug!("Payload: {:?}", &message.payload);
+                            // tracing::debug!("Payload: {:?}", &message.payload);
 
                             let deserialized_payload: EmailMQTTPayload =
                                 serde_json::from_slice(&message.payload).unwrap();

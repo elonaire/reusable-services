@@ -52,6 +52,7 @@ pub async fn oauth_callback_handler(
     let cookie_header = headers.get(AXUM_COOKIE).and_then(|v| v.to_str().ok());
 
     if params.0.state.is_none() || params.0.code.is_none() || cookie_header.is_none() {
+        tracing::error!("Either state or code params is missing!");
         return (StatusCode::FORBIDDEN, "Forbidden").into_response();
     }
 
@@ -62,6 +63,7 @@ pub async fn oauth_callback_handler(
     let csrf_state = cookie_map.get("j");
 
     if csrf_state.is_none() {
+        tracing::error!("csrf_state(j) is missing!");
         return (StatusCode::FORBIDDEN, "Forbidden").into_response();
     }
 
@@ -192,7 +194,7 @@ pub async fn exchange_code_for_token(
                 roles: user_roles.to_vec(),
             };
 
-            let token_str = sign_jwt(&auth_claim, token_expiry_duration, &user.resource_name)
+            let token_str = sign_jwt(&auth_claim, token_expiry_duration, &user.sub)
                 .await
                 .map_err(|e| {
                     tracing::error!("Failed to sign JWT: {}", e);

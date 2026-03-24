@@ -8,7 +8,7 @@ use exif::{In, Tag};
 use image::{ImageFormat, ImageReader};
 use lib::{
     integration::foreign_key::add_foreign_key_if_not_exists,
-    utils::models::{AuthStatus, ForeignKey, User},
+    utils::models::{AuthStatus, ForeignKey, UserId},
 };
 use tokio::{
     fs::{remove_file, File},
@@ -51,7 +51,7 @@ pub async fn upload(
     };
 
     let user_fk =
-        add_foreign_key_if_not_exists::<Arc<Surreal<Client>>, User>(&db, user_fk_body).await;
+        add_foreign_key_if_not_exists::<Arc<Surreal<Client>>, UserId>(&db, user_fk_body).await;
 
     if user_fk.is_none() {
         return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
