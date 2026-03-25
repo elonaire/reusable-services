@@ -231,7 +231,7 @@ pub async fn navigate_to_redirect_url(
     ctx.insert_http_header(
         SET_COOKIE,
         format!(
-            "oauth_client={}; HttpOnly; SameSite=Lax; Path=/; Domain=.techietenka.com; Secure",
+            "oauth_client={}; HttpOnly; SameSite=None; Path=/; Domain=.techietenka.com; Secure",
             oauth_client_name.fmt()
         ),
     );
@@ -240,7 +240,7 @@ pub async fn navigate_to_redirect_url(
     ctx.append_http_header(
         SET_COOKIE,
         format!(
-            "j={}; Max-Age={}; HttpOnly; SameSite=Lax; Path=/; Domain=.techietenka.com; Secure",
+            "j={}; Max-Age={}; HttpOnly; SameSite=None; Path=/; Domain=.techietenka.com; Secure",
             csrf_token.secret(),
             sensitive_cookies_expiry_duration.as_secs()
         ),
@@ -248,7 +248,7 @@ pub async fn navigate_to_redirect_url(
     ctx.append_http_header(
         SET_COOKIE,
         format!(
-            "k={}; Max-Age={}; HttpOnly; SameSite=Lax; Path=/; Domain=.techietenka.com; Secure",
+            "k={}; Max-Age={}; HttpOnly; SameSite=None; Path=/; Domain=.techietenka.com; Secure",
             pkce_verifier.secret(),
             sensitive_cookies_expiry_duration.as_secs()
         ),
@@ -522,7 +522,7 @@ where
                             // Set response headers using the AuthMetadataContext trait - works for REST, gRPC, and GraphQL!
                             ctx.set_response_metadata(
                                 "set-cookie",
-                                "oauth_client=; HttpOnly; SameSite=Lax; Path=/; Domain=.techietenka.com; Secure",
+                                "oauth_client=; HttpOnly; SameSite=None; Path=/; Domain=.techietenka.com; Secure",
                             )
                             .await;
 
@@ -1152,7 +1152,7 @@ where
         ctx.set_response_metadata(
             "set-cookie",
             &format!(
-                "t={}; HttpOnly; SameSite=Lax; Path=/; Domain=.techietenka.com; Secure",
+                "t={}; HttpOnly; SameSite=None; Path=/; Domain=.techietenka.com; Secure",
                 new_refresh_token
             ),
         )
