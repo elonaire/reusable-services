@@ -434,13 +434,13 @@ impl Mutation {
 
                         ctx.insert_http_header(
                             SET_COOKIE,
-                            format!("oauth_client=; SameSite=Lax; Secure; HttpOnly; Domain=.techietenka.com; Path=/"),
+                            format!("oauth_client=; SameSite=None; Secure; HttpOnly; Domain=.techietenka.com; Path=/"),
                         );
 
                         ctx.append_http_header(
                             SET_COOKIE,
                             format!(
-                                "t={}; Max-Age={}; SameSite=Lax; Secure; HttpOnly; Domain=.techietenka.com; Path=/",
+                                "t={}; Max-Age={}; SameSite=None; Secure; HttpOnly; Domain=.techietenka.com; Path=/",
                                 refresh_token_str,
                                 refresh_token_expiry_duration.as_secs(),
                             ),
@@ -1013,7 +1013,7 @@ impl Mutation {
                                     ctx.append_http_header(
                                         SET_COOKIE,
                                         format!(
-                                            "t={}; Max-Age={}; SameSite=Lax; Secure; HttpOnly; Domain=.techietenka.com; Path=/",
+                                            "t={}; Max-Age={}; SameSite=None; Secure; HttpOnly; Domain=.techietenka.com; Path=/",
                                             refresh_token_str,
                                             refresh_token_expiry_duration.as_secs(),
                                         ),
@@ -1042,7 +1042,7 @@ impl Mutation {
                                     ctx.append_http_header(
                                         SET_COOKIE,
                                         format!(
-                                            "oauth_user_roles_jwt={}; Max-Age={}; SameSite=Lax; Secure; HttpOnly; Domain=.techietenka.com; Path=/",
+                                            "oauth_user_roles_jwt={}; Max-Age={}; SameSite=None; Secure; HttpOnly; Domain=.techietenka.com; Path=/",
                                             refresh_token_str,
                                             refresh_token_expiry_duration.as_secs(),
                                         ),
