@@ -4,11 +4,15 @@ use async_graphql::{Context, Object, Result};
 use axum::Extension;
 use hyper::{HeaderMap, StatusCode};
 use lib::{
-    middleware::auth::false_graphql::confirm_authentication, utils::custom_error::ExtendedError,
+    middleware::auth::false_graphql::confirm_authentication,
+    utils::{api_responses::synthesize_graphql_response, custom_error::ExtendedError},
 };
 use surrealdb::{engine::remote::ws::Client, Surreal};
 
-use crate::graphql::schemas::general::{Currency, FetchCurrenciesQueryFilters};
+use crate::graphql::schemas::{
+    general::{Currency, FetchCurrenciesQueryFilters},
+    shared::GraphQLApiResponse,
+};
 
 #[derive(Default)]
 pub struct PaymentQuery;
@@ -19,7 +23,7 @@ impl PaymentQuery {
         &self,
         ctx: &Context<'_>,
         filters: Option<FetchCurrenciesQueryFilters>,
-    ) -> Result<Vec<Currency>> {
+    ) -> Result<GraphQLApiResponse<Vec<Currency>>> {
         let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
@@ -74,6 +78,11 @@ impl PaymentQuery {
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
 
-        Ok(response)
+        let api_response = synthesize_graphql_response(ctx, &response, None).ok_or_else(|| {
+            tracing::error!("Failed to synthesize response!");
+            ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+        })?;
+
+        Ok(api_response.into())
     }
 }
