@@ -231,7 +231,7 @@ pub async fn navigate_to_redirect_url(
     ctx.insert_http_header(
         SET_COOKIE,
         format!(
-            "oauth_client={}; HttpOnly; SameSite=Strict; Path=/; Secure",
+            "oauth_client={}; HttpOnly; SameSite=Lax; Path=/; Secure",
             oauth_client_name.fmt()
         ),
     );
@@ -240,7 +240,7 @@ pub async fn navigate_to_redirect_url(
     ctx.append_http_header(
         SET_COOKIE,
         format!(
-            "j={}; Max-Age={}; HttpOnly; SameSite=Strict; Path=/; Secure",
+            "j={}; Max-Age={}; HttpOnly; SameSite=Lax; Path=/; Secure",
             csrf_token.secret(),
             sensitive_cookies_expiry_duration.as_secs()
         ),
@@ -248,7 +248,7 @@ pub async fn navigate_to_redirect_url(
     ctx.append_http_header(
         SET_COOKIE,
         format!(
-            "k={}; Max-Age={}; HttpOnly; SameSite=Strict; Path=/; Secure",
+            "k={}; Max-Age={}; HttpOnly; SameSite=Lax; Path=/; Secure",
             pkce_verifier.secret(),
             sensitive_cookies_expiry_duration.as_secs()
         ),
@@ -522,7 +522,7 @@ where
                             // Set response headers using the AuthMetadataContext trait - works for REST, gRPC, and GraphQL!
                             ctx.set_response_metadata(
                                 "set-cookie",
-                                "oauth_client=; HttpOnly; SameSite=Strict; Path=/; Secure",
+                                "oauth_client=; HttpOnly; SameSite=Lax; Path=/; Secure",
                             )
                             .await;
 
@@ -1152,7 +1152,7 @@ where
         ctx.set_response_metadata(
             "set-cookie",
             &format!(
-                "t={}; HttpOnly; SameSite=Strict; Path=/; Secure",
+                "t={}; HttpOnly; SameSite=Lax; Path=/; Secure",
                 new_refresh_token
             ),
         )
