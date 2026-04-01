@@ -135,6 +135,7 @@ pub async fn exchange_code_for_token(
 
     let http_client = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
+        .connection_verbose(true)
         .build()
         .map_err(|e| {
             tracing::error!("Failed to build Reqwest Client: {}", e);
