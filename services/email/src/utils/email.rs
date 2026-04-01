@@ -27,10 +27,10 @@ pub async fn send_email(email: &Email) -> Result<&'static str, Error> {
         tracing::error!("Missing the SMTP_SERVER environment variable.: {:?}", e);
         Error::new(ErrorKind::Other, "Server Error")
     })?;
-    let files_service = env::var("FILES_SERVICE").map_err(|e| {
-        tracing::error!("Missing the FILES_SERVICE environment variable.: {:?}", e);
-        Error::new(ErrorKind::Other, "Server Error")
-    })?;
+    // let files_service = env::var("FILES_SERVICE").map_err(|e| {
+    //     tracing::error!("Missing the FILES_SERVICE environment variable.: {:?}", e);
+    //     Error::new(ErrorKind::Other, "Server Error")
+    // })?;
     let primary_logo = env::var("PRIMARY_LOGO").map_err(|e| {
         tracing::error!("Missing the PRIMARY_LOGO environment variable.: {:?}", e);
         Error::new(ErrorKind::Other, "Server Error")
@@ -75,7 +75,7 @@ pub async fn send_email(email: &Email) -> Result<&'static str, Error> {
     let header_footer_bg_color_ref = &header_footer_bg_color;
     let header_footer_text_color_ref = &header_footer_text_color;
 
-    let logo_url = format!("{}/view/{}", files_service, primary_logo);
+    // let logo_url = format!("{}/view/{}", files_service, primary_logo);
     let client = ReqWestClient::builder()
         .danger_accept_invalid_certs(true)
         .build()
@@ -85,7 +85,7 @@ pub async fn send_email(email: &Email) -> Result<&'static str, Error> {
         })?;
     // let logo_image = fs::read("https://imagedelivery.net/fa3SWf5GIAHiTnHQyqU8IQ/5d0feb5f-2b15-4b86-9cf3-1f99372f4600/public")?;
     let logo_image = client
-        .request(Method::GET, logo_url.as_str())
+        .request(Method::GET, &primary_logo)
         .send()
         .await
         .map_err(|e| {
