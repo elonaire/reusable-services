@@ -124,12 +124,20 @@ pub async fn exchange_code_for_token(
     let pkce_verifier = PkceCodeVerifier::new(pcke_verifier_secret.unwrap().to_owned());
     let auth_code = AuthorizationCode::new(payload.auth_code.unwrap());
 
-    let http_client = reqwest::ClientBuilder::new()
-        // Following redirects opens the client up to SSRF vulnerabilities.
-        .redirect(reqwest::redirect::Policy::none())
+    // let http_client = reqwest::ClientBuilder::new()
+    //     // Following redirects opens the client up to SSRF vulnerabilities.
+    //     .redirect(reqwest::redirect::Policy::none())
+    //     .build()
+    //     .map_err(|e| {
+    //         tracing::error!("Failed to build HTTP Client: {}", e);
+    //         StatusCode::INTERNAL_SERVER_ERROR
+    //     })?;
+
+    let http_client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
         .build()
         .map_err(|e| {
-            tracing::error!("Failed to build HTTP Client: {}", e);
+            tracing::error!("Failed to build Reqwest Client: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
