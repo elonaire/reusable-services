@@ -7,9 +7,9 @@ service PaymentsService {
 
 message UserPaymentDetails {
     string email = 1;
-    uint64 amount = 2;
+    string amount = 2;
     string reference = 3;
-    optional string currency = 4;
+    string currency = 4;
 }
 
 message PaymentIntegrationResponse {

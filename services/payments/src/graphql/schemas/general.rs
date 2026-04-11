@@ -1,16 +1,19 @@
-use std::collections::HashMap;
-
 use async_graphql::{ComplexObject, InputObject, SimpleObject};
 use serde::{Deserialize, Serialize};
 use surrealdb::RecordId;
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
 pub struct ExchangeRatesResponse {
-    pub success: bool,
-    pub timestamp: u64,
-    pub base: String,
-    pub date: String,
-    pub rates: HashMap<String, f64>,
+    pub result: String,
+    pub documentation: String,
+    pub terms_of_use: String,
+    pub time_last_update_unix: i64,
+    pub time_last_update_utc: String,
+    pub time_next_update_unix: i64,
+    pub time_next_update_utc: String,
+    pub base_code: String,
+    pub target_code: String,
+    pub conversion_rate: f64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, InputObject, Default)]

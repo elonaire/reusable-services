@@ -8,3 +8,4 @@ pub mod api_responses;
 pub mod grpc;
 pub mod models;
 pub mod mqtt;
+pub mod serialization;
