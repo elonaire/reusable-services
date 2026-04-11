@@ -23,11 +23,3 @@ DEFINE FIELD updated_at ON TABLE currency TYPE datetime
     VALUE time::now();
 --Full-text search
 DEFINE INDEX currencyNameIndex ON TABLE currency FIELDS name SEARCH ANALYZER currency_analyzer BM25(1.2,0.75) HIGHLIGHTS;
-
--- A schema-full pandascrow_escrow table
-DEFINE TABLE OVERWRITE pandascrow_escrow SCHEMAFULL TYPE NORMAL;
-DEFINE FIELD created_by ON TABLE pandascrow_escrow TYPE record<user_id>;
-DEFINE FIELD created_at ON TABLE pandascrow_escrow TYPE datetime
-    DEFAULT time::now() READONLY;
-DEFINE FIELD updated_at ON TABLE pandascrow_escrow TYPE datetime
-    VALUE time::now();

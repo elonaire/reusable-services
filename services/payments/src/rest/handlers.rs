@@ -61,20 +61,44 @@ pub async fn handle_paystack_webhook(
         if let Some(event) = body.get("event").and_then(|e| e.as_str()) {
             if event == "charge.success" {
                 if let Some(data) = body.get("data") {
+                    // This is the reference to the resource in question that is being paid for. Should not be confused with Rust references.
                     if let Some(reference) = data.get("reference").and_then(|r| r.as_str()) {
                         let owned_reference = reference.to_string();
+                        let borrowed_reference = &owned_reference;
+
+                        let Some((resource, id)) = borrowed_reference.split_once(':') else {
+                            tracing::error!("The reference is wrongly formatted. It needs a \":\" to separate resource and id. Nothing will proceed from here. Consider manual reconciliation urgently!");
+                            // if let Err(e) = shared_state
+                            //     .mqtt_client
+                            //     .publish(
+                            //         &format!("{resource}/payment/failed"),
+                            //         QoS::ExactlyOnce,
+                            //         false,
+                            //         format!("The reference is wrongly formatted. It needs a \":\" to separate resource and id."),
+                            //     )
+                            //     .await
+                            // {
+                            //     tracing::error!("Failed to publish payment successful event: {}", e);
+                            // };
+
+                            return (StatusCode::CREATED, format!("Transaction successful!"))
+                                .into_response();
+                        };
 
                         if let Err(e) = shared_state
                             .mqtt_client
                             .publish(
-                                "payment/successful",
+                                &format!("{resource}/payment/successful"),
                                 QoS::ExactlyOnce,
                                 false,
-                                owned_reference,
+                                id.to_string(),
                             )
                             .await
                         {
-                            tracing::error!("Failed to publish payment successful event: {}", e);
+                            tracing::error!(
+                                "Failed to publish payment successful event for {resource}: {}",
+                                e
+                            );
                         }
                     }
                 }
