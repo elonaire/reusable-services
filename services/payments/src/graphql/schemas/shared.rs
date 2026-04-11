@@ -1,7 +1,7 @@
 use async_graphql::{OutputType, SimpleObject};
 use lib::utils::models::{ApiResponse, InitializePaymentResponse};
 
-use crate::graphql::schemas::{general::Currency, pandascrow::PandascrowEscrow};
+use crate::graphql::schemas::general::Currency;
 
 type Currencies = Vec<Currency>;
 
@@ -10,7 +10,6 @@ type Currencies = Vec<Currency>;
     name = "InitializePaymentResResponse",
     params(InitializePaymentResponse)
 ))]
-#[graphql(concrete(name = "PandascrowEscrowResponse", params(PandascrowEscrow)))]
 #[graphql(concrete(name = "CurrenciesResponse", params(Currencies)))]
 pub struct GraphQLApiResponse<T: OutputType> {
     pub data: T,
