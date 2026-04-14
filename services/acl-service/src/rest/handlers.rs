@@ -10,7 +10,10 @@ use axum_cookie::prelude::*;
 use base64::{engine::general_purpose, Engine as _engine};
 use hyper::{HeaderMap, StatusCode};
 use jwt_simple::prelude::Duration;
-use lib::utils::{auth::AuthClaim, cookie_parser::parse_cookies};
+use lib::utils::{
+    api_responses::synthesize_rest_response, auth::AuthClaim, cookie_parser::parse_cookies,
+    custom_error::ApiError, models::ApiResponseRest,
+};
 use oauth2::{AuthorizationCode, PkceCodeVerifier, TokenResponse};
 use rsa::{pkcs8::DecodePrivateKey, Pkcs1v15Encrypt, RsaPrivateKey};
 use serde::{Deserialize, Serialize};
@@ -45,46 +48,43 @@ pub struct TokenExchangeContract {
 pub async fn oauth_callback_handler(
     params: Query<Params>,
     headers: HeaderMap,
-) -> impl IntoResponse {
-    // get the csrf state from the cookie
-    // Extract the csrf_state, oauth_client, pkce_verifier cookies
-    // Extract cookies from the headers
-    let cookie_header = headers.get(AXUM_COOKIE).and_then(|v| v.to_str().ok());
+) -> Result<impl IntoResponse, ApiError> {
+    let cookie_header = headers
+        .get(AXUM_COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| {
+            tracing::error!("Cookie header is missing!");
+            ApiError::Forbidden("Forbidden".into())
+        })?;
 
-    if params.0.state.is_none() || params.0.code.is_none() || cookie_header.is_none() {
-        tracing::error!("Either state or code params is missing!");
-        return (StatusCode::FORBIDDEN, "Forbidden").into_response();
-    }
+    let state = params.0.state.ok_or_else(|| {
+        tracing::error!("State param is missing!");
+        ApiError::Forbidden("Forbidden".into())
+    })?;
 
-    // Split and parse cookies manually
-    let cookie_map: std::collections::HashMap<_, _> = parse_cookies(cookie_header.unwrap());
+    let code = params.0.code.ok_or_else(|| {
+        tracing::error!("Code param is missing!");
+        ApiError::Forbidden("Forbidden".into())
+    })?;
 
-    // let pkce_verifier_secret = cookie_map.get("k").expect("PKCE verifier cookie not found");
-    let csrf_state = cookie_map.get("j");
+    let cookie_map = parse_cookies(cookie_header);
 
-    if csrf_state.is_none() {
-        tracing::error!("csrf_state(j) is missing!");
-        return (StatusCode::FORBIDDEN, "Forbidden").into_response();
-    }
+    let csrf_state = cookie_map.get("j").ok_or_else(|| {
+        tracing::error!("csrf_state(j) cookie is missing!");
+        ApiError::Forbidden("Forbidden".into())
+    })?;
 
-    let client_token_url = env::var("OAUTH_CLIENT_TOKEN_URL");
-
-    if let Err(e) = &client_token_url {
+    let client_token_url = env::var("OAUTH_CLIENT_TOKEN_URL").map_err(|e| {
         tracing::error!("OAUTH_CLIENT_TOKEN_URL not set: {}", e);
-        return (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response();
-    }
+        ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
+    })?;
 
-    if params.0.state.unwrap() != csrf_state.unwrap().to_owned() {
+    if state != *csrf_state {
         tracing::error!("CSRF token mismatch! Aborting request. Might be a hacker 🥷🏻!");
-        panic!("CSRF token mismatch! Aborting request. Might be a hacker 🥷🏻!");
+        return Err(ApiError::Forbidden("Forbidden".into()));
     }
 
-    Redirect::to(&format!(
-        "{}?auth_code={}",
-        client_token_url.unwrap(),
-        params.0.code.clone().unwrap()
-    ))
-    .into_response()
+    Ok(Redirect::to(&format!("{}?auth_code={}", client_token_url, code)).into_response())
 }
 
 pub async fn exchange_code_for_token(
@@ -92,83 +92,86 @@ pub async fn exchange_code_for_token(
     headers: HeaderMap,
     cookie: CookieManager,
     Json(payload): Json<TokenExchangeContract>,
-) -> Result<Json<AuthDetails>, StatusCode> {
-    let cookie_header = headers.get(AXUM_COOKIE).and_then(|v| v.to_str().ok());
+) -> Result<ApiResponseRest<AuthDetails>, ApiError> {
+    let cookie_header = headers
+        .get(AXUM_COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| {
+            tracing::error!("Cookie header is missing!");
+            ApiError::Forbidden("Forbidden".into())
+        })?;
 
-    if cookie_header.is_none() || payload.auth_code.is_none() {
-        return Err(StatusCode::FORBIDDEN);
-    }
+    let auth_code = payload.auth_code.ok_or_else(|| {
+        tracing::error!("Auth code is missing!");
+        ApiError::Forbidden("Forbidden".into())
+    })?;
 
-    // Split and parse cookies manually
-    let cookie_map: std::collections::HashMap<_, _> = parse_cookies(cookie_header.unwrap());
+    let cookie_map = parse_cookies(cookie_header);
 
-    let pcke_verifier_secret = cookie_map.get("k");
+    let pkce_verifier_secret = cookie_map.get("k").ok_or_else(|| {
+        tracing::error!("PKCE verifier cookie(k) is missing!");
+        ApiError::Forbidden("Forbidden".into())
+    })?;
 
-    let oauth_client_name = cookie_map.get("oauth_client");
+    let oauth_client_name = cookie_map.get("oauth_client").ok_or_else(|| {
+        tracing::error!("OAuth client cookie is missing!");
+        ApiError::Forbidden("Forbidden".into())
+    })?;
 
-    if pcke_verifier_secret.is_none() || oauth_client_name.is_none() {
-        return Err(StatusCode::FORBIDDEN);
-    }
+    let oauth_client_name_conversion = OAuthClientName::from_str(oauth_client_name);
 
-    let oauth_client_name_conversion = OAuthClientName::from_str(oauth_client_name.unwrap());
-
-    // We need to get the same client instance that we used to generate the auth url. Hence the cookies.
     let oauth_client = initiate_auth_code_grant_flow(oauth_client_name_conversion)
         .await
         .map_err(|e| {
             tracing::error!("Failed to initiate auth code grant flow: {}", e);
-            StatusCode::FORBIDDEN
+            ApiError::Forbidden("Forbidden".into())
         })?;
 
-    // Generate a PKCE verifier using the secret.
-    let pkce_verifier = PkceCodeVerifier::new(pcke_verifier_secret.unwrap().to_owned());
-    let auth_code = AuthorizationCode::new(payload.auth_code.unwrap());
+    let pkce_verifier = PkceCodeVerifier::new(pkce_verifier_secret.to_owned());
+    let auth_code = AuthorizationCode::new(auth_code);
 
     let http_client = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
         .build()
         .map_err(|e| {
-            tracing::error!("Failed to build Reqwest Client: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
+            tracing::error!("Failed to build Reqwest client: {}", e);
+            ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
         })?;
 
-    // Now you can trade it for an access token.
     let token_result = oauth_client
         .exchange_code(auth_code)
-        // Set the PKCE code verifier.
         .set_pkce_verifier(pkce_verifier)
         .request_async(&http_client)
         .await
         .map_err(|e| {
             tracing::error!("Failed to exchange code for token: {}", e);
-            StatusCode::FORBIDDEN
+            ApiError::Forbidden("Forbidden".into())
         })?;
 
-    let borrowed_token_result = &token_result;
+    if let Some(refresh_token) = token_result.refresh_token() {
+        cookie.add(
+            CookieBuilder::new("t", refresh_token.secret().to_owned())
+                .path("/")
+                .build(),
+        );
+    }
 
-    if let Some(refresh_token) = borrowed_token_result.refresh_token() {
-        let refresh_token_cookie = CookieBuilder::new("t", refresh_token.secret().to_owned())
-            .path("/")
-            .build();
-
-        cookie.add(refresh_token_cookie);
-    };
-
-    let token = borrowed_token_result.access_token().secret();
+    let token = token_result.access_token().secret();
 
     let token_header = HeaderValue::from_str(&format!("Bearer {}", token)).map_err(|e| {
         tracing::error!("Failed to create token header: {}", e);
-        StatusCode::FORBIDDEN
+        ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
     })?;
-    let token_expiry_duration = Duration::from_secs(30 * 24 * 60 * 60); // days by hours by minutes by 60 seconds
 
-    match oauth_client_name_conversion {
+    let token_expiry_duration = Duration::from_secs(30 * 24 * 60 * 60);
+
+    let token_str = match oauth_client_name_conversion {
         OAuthClientName::Google => {
             let user = verify_oauth_token::<GoogleUserInfo>(OAuthClientName::Google, &token_header)
                 .await
                 .map_err(|e| {
                     tracing::error!("Failed to verify Google token: {}", e);
-                    StatusCode::UNAUTHORIZED
+                    ApiError::Unauthorized("Unauthorized".into())
                 })?;
 
             let created_user = create_oauth_user_if_not_exists::<Arc<Surreal<Client>>>(
@@ -178,47 +181,38 @@ pub async fn exchange_code_for_token(
             )
             .await
             .map_err(|e| {
-                tracing::error!("Failed to create user: {}", e);
-                StatusCode::UNAUTHORIZED
+                tracing::error!("Failed to create Google user: {}", e);
+                ApiError::Unauthorized("Unauthorized".into())
             })?;
 
             let user_roles = fetch_user_roles(&db, &created_user.id.key().to_string(), None)
                 .await
                 .map_err(|e| {
-                    tracing::error!("Failed to fetch default roles: {}", e);
-                    StatusCode::UNAUTHORIZED
+                    tracing::error!("Failed to fetch Google user roles: {}", e);
+                    ApiError::Unauthorized("Unauthorized".into())
                 })?;
 
-            let auth_claim = AuthClaim {
-                roles: user_roles.to_vec(),
-            };
-
-            let token_str = sign_jwt(&auth_claim, token_expiry_duration, &user.sub)
-                .await
-                .map_err(|e| {
-                    tracing::error!("Failed to sign JWT: {}", e);
-                    StatusCode::UNAUTHORIZED
-                })?;
-
-            let jwt_cookie = CookieBuilder::new("oauth_user_roles_jwt", token_str.clone())
-                .path("/")
-                .build();
-
-            cookie.add(jwt_cookie);
-
-            Ok((AuthDetails {
-                url: None,
-                token: Some(token.to_owned()),
-            })
-            .into())
+            sign_jwt(
+                &AuthClaim {
+                    roles: user_roles.to_vec(),
+                },
+                token_expiry_duration,
+                &user.sub,
+            )
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to sign Google JWT: {}", e);
+                ApiError::Unauthorized("Unauthorized".into())
+            })?
         }
+
         OAuthClientName::Github => {
             let user =
                 verify_oauth_token::<GithubUserProfile>(OAuthClientName::Github, &token_header)
                     .await
                     .map_err(|e| {
                         tracing::error!("Failed to verify GitHub token: {}", e);
-                        StatusCode::UNAUTHORIZED
+                        ApiError::Unauthorized("Unauthorized".into())
                     })?;
 
             let created_user = create_oauth_user_if_not_exists::<Arc<Surreal<Client>>>(
@@ -228,133 +222,120 @@ pub async fn exchange_code_for_token(
             )
             .await
             .map_err(|e| {
-                tracing::error!("Failed to create user: {}", e);
-                StatusCode::UNAUTHORIZED
+                tracing::error!("Failed to create GitHub user: {}", e);
+                ApiError::Unauthorized("Unauthorized".into())
             })?;
 
             let user_roles = fetch_user_roles(&db, &created_user.id.key().to_string(), None)
                 .await
                 .map_err(|e| {
-                    tracing::error!("Failed to fetch user roles: {}", e);
-                    StatusCode::UNAUTHORIZED
+                    tracing::error!("Failed to fetch GitHub user roles: {}", e);
+                    ApiError::Unauthorized("Unauthorized".into())
                 })?;
 
-            let auth_claim = AuthClaim {
-                roles: user_roles.to_vec(),
-            };
-
-            let token_str = sign_jwt(&auth_claim, token_expiry_duration, &user.id.to_string())
-                .await
-                .map_err(|e| {
-                    tracing::error!("Failed to sign JWT: {}", e);
-                    StatusCode::UNAUTHORIZED
-                })?;
-
-            let jwt_cookie = CookieBuilder::new("oauth_user_roles_jwt", token_str.clone())
-                .path("/")
-                .build();
-
-            cookie.add(jwt_cookie);
-
-            Ok((AuthDetails {
-                url: None,
-                token: Some(token.to_owned()),
-            })
-            .into())
+            sign_jwt(
+                &AuthClaim {
+                    roles: user_roles.to_vec(),
+                },
+                token_expiry_duration,
+                &user.id.to_string(),
+            )
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to sign GitHub JWT: {}", e);
+                ApiError::Unauthorized("Unauthorized".into())
+            })?
         }
-    }
+    };
+
+    cookie.add(
+        CookieBuilder::new("oauth_user_roles_jwt", token_str)
+            .path("/")
+            .build(),
+    );
+
+    Ok(synthesize_rest_response(
+        &headers,
+        &AuthDetails {
+            url: None,
+            token: Some(token.to_owned()),
+        },
+        StatusCode::OK,
+    ))
 }
 
 pub async fn verify_email_handler(
     Extension(db): Extension<Arc<Surreal<Client>>>,
+    headers: HeaderMap,
     params: Query<EmailVerificationParams>,
-) -> impl IntoResponse {
-    if params.0.token.is_none() {
-        return (StatusCode::FORBIDDEN, "Forbidden").into_response();
-    }
+) -> Result<ApiResponseRest<()>, ApiError> {
+    let token = params.0.token.ok_or_else(|| {
+        tracing::error!("Token param is missing!");
+        ApiError::Forbidden("Forbidden".into())
+    })?;
 
-    let private_key_path = env::var("RSA_PRIVATE_KEY_PATH");
-
-    if let Err(e) = &private_key_path {
+    let private_key_path = env::var("RSA_PRIVATE_KEY_PATH").map_err(|e| {
         tracing::error!("Failed to get RSA_PRIVATE_KEY_PATH env var: {}", e);
+        ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
+    })?;
 
-        return (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response();
-    }
-
-    let private_key_file = fs::read_to_string(&private_key_path.unwrap()).await;
-
-    if let Err(e) = &private_key_file {
+    let private_key_file = fs::read_to_string(&private_key_path).await.map_err(|e| {
         tracing::error!("Failed to read private key file: {}", e);
-        return (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response();
-    };
+        ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
+    })?;
 
-    let private_key = RsaPrivateKey::from_pkcs8_pem(&private_key_file.unwrap());
-
-    if let Err(e) = &private_key {
+    let private_key = RsaPrivateKey::from_pkcs8_pem(&private_key_file).map_err(|e| {
         tracing::error!("Failed to parse private key: {}", e);
-        return (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response();
-    };
+        ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
+    })?;
 
-    let decoded_token = general_purpose::URL_SAFE_NO_PAD.decode(params.0.token.unwrap());
-
-    if let Err(e) = &decoded_token {
-        tracing::error!("Failed to decode token: {}", e);
-        return (StatusCode::BAD_REQUEST, "Bad Request").into_response();
-    };
+    let decoded_token = general_purpose::URL_SAFE_NO_PAD
+        .decode(&token)
+        .map_err(|e| {
+            tracing::error!("Failed to decode token: {}", e);
+            ApiError::BadRequest("Bad Request".into())
+        })?;
 
     let decrypted_token = private_key
-        .unwrap()
-        .decrypt(Pkcs1v15Encrypt, &decoded_token.unwrap());
+        .decrypt(Pkcs1v15Encrypt, &decoded_token)
+        .map_err(|e| {
+            tracing::error!("Failed to decrypt token: {}", e);
+            ApiError::BadRequest("Bad Request".into())
+        })?;
 
-    if let Err(e) = &decrypted_token {
-        tracing::error!("Failed to decrypt token: {}", e);
-        return (StatusCode::BAD_REQUEST, "Bad Request").into_response();
-    };
-
-    let signed_jwt = String::from_utf8(decrypted_token.unwrap());
-
-    if let Err(e) = &signed_jwt {
+    let signed_jwt = String::from_utf8(decrypted_token).map_err(|e| {
         tracing::error!("Failed to create signed JWT: {}", e);
-        return (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response();
-    };
+        ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
+    })?;
 
-    let claims_result = decode_token_string(&signed_jwt.unwrap()).await;
+    let claims = decode_token_string(&signed_jwt).await.map_err(|e| {
+        tracing::error!("Failed to decode token: {}", e);
+        ApiError::Unauthorized("Unauthorized".into())
+    })?;
 
-    match claims_result {
-        Ok(claims) => {
-            // Token verification successful
-            let user_id = claims
-                .subject
-                .as_ref()
-                .map(|t| t.to_string())
-                .unwrap_or("".to_string());
+    let user_id = claims
+        .subject
+        .as_ref()
+        .map(|t| t.to_string())
+        .unwrap_or_default();
 
-            let activate_user_account_query = db
-                .query(
-                    "
-                   BEGIN TRANSACTION;
-                   LET $user = type::thing('user', $user_id);
-                   IF !$user.exists() {
-                       THROW 'Invalid Input';
-                   };
-                   UPDATE $user SET status = 'Active';
-                   COMMIT TRANSACTION;
-                   ",
-                )
-                .bind(("user_id", user_id))
-                .await;
+    db.query(
+        "
+        BEGIN TRANSACTION;
+        LET $user = type::thing('user', $user_id);
+        IF !$user.exists() {
+            THROW 'Invalid Input';
+        };
+        UPDATE $user SET status = 'Active';
+        COMMIT TRANSACTION;
+        ",
+    )
+    .bind(("user_id", user_id))
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to activate user account: {}", e);
+        ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
+    })?;
 
-            if let Err(e) = activate_user_account_query {
-                tracing::error!("Failed to activate user account: {}", e);
-                return (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error")
-                    .into_response();
-            }
-
-            (StatusCode::OK, "Email Verified!").into_response()
-        }
-        Err(e) => {
-            tracing::error!("Failed to decode token: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response()
-        }
-    }
+    Ok(synthesize_rest_response(&headers, &(), StatusCode::OK))
 }

@@ -17,6 +17,7 @@ async-trait = { workspace = true }
 tonic-middleware = { workspace = true }
 rumqttc = { workspace = true }
 tokio = { workspace = true }
+anyhow = { workspace = true }
 
 [build-dependencies]
 tonic-build = { workspace = true }
