@@ -466,7 +466,7 @@ impl Mutation {
                         tracing::error!("Error signing in: {}", e);
                         Err(ExtendedError::new(
                             "Invalid credentials",
-                            StatusCode::UNAUTHORIZED.as_str(),
+                            StatusCode::BAD_REQUEST.as_str(),
                         )
                         .build())
                     }
