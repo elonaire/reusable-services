@@ -2,13 +2,17 @@ use axum::{
     extract::{Extension, Multipart, Path as AxumUrlParams, Query},
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use exif::{In, Tag};
+use hyper::HeaderMap;
 use image::{ImageFormat, ImageReader};
 use lib::{
     integration::foreign_key::add_foreign_key_if_not_exists,
-    utils::models::{AuthStatus, ForeignKey, UserId},
+    utils::{
+        api_responses::synthesize_rest_response,
+        custom_error::ApiError,
+        models::{ApiResponseRest, AuthStatus, ForeignKey, UserId},
+    },
 };
 use tokio::{
     fs::{remove_file, File},
@@ -33,16 +37,15 @@ pub struct ImageResizeParams {
 }
 
 pub async fn upload(
+    headers: HeaderMap,
     Extension(db): Extension<Arc<Surreal<Client>>>,
     Extension(auth_status): Extension<AuthStatus>,
     mut multipart: Multipart,
-) -> impl IntoResponse {
-    let upload_dir = env::var("FILE_UPLOADS_DIR");
-
-    if let Err(e) = upload_dir {
-        tracing::error!("Missing the FILE_UPLOADS_DIR environment variable.: {}", e);
-        return (StatusCode::INTERNAL_SERVER_ERROR, "Server Error").into_response();
-    }
+) -> Result<ApiResponseRest<Vec<UploadedFileResponse>>, ApiError> {
+    let upload_dir = env::var("FILE_UPLOADS_DIR").map_err(|e| {
+        tracing::error!("Missing FILE_UPLOADS_DIR environment variable: {}", e);
+        ApiError::Internal(e.into())
+    })?;
 
     let user_fk_body = ForeignKey {
         table: "user_id".into(),
@@ -50,97 +53,64 @@ pub async fn upload(
         foreign_key: auth_status.sub,
     };
 
-    let user_fk =
-        add_foreign_key_if_not_exists::<Arc<Surreal<Client>>, UserId>(&db, user_fk_body).await;
+    let user_fk = add_foreign_key_if_not_exists::<Arc<Surreal<Client>>, UserId>(&db, user_fk_body)
+        .await
+        .ok_or(ApiError::Unauthorized("Unauthorized".into()))?;
 
-    if user_fk.is_none() {
-        return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
-    }
+    let user_id_raw = user_fk.id.key().to_string();
 
-    let user_id_raw = user_fk.unwrap().id.key().to_string();
+    std::fs::create_dir_all(&upload_dir).map_err(|e| {
+        tracing::error!("Failed to create upload directory: {}", e);
+        ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
+    })?;
 
     let mut total_size: u64 = 0;
-    let mut filename;
-    let mut mime_type;
-    let upload_dir = upload_dir.unwrap();
-    let mut field_name;
-    let mut is_free;
-    let mut all_uploaded_files_response = Vec::new() as Vec<UploadedFileResponse>;
-
-    // Ensure the directory exists
-    if let Err(e) = std::fs::create_dir_all(&upload_dir) {
-        tracing::error!("Failed to create upload directory: {}", e);
-        return (StatusCode::INTERNAL_SERVER_ERROR, "Upload failed").into_response();
-    }
+    let mut all_uploaded_files_response: Vec<UploadedFileResponse> = Vec::new();
 
     while let Some(field) = multipart.next_field().await.unwrap_or_else(|_| None) {
         let system_filename = Uuid::new_v4();
-        let filepath = Path::new(&upload_dir).join(&system_filename.to_string());
+        let filepath = Path::new(&upload_dir).join(system_filename.to_string());
         let mut field = field;
 
-        // Extract field name and filename
-        filename = field
+        let filename = field
             .file_name()
-            .map(|name| name.to_string())
+            .map(|n| n.to_string())
             .unwrap_or_else(|| "unknown".to_string());
-        // Extract the MIME type
-        mime_type = field
+
+        let mime_type = field
             .content_type()
-            .map(|mime| mime.to_string())
+            .map(|m| m.to_string())
             .unwrap_or_else(|| "application/octet-stream".to_string());
 
-        field_name = field
+        let field_name = field
             .name()
-            .map(|name| name.to_string())
+            .map(|n| n.to_string())
             .unwrap_or_else(|| "unknown".to_string());
 
-        if field_name.contains("premium") {
-            is_free = false;
-        } else {
-            is_free = true;
-        };
+        let is_free = !field_name.contains("premium");
 
-        // Create and open the file for writing
-        let mut file = match File::create(&filepath).await {
-            Ok(file) => file,
-            Err(e) => {
-                tracing::error!("Failed to create file: {}", e);
-                return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file")
-                    .into_response();
-            }
-        };
+        let mut file = File::create(&filepath).await.map_err(|e| {
+            tracing::error!("Failed to create file: {}", e);
+            ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
+        })?;
 
-        // Read each chunk and write to the file
-        while let Some(chunk) = match field.chunk().await {
-            Ok(Some(chunk)) => Some(chunk),
-            Ok(None) => None,
-            Err(e) => {
-                tracing::error!("Failed to read chunk: {}", e);
-                let _ = remove_file(&filepath).await;
-                return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file")
-                    .into_response();
-            }
-        } {
+        while let Some(chunk) = field.chunk().await.map_err(|e| {
+            tracing::error!("Failed to read chunk: {}", e);
+            ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
+        })? {
             total_size += chunk.len() as u64;
-            if let Err(e) = file.write_all(&chunk).await {
+            file.write_all(&chunk).await.map_err(|e| {
                 tracing::error!("Failed to write chunk: {}", e);
-                // Clean up file on error
-                let _ = remove_file(&filepath).await;
-                return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file")
-                    .into_response();
-            }
+                ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
+            })?;
         }
 
-        // Ensure file is successfully flushed
-        if let Err(e) = file.flush().await {
+        file.flush().await.map_err(|e| {
             tracing::error!("Failed to flush file: {}", e);
-            // Clean up file on error
-            let _ = remove_file(&filepath).await;
-            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file").into_response();
-        }
+            ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
+        })?;
 
-        // Insert uploaded files into the database
-        let db_query_result = db
+        let stored_file: Option<UploadedFile> = db
             .query(
                 "
                 BEGIN TRANSACTION;
@@ -151,8 +121,8 @@ pub async fn upload(
                 };
 
                 LET $new_file = (CREATE file CONTENT {
-                   	owner: $user,
-                   	name: $name,
+                    owner: $user,
+                    name: $name,
                     size: $size,
                     mime_type: $mime_type,
                     system_filename: $system_filename,
@@ -167,43 +137,39 @@ pub async fn upload(
             .bind(("size", total_size))
             .bind(("mime_type", mime_type))
             .bind(("is_free", is_free))
-            .bind(("system_filename", format!("{}", system_filename)))
-            .await;
-
-        if let Err(e) = &db_query_result {
-            tracing::error!("Failed to insert file into database: {}", e);
-            let _ = remove_file(&filepath).await;
-
-            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file").into_response();
-        } else {
-            let stored_file = db_query_result.unwrap().take(0);
-
-            if let Err(e) = stored_file {
+            .bind(("system_filename", system_filename.to_string()))
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to insert file into database: {}", e);
+                let filepath = filepath.clone();
+                tokio::spawn(async move { remove_file(&filepath).await });
+                ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
+            })?
+            .take(0)
+            .map_err(|e| {
                 tracing::error!("Failed to retrieve file from database: {}", e);
-                let _ = remove_file(&filepath).await;
+                let filepath = filepath.clone();
+                tokio::spawn(async move { remove_file(&filepath).await });
+                ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
+            })?;
 
-                return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file")
-                    .into_response();
-            }
+        let stored_file = stored_file.ok_or_else(|| {
+            tracing::error!("Database returned no file after insert");
+            ApiError::Internal(anyhow::anyhow!("Failed to upload file"))
+        })?;
 
-            let stored_file: Option<UploadedFile> = stored_file.unwrap();
-
-            if stored_file.is_none() {
-                return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file")
-                    .into_response();
-            }
-
-            let stored_file = stored_file.unwrap();
-
-            all_uploaded_files_response.push(UploadedFileResponse {
-                field_name,
-                file_name: stored_file.system_filename,
-                file_id: stored_file.id.key().to_string(),
-            });
-        }
+        all_uploaded_files_response.push(UploadedFileResponse {
+            field_name,
+            file_name: stored_file.system_filename,
+            file_id: stored_file.id.key().to_string(),
+        });
     }
 
-    (StatusCode::CREATED, Json(all_uploaded_files_response)).into_response()
+    Ok(synthesize_rest_response(
+        &headers,
+        &all_uploaded_files_response,
+        StatusCode::CREATED,
+    ))
 }
 
 pub async fn download_file(

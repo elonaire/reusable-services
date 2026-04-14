@@ -58,6 +58,7 @@ uuid = { version = "1.20.0", features = [
     "macro-diagnostics",
 ] }
 base64 = "0.22.1"
+anyhow = "1.0.102"
 
 # Crypto / Auth
 bcrypt = "0.17.1"
