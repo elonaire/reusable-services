@@ -32,7 +32,7 @@ impl ExtendedError {
     // Build the async_graphql::Error with extensions
     pub fn build(self) -> Error {
         let mut extensions = BTreeMap::new();
-        extensions.insert("status".to_string(), Value::from(self.code));
+        extensions.insert("code".to_string(), Value::from(self.code));
 
         Error::new(self.message).extend_with(|_err, e| {
             for (key, value) in extensions {
