@@ -107,48 +107,48 @@ impl Mutation {
 
                 let signed_jwt = sign_jwt(&auth_claim, token_duration, &user_id).await;
 
-                let public_key_path = env::var("RSA_PUBLIC_KEY_PATH");
+                let public_key_path = match env::var("RSA_PUBLIC_KEY_PATH") {
+                    Ok(path) => path,
+                    Err(e) => {
+                        tracing::error!("Failed to get RSA_PUBLIC_KEY_PATH env var: {}", e);
+                        return Ok(api_response.into());
+                    }
+                };
 
-                if let Err(e) = &public_key_path {
-                    tracing::error!("Failed to get RSA_PUBLIC_KEY_PATH env var: {}", e);
+                let public_key_str = match fs::read_to_string(&public_key_path).await {
+                    Ok(key) => key,
+                    Err(e) => {
+                        tracing::error!("Failed to read public key: {}", e);
+                        return Ok(api_response.into());
+                    }
+                };
 
-                    return Ok(api_response.into());
-                }
+                let signed_jwt = match signed_jwt {
+                    Ok(jwt) => jwt,
+                    Err(e) => {
+                        tracing::error!("Failed to sign JWT: {}", e);
+                        return Ok(api_response.into());
+                    }
+                };
 
-                let public_key = fs::read_to_string(&public_key_path.unwrap()).await;
+                let public_key = match RsaPublicKey::from_public_key_pem(&public_key_str) {
+                    Ok(key) => key,
+                    Err(e) => {
+                        tracing::error!("Failed to parse public key: {}", e);
+                        return Ok(api_response.into());
+                    }
+                };
 
-                if let Err(e) = &signed_jwt {
-                    tracing::error!("Failed to sign JWT: {}", e);
+                let mut rng = rand::rngs::OsRng;
 
-                    return Ok(api_response.into());
-                }
-
-                if let Err(e) = &public_key {
-                    tracing::error!("Failed to read public key: {}", e);
-
-                    return Ok(api_response.into());
-                }
-
-                let mut rng = rand::rngs::OsRng; // rand@0.8
-                let public_key = RsaPublicKey::from_public_key_pem(&public_key.unwrap());
-
-                if let Err(e) = &public_key {
-                    tracing::error!("Failed to get public key: {}", e);
-
-                    return Ok(api_response.into());
-                }
-
-                let encrypted_token = public_key.unwrap().encrypt(
-                    &mut rng,
-                    Pkcs1v15Encrypt,
-                    &signed_jwt.unwrap().as_bytes(),
-                );
-
-                if let Err(e) = &encrypted_token {
-                    tracing::error!("Failed to encrypt token: {}", e);
-
-                    return Ok(api_response.into());
-                }
+                let encrypted_token =
+                    match public_key.encrypt(&mut rng, Pkcs1v15Encrypt, signed_jwt.as_bytes()) {
+                        Ok(token) => token,
+                        Err(e) => {
+                            tracing::error!("Failed to encrypt token: {}", e);
+                            return Ok(api_response.into());
+                        }
+                    };
 
                 let auth_service = env::var("OAUTH_SERVICE");
 
@@ -158,7 +158,7 @@ impl Mutation {
                     return Ok(api_response.into());
                 }
 
-                let encoded_token = BASE64_URL_SAFE_NO_PAD.encode(&encrypted_token.unwrap()[..]);
+                let encoded_token = BASE64_URL_SAFE_NO_PAD.encode(&encrypted_token[..]);
 
                 let verification_url = format!(
                     "{}/verify-email?token={}",
@@ -434,6 +434,63 @@ impl Mutation {
                             .build()
                         })?;
 
+                        let public_key_path = match env::var("RSA_PUBLIC_KEY_PATH") {
+                            Ok(path) => path,
+                            Err(e) => {
+                                tracing::error!("Failed to get RSA_PUBLIC_KEY_PATH env var: {}", e);
+                                return Err(ExtendedError::new(
+                                    "Internal Server Error",
+                                    StatusCode::INTERNAL_SERVER_ERROR.as_str(),
+                                )
+                                .build());
+                            }
+                        };
+
+                        let public_key_str = match fs::read_to_string(&public_key_path).await {
+                            Ok(key) => key,
+                            Err(e) => {
+                                tracing::error!("Failed to read public key: {}", e);
+                                return Err(ExtendedError::new(
+                                    "Internal Server Error",
+                                    StatusCode::INTERNAL_SERVER_ERROR.as_str(),
+                                )
+                                .build());
+                            }
+                        };
+
+                        let public_key = match RsaPublicKey::from_public_key_pem(&public_key_str) {
+                            Ok(key) => key,
+                            Err(e) => {
+                                tracing::error!("Failed to parse public key: {}", e);
+                                return Err(ExtendedError::new(
+                                    "Internal Server Error",
+                                    StatusCode::INTERNAL_SERVER_ERROR.as_str(),
+                                )
+                                .build());
+                            }
+                        };
+
+                        let mut rng = rand::rngs::OsRng;
+
+                        let encrypted_token = match public_key.encrypt(
+                            &mut rng,
+                            Pkcs1v15Encrypt,
+                            refresh_token_str.as_bytes(),
+                        ) {
+                            Ok(token) => token,
+                            Err(e) => {
+                                tracing::error!("Failed to encrypt token: {}", e);
+                                return Err(ExtendedError::new(
+                                    "Internal Server Error",
+                                    StatusCode::INTERNAL_SERVER_ERROR.as_str(),
+                                )
+                                .build());
+                            }
+                        };
+
+                        let encoded_encrypted_token =
+                            BASE64_URL_SAFE_NO_PAD.encode(&encrypted_token[..]);
+
                         ctx.insert_http_header(
                             SET_COOKIE,
                             format!("oauth_client=; SameSite=Lax; Secure; HttpOnly; Path=/"),
@@ -443,7 +500,7 @@ impl Mutation {
                             SET_COOKIE,
                             format!(
                                 "t={}; Max-Age={}; SameSite=Lax; Secure; HttpOnly; Path=/",
-                                refresh_token_str,
+                                encoded_encrypted_token,
                                 refresh_token_expiry_duration.as_secs(),
                             ),
                         );

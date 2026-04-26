@@ -12,8 +12,10 @@ use std::{
     collections::HashMap,
     io::{Error, ErrorKind},
 };
+use tokio::fs;
 
 use async_graphql::{Context, Enum};
+use base64::{engine::general_purpose, Engine as _engine};
 use hyper::{
     header::{COOKIE, SET_COOKIE},
     HeaderMap, Method,
@@ -23,6 +25,7 @@ use oauth2::{
     EndpointNotSet, EndpointSet,
 };
 use reqwest::{header::HeaderMap as ReqWestHeaderMap, Client as ReqWestClient};
+use rsa::{pkcs8::DecodePrivateKey, Pkcs1v15Encrypt, RsaPrivateKey};
 
 use oauth2::{
     AuthUrl, Client, ClientId, ClientSecret, CsrfToken, EmptyExtraTokenFields, PkceCodeChallenge,
@@ -591,8 +594,42 @@ where
     let converted_jwt_secret_key = get_converted_jwt_secret_key().await?;
     match cookies.get("t") {
         Some(refresh_token) => {
+            let private_key_path = env::var("RSA_PRIVATE_KEY_PATH").map_err(|e| {
+                tracing::error!("Failed to get RSA_PRIVATE_KEY_PATH env var: {}", e);
+                Error::new(ErrorKind::Other, "Unauthorized!")
+            })?;
+
+            let private_key_file = fs::read_to_string(&private_key_path).await.map_err(|e| {
+                tracing::error!("Failed to read private key file: {}", e);
+                Error::new(ErrorKind::Other, "Unauthorized!")
+            })?;
+
+            let private_key = RsaPrivateKey::from_pkcs8_pem(&private_key_file).map_err(|e| {
+                tracing::error!("Failed to parse private key: {}", e);
+                Error::new(ErrorKind::Other, "Unauthorized!")
+            })?;
+
+            let decoded_token = general_purpose::URL_SAFE_NO_PAD
+                .decode(refresh_token)
+                .map_err(|e| {
+                    tracing::error!("Failed to decode token: {}", e);
+                    Error::new(ErrorKind::Other, "Unauthorized!")
+                })?;
+
+            let decrypted_token = private_key
+                .decrypt(Pkcs1v15Encrypt, &decoded_token)
+                .map_err(|e| {
+                    tracing::error!("Failed to decrypt token: {}", e);
+                    Error::new(ErrorKind::Other, "Unauthorized!")
+                })?;
+
+            let signed_refresh_token = String::from_utf8(decrypted_token).map_err(|e| {
+                tracing::error!("Failed to create signed JWT: {}", e);
+                Error::new(ErrorKind::Other, "Unauthorized!")
+            })?;
+
             let refresh_claims =
-                converted_jwt_secret_key.verify_token::<AuthClaim>(&refresh_token, None);
+                converted_jwt_secret_key.verify_token::<AuthClaim>(&signed_refresh_token, None);
 
             match refresh_claims {
                 Ok(refresh_claims) => {
