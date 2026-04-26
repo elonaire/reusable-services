@@ -493,13 +493,13 @@ impl Mutation {
 
                         ctx.insert_http_header(
                             SET_COOKIE,
-                            format!("oauth_client=; SameSite=Lax; Secure; HttpOnly; Path=/"),
+                            format!("oauth_client=; SameSite=Strict; Secure; HttpOnly; Path=/"),
                         );
 
                         ctx.append_http_header(
                             SET_COOKIE,
                             format!(
-                                "t={}; Max-Age={}; SameSite=Lax; Secure; HttpOnly; Path=/",
+                                "t={}; Max-Age={}; SameSite=Strict; Secure; HttpOnly; Path=/",
                                 encoded_encrypted_token,
                                 refresh_token_expiry_duration.as_secs(),
                             ),
@@ -1067,7 +1067,7 @@ impl Mutation {
                                     ctx.append_http_header(
                                         SET_COOKIE,
                                         format!(
-                                            "t={}; Max-Age={}; SameSite=Lax; Secure; HttpOnly; Path=/",
+                                            "t={}; Max-Age={}; SameSite=Strict; Secure; HttpOnly; Path=/",
                                             refresh_token_str,
                                             refresh_token_expiry_duration.as_secs(),
                                         ),
@@ -1096,7 +1096,7 @@ impl Mutation {
                                     ctx.append_http_header(
                                         SET_COOKIE,
                                         format!(
-                                            "oauth_user_roles_jwt={}; Max-Age={}; SameSite=Lax; Secure; HttpOnly; Path=/",
+                                            "oauth_user_roles_jwt={}; Max-Age={}; SameSite=Strict; Secure; HttpOnly; Path=/",
                                             refresh_token_str,
                                             refresh_token_expiry_duration.as_secs(),
                                         ),
