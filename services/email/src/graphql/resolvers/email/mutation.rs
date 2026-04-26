@@ -80,7 +80,6 @@ impl EmailMutation {
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["write:mailing_list".into()],
-            privilege: AdminPrivilege::Admin,
         };
 
         let authorized =

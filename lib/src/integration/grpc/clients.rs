@@ -19,13 +19,30 @@ pub mod payments_service {
     include!("out/payments.rs");
 }
 
-impl From<payments_service::UserPaymentDetails> for utils::models::UserPaymentDetails {
-    fn from(user: payments_service::UserPaymentDetails) -> Self {
+impl TryFrom<payments_service::UserPaymentDetails> for utils::models::UserPaymentDetails {
+    type Error = anyhow::Error; // or your own error type
+
+    fn try_from(
+        payment_details: payments_service::UserPaymentDetails,
+    ) -> Result<Self, Self::Error> {
+        Ok(Self {
+            email: payment_details.email,
+            amount: payment_details.amount,
+            reference: payment_details.reference,
+            currency: payment_details.currency,
+            metadata: payment_details
+                .metadata
+                .ok_or_else(|| anyhow::anyhow!("metadata is required for payment processing"))?
+                .into(),
+        })
+    }
+}
+
+/// For easy conversion to protobuf
+impl From<payments_service::PaymentDetailsMetadata> for utils::models::PaymentDetailsMetadata {
+    fn from(metadata: payments_service::PaymentDetailsMetadata) -> Self {
         Self {
-            email: user.email,
-            amount: user.amount,
-            reference: user.reference,
-            currency: user.currency,
+            resource: metadata.resource,
         }
     }
 }
@@ -73,11 +90,6 @@ impl From<acl_service::AuthorizationConstraint> for utils::models::Authorization
     fn from(authorization_constraint: acl_service::AuthorizationConstraint) -> Self {
         Self {
             permissions: authorization_constraint.permissions,
-            privilege: authorization_constraint
-                .privilege
-                .unwrap()
-                .try_into()
-                .unwrap(),
         }
     }
 }
@@ -87,7 +99,6 @@ impl From<utils::models::AuthorizationConstraint> for acl_service::Authorization
     fn from(authorization_constraint: utils::models::AuthorizationConstraint) -> Self {
         Self {
             permissions: authorization_constraint.permissions,
-            privilege: Some(authorization_constraint.privilege.try_into().unwrap()),
         }
     }
 }
@@ -96,27 +107,26 @@ impl From<utils::models::AuthorizationConstraint> for acl_service::Authorization
 impl From<email_service::EmailUser> for utils::models::EmailUser {
     fn from(user: email_service::EmailUser) -> Self {
         Self {
-            full_name: Some(user.full_name), // Ensuring `Option<String>`
+            full_name: user.full_name,
             email_address: user.email_address,
         }
     }
 }
 
 /// For easy conversion to protobuf
-impl From<email_service::SendEmailRequest> for utils::models::Email {
-    fn from(email: email_service::SendEmailRequest) -> Self {
-        Self {
-            recipient: email.recipient.map_or_else(
-                || utils::models::EmailUser {
-                    full_name: None,
-                    email_address: String::new(),
-                },
-                |user| user.into(), // Convert only if Some(user)
-            ),
+impl TryFrom<email_service::SendEmailRequest> for utils::models::Email {
+    type Error = anyhow::Error;
+
+    fn try_from(email: email_service::SendEmailRequest) -> Result<Self, Self::Error> {
+        Ok(Self {
+            recipient: email
+                .recipient
+                .ok_or_else(|| anyhow::anyhow!("recipient is required for sending email"))?
+                .into(),
             subject: email.subject,
             title: email.title,
             body: email.body,
-        }
+        })
     }
 }
 

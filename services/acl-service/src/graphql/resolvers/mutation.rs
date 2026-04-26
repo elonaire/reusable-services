@@ -2,7 +2,7 @@ use std::{env, sync::Arc};
 
 use async_graphql::{Context, Object, Result};
 use axum::Extension;
-use base64::{engine::general_purpose, Engine as _engine};
+use base64::{prelude::BASE64_URL_SAFE_NO_PAD, Engine as _engine};
 use hyper::{
     header::{COOKIE, SET_COOKIE},
     HeaderMap, StatusCode,
@@ -15,6 +15,7 @@ use lib::utils::{
     custom_error::ExtendedError,
     models::{AdminPrivilege, ApiResponse, AuthorizationConstraint, EmailMQTTPayload},
 };
+use rand::{rngs::OsRng, RngCore};
 use rsa::{pkcs8::DecodePublicKey, Pkcs1v15Encrypt, RsaPublicKey};
 use rumqttc::v5::mqttbytes::QoS;
 use surrealdb::{engine::remote::ws::Client, RecordId, Surreal};
@@ -28,7 +29,10 @@ use crate::{
             ResourceMetadata, RoleInput, RoleMetadata, SystemRole,
         },
         shared::GraphQLApiResponse,
-        user::{AuthDetails, User, UserInput, UserLogins, UserUpdate},
+        user::{
+            ApiKey, ApiKeyInput, ApiKeyInputMetadata, AuthDetails, User, UserInput, UserLogins,
+            UserUpdate,
+        },
     },
     utils::{
         auth::{
@@ -154,8 +158,7 @@ impl Mutation {
                     return Ok(api_response.into());
                 }
 
-                let encoded_token =
-                    general_purpose::URL_SAFE_NO_PAD.encode(&encrypted_token.unwrap()[..]);
+                let encoded_token = BASE64_URL_SAFE_NO_PAD.encode(&encrypted_token.unwrap()[..]);
 
                 let verification_url = format!(
                     "{}/verify-email?token={}",
@@ -243,7 +246,6 @@ impl Mutation {
         // Evaluate admin permissions here to restrict the Admin from giving Superadmin privileges. Constraint is already effected in the database.
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["write:role".into()],
-            privilege: AdminPrivilege::Admin,
         };
 
         let authorized =
@@ -507,7 +509,6 @@ impl Mutation {
         // Evaluate admin permissions here to restrict the Admin from giving Superadmin privileges. Constraint is already effected in the database.
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["write:user".into()],
-            privilege: AdminPrivilege::None,
         };
 
         let authorized =
@@ -585,7 +586,6 @@ impl Mutation {
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["assign:role".into()],
-            privilege: AdminPrivilege::Admin,
         };
 
         let authorized =
@@ -673,7 +673,6 @@ impl Mutation {
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["revoke:role".into()],
-            privilege: AdminPrivilege::Admin,
         };
 
         let authorized =
@@ -755,7 +754,6 @@ impl Mutation {
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["write:organization".into()],
-            privilege: AdminPrivilege::Admin,
         };
 
         let authenticated_ref = &authenticated;
@@ -837,7 +835,6 @@ impl Mutation {
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["write:department".into()],
-            privilege: AdminPrivilege::Admin,
         };
 
         let authenticated_ref = &authenticated;
@@ -1104,7 +1101,6 @@ impl Mutation {
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["write:permission".into()],
-            privilege: AdminPrivilege::SuperAdmin,
         };
 
         let authenticated_ref = &authenticated;
@@ -1203,7 +1199,6 @@ impl Mutation {
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["grant:permission".into()],
-            privilege: AdminPrivilege::Admin,
         };
 
         let authenticated_ref = &authenticated;
@@ -1316,7 +1311,6 @@ impl Mutation {
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["revoke:permission".into()],
-            privilege: AdminPrivilege::Admin,
         };
 
         let authenticated_ref = &authenticated;
@@ -1429,7 +1423,6 @@ impl Mutation {
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["write:resource".into()],
-            privilege: AdminPrivilege::SuperAdmin,
         };
 
         let authenticated_ref = &authenticated;
@@ -1508,6 +1501,108 @@ impl Mutation {
             }
             None => Err(ExtendedError::new(
                 "Failed to create resource",
+                StatusCode::BAD_REQUEST.as_str(),
+            )
+            .build()),
+        }
+    }
+
+    /// Create a new service account
+    async fn create_api_key(
+        &self,
+        ctx: &Context<'_>,
+        mut api_key_input: ApiKeyInput,
+        api_key_input_metadata: Option<ApiKeyInputMetadata>,
+    ) -> Result<GraphQLApiResponse<String>> {
+        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
+            tracing::error!("Error extracting Surreal Client: {:?}", e);
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
+        })?;
+
+        let authenticated = confirm_authentication(db, ctx).await?;
+
+        let authorization_constraint = AuthorizationConstraint {
+            permissions: vec!["write:api_key".into()],
+        };
+
+        let authenticated_ref = &authenticated;
+        let authorization_constraint_ref = &authorization_constraint;
+
+        let authorized =
+            confirm_authorization(db, authenticated_ref, authorization_constraint_ref).await?;
+
+        if !authorized {
+            return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
+        }
+
+        let mut secret_bytes = [0u8; 32]; // 256-bit
+        OsRng.fill_bytes(&mut secret_bytes);
+
+        let secret = BASE64_URL_SAFE_NO_PAD.encode(secret_bytes);
+        let secret_ref = &secret;
+
+        let mut prefix_bytes = [0u8; 6]; // 48 bits
+        OsRng.fill_bytes(&mut prefix_bytes);
+
+        let prefix = format!("svc_{}", BASE64_URL_SAFE_NO_PAD.encode(prefix_bytes));
+        let hashed_secret = bcrypt::hash(secret_ref, bcrypt::DEFAULT_COST).map_err(|e| {
+            tracing::error!("Bcrypt Error: {}", e);
+            ExtendedError::new("Failed to sign up", StatusCode::BAD_REQUEST.as_str()).build()
+        })?;
+        let aggregated_api_key = format!("{prefix}.{secret_ref}");
+
+        api_key_input.owner = Some(RecordId::from_table_key("user", &authenticated_ref.sub));
+        api_key_input.key_prefix = prefix;
+        api_key_input.secret_hash = hashed_secret;
+        tracing::debug!("api_key_input: {:?}", api_key_input);
+        tracing::debug!("api_key_input_metadata: {:?}", api_key_input_metadata);
+        tracing::debug!("user_id: {:?}", authenticated_ref.sub);
+        tracing::debug!("current_role_name: {:?}", authenticated_ref.current_role);
+
+        let mut query_result = db
+            .query(
+                "
+                BEGIN TRANSACTION;
+                LET $api_key = (CREATE api_key CONTENT $api_key_input RETURN AFTER);
+                LET $api_key_id = (SELECT VALUE id FROM $api_key);
+                LET $user = type::thing('user', $user_id);
+                LET $role_id = type::thing('role', $api_key_input_metadata.role_id);
+                LET $role = (SELECT (->assigned->(role WHERE id = $role_id OR role_name = $current_role_name)) AS role FROM ONLY $user LIMIT 1)['role'][0];
+                RELATE $api_key_id -> assigned -> $role;
+                RETURN (SELECT * FROM $api_key FETCH owner);
+                COMMIT TRANSACTION;
+                ",
+            )
+            .bind(("api_key_input", api_key_input))
+            .bind(("api_key_input_metadata", api_key_input_metadata))
+            .bind(("user_id", authenticated_ref.sub.clone()))
+            .bind(("current_role_name", authenticated_ref.current_role.clone()))
+            .await
+            .map_err(|e| {
+                tracing::error!("Error creating api_key: {}", e);
+                ExtendedError::new("Failed to create api_key", StatusCode::BAD_REQUEST.as_str())
+                    .build()
+            })?;
+
+        let query_response: Option<ApiKey> = query_result.take(0).map_err(|e| {
+            tracing::error!("Failed to create api_key: {}", e);
+            ExtendedError::new("Failed to create api_key", StatusCode::BAD_REQUEST.as_str()).build()
+        })?;
+
+        match query_response {
+            Some(_api_key) => {
+                let api_response =
+                    synthesize_graphql_response(ctx, &aggregated_api_key, Some(authenticated_ref))
+                        .ok_or_else(|| {
+                            tracing::error!("Failed to synthesize response!");
+                            ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str())
+                                .build()
+                        })?;
+
+                Ok(api_response.into())
+            }
+            None => Err(ExtendedError::new(
+                "Failed to create permission",
                 StatusCode::BAD_REQUEST.as_str(),
             )
             .build()),

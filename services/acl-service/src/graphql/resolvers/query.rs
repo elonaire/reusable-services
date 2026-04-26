@@ -9,7 +9,7 @@ use hyper::{
 use lib::utils::{
     api_responses::synthesize_graphql_response,
     custom_error::ExtendedError,
-    models::{AdminPrivilege, ApiResponse, AuthStatus, AuthorizationConstraint},
+    models::{ApiResponse, AuthStatus, AuthorizationConstraint},
 };
 use surrealdb::{engine::remote::ws::Client, Surreal};
 
@@ -43,7 +43,6 @@ impl Query {
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["read:user".into()],
-            privilege: AdminPrivilege::Admin,
         };
 
         let authorized =
@@ -196,7 +195,6 @@ impl Query {
 
                 let authorization_constraint = AuthorizationConstraint {
                     permissions: vec!["read:user".into()],
-                    privilege: AdminPrivilege::Admin,
                 };
 
                 let authorized =
@@ -374,7 +372,6 @@ impl Query {
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["read:role".into()],
-            privilege: AdminPrivilege::Admin,
         };
 
         let authorized =
@@ -540,7 +537,6 @@ impl Query {
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["read:organization".into()],
-            privilege: AdminPrivilege::Admin,
         };
 
         let authorized =
@@ -608,7 +604,6 @@ impl Query {
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["read:department".into()],
-            privilege: AdminPrivilege::Admin,
         };
 
         let authorized =
@@ -678,7 +673,6 @@ impl Query {
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["read:resource".into()],
-            privilege: AdminPrivilege::SuperAdmin,
         };
 
         let authorized =

@@ -124,15 +124,15 @@ DEFINE FIELD created_at ON TABLE permission TYPE datetime
 DEFINE FIELD updated_at ON TABLE permission TYPE datetime
     VALUE time::now();
 
--- Relationship between permissions and roles
-DEFINE TABLE granted SCHEMAFULL TYPE RELATION IN role OUT permission;
+-- Relationship between permission and role
+DEFINE TABLE OVERWRITE granted SCHEMAFULL TYPE RELATION IN role OUT permission;
 DEFINE INDEX rolePermissionIndex ON TABLE granted COLUMNS in, out UNIQUE;
 DEFINE FIELD created_at ON TABLE granted TYPE datetime
     DEFAULT time::now() READONLY;
 
 
--- Relationship between user and roles
-DEFINE TABLE assigned SCHEMAFULL TYPE RELATION IN user OUT role;
+-- Relationship between user and role
+DEFINE TABLE OVERWRITE assigned SCHEMAFULL TYPE RELATION IN user | api_key OUT role;
 DEFINE FIELD is_default ON TABLE assigned TYPE bool DEFAULT false;
 DEFINE EVENT enforce_one_default_assigned_role ON TABLE assigned WHEN $event = 'CREATE' OR $event = 'UPDATE' THEN {
     IF $after.is_default {
@@ -197,6 +197,28 @@ DEFINE FIELD created_at ON TABLE is_under TYPE datetime
   DEFAULT time::now() READONLY;
 
 
+-- A schema-full api_key table
+DEFINE TABLE OVERWRITE api_key SCHEMAFULL TYPE NORMAL;
+-- relationship
+DEFINE FIELD owner ON TABLE api_key TYPE record<user>;
+-- lookup (public part)
+DEFINE FIELD key_prefix ON TABLE api_key TYPE string;
+DEFINE INDEX apiKeyPrefixIndex ON TABLE api_key FIELDS key_prefix UNIQUE;
+-- secret (hashed)
+DEFINE FIELD secret_hash ON TABLE api_key TYPE string;
+-- human-friendly label
+DEFINE FIELD name ON TABLE api_key TYPE string;
+DEFINE FIELD status ON TABLE api_key TYPE string
+    DEFAULT 'Active'
+    -- Allow only these values in the array
+    ASSERT $value INSIDE ['Active', 'Revoked'];
+-- observability
+DEFINE FIELD OVERWRITE last_used_at ON TABLE api_key VALUE IF $value IS NOT NONE { <datetime>$value } ELSE { NONE };
+DEFINE FIELD last_used_ip ON TABLE api_key TYPE option<string>;
+DEFINE FIELD created_at ON TABLE api_key TYPE datetime
+    DEFAULT time::now() READONLY;
+
+
 -- Function to check if user has a role, if not, assign a default role using edge relationship
 DEFINE FUNCTION fn::assign_default_role($user_id: record) {
   LET $results = (SELECT ->assigned AS roles FROM ONLY $user_id);
@@ -216,3 +238,4 @@ DEFINE FUNCTION fn::assign_default_role($user_id: record) {
 -- UPDATE role SET is_admin = false, is_super_admin = false WHERE is_admin IS NONE OR is_super_admin IS NONE;
 -- UPDATE organization SET created_by = user:8beo2dgkz7yoy26d04rt WHERE created_by IS NONE;
 -- UPDATE department SET created_by = user:8beo2dgkz7yoy26d04rt WHERE created_by IS NONE;
+REMOVE TABLE service_account;

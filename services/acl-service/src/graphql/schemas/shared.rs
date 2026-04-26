@@ -3,7 +3,7 @@ use lib::utils::models::{ApiResponse, AuthStatus};
 
 use crate::graphql::schemas::{
     role::{Department, Organization, Permission, Resource, SystemRole},
-    user::{AuthDetails, User},
+    user::{ApiKey, AuthDetails, User},
 };
 
 type Users = Vec<User>;
@@ -29,6 +29,8 @@ type Resources = Vec<Resource>;
 #[graphql(concrete(name = "OrganizationsResponse", params(Organizations)))]
 #[graphql(concrete(name = "BoolResponse", params(bool)))]
 #[graphql(concrete(name = "AuthStatusResponse", params(AuthStatus)))]
+#[graphql(concrete(name = "StringResponse", params(String)))]
+#[graphql(concrete(name = "ApiKeyResponse", params(ApiKey)))]
 pub struct GraphQLApiResponse<T: OutputType> {
     pub data: T,
     pub metadata: GraphQLApiResponseMetadata,

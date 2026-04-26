@@ -123,33 +123,9 @@ pub enum AdminPrivilege {
     None,
 }
 
-impl TryFrom<i32> for AdminPrivilege {
-    type Error = &'static str;
-
-    fn try_from(value: i32) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(AdminPrivilege::Admin),
-            1 => Ok(AdminPrivilege::SuperAdmin),
-            2 => Ok(AdminPrivilege::None),
-            _ => Err("Invalid privilege"),
-        }
-    }
-}
-
-impl From<AdminPrivilege> for i32 {
-    fn from(status: AdminPrivilege) -> Self {
-        match status {
-            AdminPrivilege::Admin => 0,
-            AdminPrivilege::SuperAdmin => 1,
-            AdminPrivilege::None => 2,
-        }
-    }
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AuthorizationConstraint {
     pub permissions: Vec<String>,
-    pub privilege: AdminPrivilege,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
@@ -167,14 +143,24 @@ pub struct InitializePaymentResponseData {
     pub reference: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject, Default)]
 #[graphql(input_name = "UserPaymentDetailsInput")]
+/// `reference` - a unique reference for the payment transaction
+///
+/// `metadata` -  In the context of this schema, the `resource` field is used to identify the resource that is being paid for. The webhook handler uses this to publish a relevant MQTT message to a topic e.g. `{resource}/payment/successful`.
 pub struct UserPaymentDetails {
     pub email: String,
     pub amount: String,
     pub currency: String,
+    /// This is a unique reference for the payment transaction. It could be the order ID, invoice number, or any other unique identifier for the resource being paid for.
     pub reference: String,
-    // pub metadata: Option<PaymentDetailsMetaData>,
+    /// This is very essential to the payment integration process. The `resource` field is used to identify the resource that is being paid for. The webhook handler uses this to publish a relevant MQTT message to a topic e.g. `{resource}/payment/successful`.
+    pub metadata: PaymentDetailsMetadata,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject, Default)]
+pub struct PaymentDetailsMetadata {
+    pub resource: String,
 }
 
 #[derive(Clone, Default)]

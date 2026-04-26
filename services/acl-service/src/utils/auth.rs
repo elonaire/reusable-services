@@ -1,4 +1,5 @@
 use axum::http::HeaderValue;
+use chrono::Utc;
 use jwt_simple::prelude::*;
 use lib::utils::custom_traits::AuthMetadataContext;
 use lib::utils::models::{AdminPrivilege, AuthorizationConstraint, MetadataView};
@@ -33,7 +34,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::graphql::schemas::role::SystemRole;
 use crate::graphql::schemas::user::{
-    AccountStatus, GithubUserProfile, OAuthTokenPair, User, UserInput, UserLogins,
+    AccountStatus, ApiKey, GithubUserProfile, OAuthTokenPair, User, UserInput, UserLogins,
 };
 use crate::graphql::schemas::user::{GoogleUserInfo, OAuthUser};
 use crate::utils::user::create_user;
@@ -346,7 +347,10 @@ where
 
     // Normal auth flow
     if oauth_client.is_empty() {
-        return handle_normal_auth(token, &cookies, db, ctx).await;
+        return match cookies.get("t") {
+            Some(_auth_cookie) => handle_normal_auth(token, &cookies, db, ctx).await,
+            None => handle_api_key_auth(token, db).await,
+        };
     }
 
     // OAuth flow
@@ -464,6 +468,119 @@ where
                 }
             }
         }
+    }
+}
+
+async fn handle_api_key_auth<T>(token: &HeaderValue, db: &T) -> Result<AuthStatus, Error>
+where
+    T: Clone + AsSurrealClient,
+{
+    let token_str = token
+        .to_str()
+        .map_err(|e| {
+            tracing::error!("Failed to convert header to str: {}", e);
+            Error::new(ErrorKind::InvalidData, "Unauthorized!")
+        })?
+        .strip_prefix("Bearer ")
+        .map(|s| s.to_owned());
+
+    match token_str {
+        Some(valid_token) => {
+            let Some((key_prefix, secret)) = valid_token.split_once('.') else {
+                return Err(Error::new(ErrorKind::InvalidData, "Unauthorized!"));
+            };
+
+            let key_prefix = key_prefix.to_owned();
+            let secret = secret.to_owned();
+
+            let query = r#"
+                SELECT * FROM ONLY api_key WHERE key_prefix = $key_prefix AND status = 'Active' LIMIT 1 FETCH owner
+            "#;
+            let query_two = r#"
+                (SELECT (->assigned->role.role_name) AS current_role FROM ONLY api_key WHERE key_prefix = $key_prefix AND status = 'Active' LIMIT 1)['current_role'][0]
+            "#;
+            let query_three = r#"
+                (SELECT (->assigned->role->granted->permission.name) AS current_permissions FROM ONLY api_key WHERE key_prefix = $key_prefix AND status = 'Active' LIMIT 1)['current_permissions']
+            "#;
+
+            let mut query_result = db
+                .as_client()
+                .query(query)
+                .query(query_two)
+                .query(query_three)
+                .bind(("key_prefix", key_prefix.clone()))
+                .await
+                .map_err(|e| {
+                    tracing::error!("{}", e);
+                    Error::new(ErrorKind::Other, "Database query failed")
+                })?;
+
+            // Get the first result from the first query
+            let response: Option<ApiKey> = query_result.take(0).map_err(|e| {
+                tracing::error!("Database query deserialization failed: {}", e);
+                Error::new(ErrorKind::Other, "Database query deserialization failed")
+            })?;
+
+            match response {
+                Some(api_key) => {
+                    if !bcrypt::verify(&secret, &api_key.secret_hash).map_err(|e| {
+                        tracing::error!("Failed to verify user credentials: {}", e);
+                        Error::new(ErrorKind::PermissionDenied, "Invalid API Key")
+                    })? {
+                        return Err(Error::new(ErrorKind::PermissionDenied, "Forbidden!"));
+                    }
+
+                    let current_role_response: Option<String> =
+                        query_result.take(1).map_err(|e| {
+                            tracing::error!("Database query deserialization failed: {}", e);
+                            Error::new(ErrorKind::Other, "Database query deserialization failed")
+                        })?;
+
+                    let current_permissions_response: Vec<String> =
+                        query_result.take(2).map_err(|e| {
+                            tracing::error!("Database query deserialization failed: {}", e);
+                            Error::new(ErrorKind::Other, "Database query deserialization failed")
+                        })?;
+
+                    let Some(current_role) = current_role_response else {
+                        return Err(Error::new(ErrorKind::PermissionDenied, "Forbidden!"));
+                    };
+
+                    let now_utc = Utc::now().to_rfc3339();
+
+                    let query = r#"
+                        UPDATE api_key SET last_used_at = $now_utc WHERE key_prefix = $key_prefix AND status = 'Active' RETURN NONE
+                    "#;
+
+                    let mut query_result = db
+                        .as_client()
+                        .query(query)
+                        .bind(("key_prefix", key_prefix))
+                        .bind(("now_utc", now_utc))
+                        .await
+                        .map_err(|e| {
+                            tracing::error!("{}", e);
+                            Error::new(ErrorKind::Other, "Database query failed")
+                        })?;
+
+                    // Get the first result from the first query
+                    let response: Option<ApiKey> = query_result.take(0).map_err(|e| {
+                        tracing::error!("Database query deserialization failed: {}", e);
+                        Error::new(ErrorKind::Other, "Database query deserialization failed")
+                    })?;
+
+                    Ok(AuthStatus {
+                        is_auth: true,
+                        sub: api_key.owner.id.key().to_string(),
+                        current_role,
+                        new_access_token: None,
+                        current_role_permissions: current_permissions_response,
+                    })
+                }
+                None => Err(Error::new(ErrorKind::InvalidData, "Unauthorized!")),
+            }
+        }
+        None => Err(Error::new(ErrorKind::InvalidData, "Unauthorized!")),
     }
 }
 
@@ -680,65 +797,26 @@ pub async fn confirm_authorization<T: Clone + AsSurrealClient>(
     auth_status: &AuthStatus,
     auth_constraint: &AuthorizationConstraint,
 ) -> Result<bool, Error> {
-    let formated_query =  match &auth_constraint.privilege {
-        AdminPrivilege::Admin => format!(
-            "
-            BEGIN TRANSACTION;
-            LET $user = type::thing('user', $user_id);
-            IF !$user.exists() {{
-          		THROW 'Invalid Input';
-           	}};
+    let formated_query = r#"
+        BEGIN TRANSACTION;
+        LET $user = type::thing('user', $user_id);
+        IF !$user.exists() {
+      		THROW 'Invalid Input';
+       	};
 
-            LET $matching_roles = (SELECT ->assigned->(role WHERE (role_name = $current_role_name AND (is_admin OR is_super_admin) AND ->granted->(permission WHERE is_admin OR is_super_admin).name CONTAINSALL $permission_constraints)) AS admin_roles FROM ONLY $user)['admin_roles'];
-            IF $matching_roles != NONE AND array::len($matching_roles) > 0 {{
-          		RETURN $matching_roles.map(|$matching_role: any| record::id($matching_role));
-           	}} ELSE {{
-          		RETURN [];
-           	}};
+        LET $matching_roles = (SELECT ->assigned->(role WHERE (role_name = $current_role_name AND ->granted->permission.name CONTAINSALL $permission_constraints)) AS matching_roles FROM ONLY $user)['matching_roles'];
+        IF $matching_roles != NONE AND array::len($matching_roles) > 0 {
+      		RETURN $matching_roles.map(|$matching_role: any| record::id($matching_role));
+       	} ELSE {
+      		RETURN [];
+       	};
 
-            COMMIT TRANSACTION;
-            "
-        ),
-        AdminPrivilege::SuperAdmin => format!(
-            "
-            BEGIN TRANSACTION;
-            LET $user = type::thing('user', $user_id);
-            IF !$user.exists() {{
-          		THROW 'Invalid Input';
-           	}};
-            LET $matching_roles = (SELECT ->assigned->(role WHERE role_name = $current_role_name AND is_super_admin AND ->granted->(permission WHERE is_super_admin OR is_admin).name CONTAINSALL $permission_constraints) AS super_admin_roles FROM ONLY $user)['super_admin_roles'];
-            IF $matching_roles != NONE AND array::len($matching_roles) > 0 {{
-          		RETURN $matching_roles.map(|$matching_role: any| record::id($matching_role));
-           	}} ELSE {{
-          		RETURN [];
-           	}};
-
-            COMMIT TRANSACTION;
-            "
-        ),
-        AdminPrivilege::None => format!(
-            "
-            BEGIN TRANSACTION;
-            LET $user = type::thing('user', $user_id);
-            IF !$user.exists() {{
-          		THROW 'Invalid Input';
-           	}};
-
-            LET $matching_roles = (SELECT ->assigned->(role WHERE role_name = $current_role_name AND ->granted->permission.name CONTAINSALL $permission_constraints) AS user_roles FROM ONLY $user)['user_roles'];
-            IF $matching_roles != NONE AND array::len($matching_roles) > 0 {{
-          		RETURN $matching_roles.map(|$matching_role: any| record::id($matching_role));
-           	}} ELSE {{
-          		RETURN [];
-           	}};
-
-            COMMIT TRANSACTION;
-            "
-        ),
-    };
+        COMMIT TRANSACTION;
+    "#;
 
     let mut admin_privilege_check_query = db
         .as_client()
-        .query(formated_query.as_str())
+        .query(formated_query)
         .bind(("user_id", auth_status.sub.to_owned()))
         .bind(("current_role_name", auth_status.current_role.to_owned()))
         .bind((
