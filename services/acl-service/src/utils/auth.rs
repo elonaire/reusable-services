@@ -552,7 +552,7 @@ where
                         UPDATE api_key SET last_used_at = $now_utc WHERE key_prefix = $key_prefix AND status = 'Active' RETURN NONE
                     "#;
 
-                    let mut query_result = db
+                    let _query_result = db
                         .as_client()
                         .query(query)
                         .bind(("key_prefix", key_prefix))
@@ -562,12 +562,6 @@ where
                             tracing::error!("{}", e);
                             Error::new(ErrorKind::Other, "Database query failed")
                         })?;
-
-                    // Get the first result from the first query
-                    let response: Option<ApiKey> = query_result.take(0).map_err(|e| {
-                        tracing::error!("Database query deserialization failed: {}", e);
-                        Error::new(ErrorKind::Other, "Database query deserialization failed")
-                    })?;
 
                     Ok(AuthStatus {
                         is_auth: true,
