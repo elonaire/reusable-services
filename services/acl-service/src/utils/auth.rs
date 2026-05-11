@@ -2,7 +2,7 @@ use axum::http::HeaderValue;
 use chrono::Utc;
 use jwt_simple::prelude::*;
 use lib::utils::custom_traits::AuthMetadataContext;
-use lib::utils::models::{AdminPrivilege, AuthorizationConstraint, MetadataView};
+use lib::utils::models::AuthorizationConstraint;
 use lib::utils::{
     auth::AuthClaim, cookie_parser::parse_cookies, custom_traits::AsSurrealClient,
     models::AuthStatus,
@@ -12,13 +12,14 @@ use std::{
     collections::HashMap,
     io::{Error, ErrorKind},
 };
+use surrealdb::types::{RecordIdKey, SurrealValue};
 use tokio::fs;
 
 use async_graphql::{Context, Enum};
 use base64::{engine::general_purpose, Engine as _engine};
 use hyper::{
     header::{COOKIE, SET_COOKIE},
-    HeaderMap, Method,
+    Method,
 };
 use oauth2::{
     basic::{BasicClient, BasicErrorResponseType, BasicTokenType},
@@ -35,7 +36,6 @@ use oauth2::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::graphql::schemas::role::SystemRole;
 use crate::graphql::schemas::user::{
     AccountStatus, ApiKey, GithubUserProfile, OAuthTokenPair, User, UserInput, UserLogins,
 };
@@ -64,7 +64,7 @@ pub enum OAuthFlow {
     RefreshToken,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq, SurrealValue)]
 pub enum OAuthClientName {
     #[graphql(name = "Google")]
     Google,
@@ -497,20 +497,16 @@ where
             let secret = secret.to_owned();
 
             let query = r#"
-                SELECT * FROM ONLY api_key WHERE key_prefix = $key_prefix AND status = 'Active' LIMIT 1 FETCH owner
-            "#;
-            let query_two = r#"
-                (SELECT (->assigned->role.role_name) AS current_role FROM ONLY api_key WHERE key_prefix = $key_prefix AND status = 'Active' LIMIT 1)['current_role'][0]
-            "#;
-            let query_three = r#"
-                (SELECT (->assigned->role->granted->permission.name) AS current_permissions FROM ONLY api_key WHERE key_prefix = $key_prefix AND status = 'Active' LIMIT 1)['current_permissions']
+                (SELECT * FROM ONLY api_key WHERE key_prefix = $key_prefix AND status = 'Active' LIMIT 1 FETCH owner);
+
+                (SELECT (->assigned->role.role_name) AS current_role FROM ONLY api_key WHERE key_prefix = $key_prefix AND status = 'Active' LIMIT 1)['current_role'][0];
+
+                (SELECT (->assigned->role->granted->permission.name) AS current_permissions FROM ONLY api_key WHERE key_prefix = $key_prefix AND status = 'Active' LIMIT 1)['current_permissions'];
             "#;
 
             let mut query_result = db
                 .as_client()
                 .query(query)
-                .query(query_two)
-                .query(query_three)
                 .bind(("key_prefix", key_prefix.clone()))
                 .await
                 .map_err(|e| {
@@ -566,9 +562,17 @@ where
                             Error::new(ErrorKind::Other, "Database query failed")
                         })?;
 
+                    let Some(owner_id) = (match &api_key.owner.id.key {
+                        RecordIdKey::String(s) => Some(s.clone()),
+                        _ => None,
+                    }) else {
+                        tracing::error!("Invalid user");
+                        return Err(Error::new(ErrorKind::Other, "Bad Request"));
+                    };
+
                     Ok(AuthStatus {
                         is_auth: true,
-                        sub: api_key.owner.id.key().to_string(),
+                        sub: owner_id,
                         current_role,
                         new_access_token: None,
                         current_role_permissions: current_permissions_response,
@@ -640,12 +644,14 @@ where
                     let sub_ref = &sub;
                     let current_roles = refresh_claims.custom.roles;
 
+                    tracing::debug!("current_roles: {:?}", current_roles);
+
                     let user: Option<User> = db
                         .as_client()
-                        .select(("user", sub_ref))
+                        .select(("user", sub_ref.clone()))
                         .await
-                        .map_err(|_e| {
-                            tracing::error!("User deserialization failed");
+                        .map_err(|e| {
+                            tracing::error!("User deserialization failed: {:?}", e);
                             Error::new(ErrorKind::Other, "User deserialization failed")
                         })?;
 
@@ -655,17 +661,21 @@ where
                                 roles: current_roles.to_vec(),
                             };
 
+                            let Some(user_id) = (match &user.id.key {
+                                RecordIdKey::String(s) => Some(s.clone()),
+                                _ => None,
+                            }) else {
+                                tracing::error!("Invalid user");
+                                return Err(Error::new(ErrorKind::Other, "Bad Request"));
+                            };
+
                             let token_expiry_duration = Duration::from_secs(1 * 60);
-                            let token = sign_jwt(
-                                &auth_claim,
-                                token_expiry_duration,
-                                &user.id.key().to_string(),
-                            )
-                            .await
-                            .map_err(|e| {
-                                tracing::error!("Error: {}", e);
-                                Error::new(ErrorKind::PermissionDenied, "Unauthorized")
-                            })?;
+                            let token = sign_jwt(&auth_claim, token_expiry_duration, &user_id)
+                                .await
+                                .map_err(|e| {
+                                    tracing::error!("Error: {}", e);
+                                    Error::new(ErrorKind::PermissionDenied, "Unauthorized")
+                                })?;
 
                             // Set response headers using the AuthMetadataContext trait - works for REST, gRPC, and GraphQL!
                             ctx.set_response_metadata(
@@ -683,7 +693,7 @@ where
 
                             return Ok(AuthStatus {
                                 is_auth: true,
-                                sub: user.id.key().to_string(),
+                                sub: user_id,
                                 current_role: current_roles[0].clone(),
                                 new_access_token: Some(token),
                                 current_role_permissions,
@@ -829,20 +839,25 @@ pub async fn confirm_authorization<T: Clone + AsSurrealClient>(
     auth_constraint: &AuthorizationConstraint,
 ) -> Result<bool, Error> {
     let formated_query = r#"
-        BEGIN TRANSACTION;
-        LET $user = type::thing('user', $user_id);
-        IF !$user.exists() {
-      		THROW 'Invalid Input';
-       	};
-
-        LET $matching_roles = (SELECT ->assigned->(role WHERE (role_name = $current_role_name AND ->granted->permission.name CONTAINSALL $permission_constraints)) AS matching_roles FROM ONLY $user)['matching_roles'];
-        IF $matching_roles != NONE AND array::len($matching_roles) > 0 {
-      		RETURN $matching_roles.map(|$matching_role: any| record::id($matching_role));
-       	} ELSE {
-      		RETURN [];
-       	};
-
-        COMMIT TRANSACTION;
+        LET $user = type::record('user', $user_id);
+        LET $matching_roles = (
+            SELECT ->assigned->(role WHERE
+                (
+                    role_name = $current_role_name
+                    AND ->granted->permission.name CONTAINSALL $permission_constraints
+                )) AS matching_roles
+            FROM ONLY $user
+        )['matching_roles'];
+        IF $matching_roles != NONE
+        AND array::len($matching_roles) > 0 {
+            RETURN $matching_roles.map(
+                |$matching_role: any| {
+                    record::id($matching_role);
+                }
+            );
+        } ELSE {
+            RETURN [];
+        };
     "#;
 
     let mut admin_privilege_check_query = db
@@ -861,7 +876,7 @@ pub async fn confirm_authorization<T: Clone + AsSurrealClient>(
         })?;
 
     // Get the first result from the first query
-    let response: Vec<String> = admin_privilege_check_query.take(0).map_err(|e| {
+    let response: Vec<String> = admin_privilege_check_query.take(2).map_err(|e| {
         tracing::error!("admin_privilege_check_query: {}", e);
         Error::new(ErrorKind::Other, "Database query deserialization failed")
     })?;
@@ -1017,14 +1032,6 @@ pub async fn create_oauth_user_if_not_exists<T: Clone + AsSurrealClient>(
                 match existing_user {
                     Some(existing_user) => Ok(existing_user),
                     None => {
-                        // let email = google_user
-                        //     .email;
-
-                        // if email.is_none() {
-                        //     tracing::error!("No primary email found");
-                        //     return Err(Error::new(ErrorKind::Other, "No primary email found"));
-                        // }
-
                         let user = UserInput {
                             email: google_user.email.clone(),
                             oauth_client: Some(OAuthClientName::Google),
@@ -1134,33 +1141,14 @@ pub async fn fetch_user_roles<T: Clone + AsSurrealClient>(
         .as_client()
         .query(
             "
-            BEGIN TRANSACTION;
-            LET $user = type::thing('user', $user_id);
-            IF !$user.exists() {
-          		THROW 'User does not exist';
-           	};
+            LET $user = type::record('user', $user_id);
 
-            LET $roles = (SELECT ->(assigned WHERE is_default=true)->role.* AS roles FROM ONLY user WHERE id = $user LIMIT 1)['roles'];
-            RETURN $roles;
-            COMMIT TRANSACTION;
-            "
-        )
-        // Apparently SurrealDB formats the query string before executing it. It may result in unexpected behavior.
-        .query(
-            "
-            BEGIN TRANSACTION;
-            LET $role = type::thing('role', $role_id);
-            LET $user = type::thing('user', $user_id);
-            IF !$role.exists() {
-          		THROW 'Role does not exist';
-           	};
-            IF !$user.exists() {
-          		THROW 'User does not exist';
-           	};
+            (SELECT ->(assigned WHERE is_default=true)->role.* AS roles FROM ONLY user WHERE id = $user LIMIT 1)['roles'];
 
-            LET $roles = (SELECT ->assigned->(role WHERE id = $role)[*] AS roles FROM ONLY user WHERE id = $user LIMIT 1)['roles'];
-            RETURN $roles;
-            COMMIT TRANSACTION;
+            LET $role = type::record('role', $role_id);
+            LET $user = type::record('user', $user_id);
+
+            (SELECT ->assigned->(role WHERE id = $role)[*] AS roles FROM ONLY user WHERE id = $user LIMIT 1)['roles'];
             "
         )
         .bind(("user_id", owned_user_id))
@@ -1171,11 +1159,11 @@ pub async fn fetch_user_roles<T: Clone + AsSurrealClient>(
             Error::new(ErrorKind::Other, "DB Query failed: Get Roles")
         })?;
     let user_roles: Vec<String> = match role_id {
-        Some(_) => user_roles_res.take((1, "role_name")).map_err(|e| {
+        Some(_) => user_roles_res.take((4, "role_name")).map_err(|e| {
             tracing::error!("Failed to deserialize roles(take(1)): {}", e);
             Error::new(ErrorKind::Other, "Failed to fetch roles")
         })?,
-        None => user_roles_res.take((0, "role_name")).map_err(|e| {
+        None => user_roles_res.take((1, "role_name")).map_err(|e| {
             tracing::error!("Failed to deserialize roles(take(0)): {}", e);
             Error::new(ErrorKind::Other, "Failed to fetch roles")
         })?,
@@ -1319,17 +1307,12 @@ pub async fn fetch_current_role_permissions<T: Clone + AsSurrealClient>(
         // Apparently SurrealDB formats the query string before executing it. It may result in unexpected behavior.
         .query(
             "
-            BEGIN TRANSACTION;
             LET $role = (SELECT VALUE id FROM ONLY role WHERE role_name = $role_name LIMIT 1);
-            LET $user = type::thing('user', $user_id);
-            IF !$role.exists() {
-          		THROW 'Role does not exist';
-           	};
+            LET $user = type::record('user', $user_id);
 
 
             LET $permissions = (SELECT ->assigned->(role WHERE id = $role)->granted->permission[*] AS permissions FROM ONLY user WHERE id = $user OR oauth_user_id = $user_id LIMIT 1)['permissions'];
             RETURN $permissions;
-            COMMIT TRANSACTION;
             "
         )
         .bind(("user_id", owned_user_id))
@@ -1339,7 +1322,7 @@ pub async fn fetch_current_role_permissions<T: Clone + AsSurrealClient>(
             tracing::error!("DB Query failed. Failed to get role permissions: {}", e);
             Error::new(ErrorKind::Other, "Failed to fetch permissions")
         })?;
-    let user_role_permissions: Vec<String> = query_response.take((0, "name")).map_err(|e| {
+    let user_role_permissions: Vec<String> = query_response.take((3, "name")).map_err(|e| {
         tracing::error!("Failed to deserialize permissions(take(0)): {}", e);
         Error::new(ErrorKind::Other, "Failed to fetch permissions")
     })?;

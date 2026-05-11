@@ -1,7 +1,7 @@
 use std::io::{Error, ErrorKind};
 
 use lib::utils::custom_traits::AsSurrealClient;
-use surrealdb::RecordId;
+use surrealdb::types::{RecordId, RecordIdKey};
 
 use crate::graphql::schemas::user::{User, UserInput};
 
@@ -41,7 +41,17 @@ pub async fn fetch_site_owner_id<T: Clone + AsSurrealClient>(db: &T) -> Result<S
     })?;
 
     match user_record {
-        Some(record_id) => Ok(record_id.key().to_string()),
+        Some(record_id) => {
+            let Some(user_id) = (match &record_id.key {
+                RecordIdKey::String(s) => Some(s.clone()),
+                _ => None,
+            }) else {
+                tracing::error!("Invalid user");
+                return Err(Error::new(ErrorKind::Other, "Bad Request"));
+            };
+
+            Ok(user_id)
+        }
         None => Err(Error::new(ErrorKind::Other, "No site owner found")),
     }
 }

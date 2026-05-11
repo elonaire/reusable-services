@@ -46,6 +46,7 @@ use tower_http::cors::CorsLayer;
 
 use graphql::resolvers::mutation::Mutation;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
+use uuid::Uuid;
 
 type MySchema = Schema<Query, Mutation, EmptySubscription>;
 
@@ -56,8 +57,16 @@ async fn graphql_handler(
     req: GraphQLRequest,
 ) -> GraphQLResponse {
     let mut request = req.0;
-    request = request.data(db.clone());
-    request = request.data(headers.clone());
+    let db = db.clone();
+    let mut headers = headers.clone();
+
+    let request_id = Uuid::new_v4();
+    headers.insert(
+        "x-request-id",
+        HeaderValue::from_str(&request_id.to_string()).unwrap_or(HeaderValue::from_static("")),
+    );
+    request = request.data(db);
+    request = request.data(headers);
 
     let operation_name = request.operation_name.clone();
 
@@ -171,11 +180,11 @@ async fn main() -> Result<(), Error> {
     });
 
     let app = Router::new()
-        .route("/upload", post(upload))
-        .route("/download/{file_name}", get(download_file))
+        .route("/upload/{*path}", post(upload))
+        .route("/download/{*key}", get(download_file))
         .route_layer(middleware::from_fn(handle_auth_with_refresh))
         .route("/", post(graphql_handler))
-        .route("/view/{file_name}", get(get_image))
+        .route("/view/{*key}", get(get_image))
         .route("/healthz", get(|| async { StatusCode::OK }))
         .route("/ready", get(|| async { StatusCode::OK }))
         .layer(GovernorLayer::new(governor_conf))

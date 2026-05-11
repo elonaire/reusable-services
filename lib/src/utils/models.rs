@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use async_graphql::{Enum, InputObject, SimpleObject};
+use async_graphql::{ComplexObject, Enum, InputObject, SimpleObject};
 use axum::{
     http::{HeaderName, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
@@ -8,15 +8,26 @@ use axum::{
 };
 use hyper::HeaderMap;
 use serde::{Deserialize, Serialize};
-use surrealdb::RecordId;
+use surrealdb::types::{RecordId, RecordIdKey, SurrealValue};
 use tokio::sync::Mutex;
 use tonic::metadata::MetadataMap;
 
-#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, SurrealValue)]
+#[graphql(complex)]
 pub struct UserId {
     #[graphql(skip)]
     pub id: RecordId,
     pub user_id: String,
+}
+
+#[ComplexObject]
+impl UserId {
+    async fn id(&self) -> Option<String> {
+        match &self.id.key {
+            RecordIdKey::String(s) => Some(s.clone()),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -113,7 +124,7 @@ pub struct EmailMQTTPayload<'a> {
     pub template: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Enum, Copy, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Enum, Copy, Eq, SurrealValue)]
 pub enum AdminPrivilege {
     #[graphql(name = "Admin")]
     Admin,

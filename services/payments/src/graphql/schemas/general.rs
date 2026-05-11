@@ -1,6 +1,7 @@
 use async_graphql::{ComplexObject, InputObject, SimpleObject};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use surrealdb::RecordId;
+use surrealdb::types::{RecordId, RecordIdKey, SurrealValue};
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
 pub struct ExchangeRatesResponse {
@@ -16,7 +17,7 @@ pub struct ExchangeRatesResponse {
     pub conversion_rate: f64,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, InputObject, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, InputObject, Default, SurrealValue)]
 pub struct FetchCurrenciesQueryFilters {
     pub currency_id: Option<String>,
     pub code: Option<String>,
@@ -32,7 +33,7 @@ pub struct CurrencyInput {
     pub symbol: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, SurrealValue)]
 #[graphql(complex)]
 pub struct Currency {
     #[graphql(skip)]
@@ -41,13 +42,16 @@ pub struct Currency {
     pub numeric: String,
     pub name: String,
     pub symbol: String,
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[ComplexObject]
 impl Currency {
-    async fn id(&self) -> String {
-        self.id.key().to_string()
+    async fn id(&self) -> Option<String> {
+        match &self.id.key {
+            RecordIdKey::String(s) => Some(s.clone()),
+            _ => None,
+        }
     }
 }

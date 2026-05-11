@@ -1,11 +1,11 @@
 use async_graphql::{ComplexObject, Enum, InputObject, SimpleObject};
-use chrono::{DateTime, Datelike, NaiveDate, Utc};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use surrealdb::RecordId;
+use surrealdb::types::{RecordId, RecordIdKey, SurrealValue};
 
 use crate::utils::auth::OAuthClientName;
 
-#[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq, SurrealValue)]
 pub enum Gender {
     #[graphql(name = "Male")]
     Male,
@@ -13,7 +13,9 @@ pub enum Gender {
     Female,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq, Default)]
+#[derive(
+    Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq, Default, SurrealValue,
+)]
 pub enum AccountStatus {
     #[graphql(name = "Active")]
     Active,
@@ -26,14 +28,16 @@ pub enum AccountStatus {
     Deleted,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default, SimpleObject, InputObject)]
+#[derive(
+    Clone, Debug, Serialize, Deserialize, Default, SimpleObject, InputObject, SurrealValue,
+)]
 #[graphql(input_name = "UserSocialInput")]
 pub struct UserSocial {
     pub name: String,
     pub url: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, InputObject, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, InputObject, Default, SurrealValue)]
 pub struct UserInput {
     pub user_name: Option<String>,
     pub first_name: Option<String>,
@@ -59,7 +63,7 @@ pub struct UserInput {
     pub socials: Option<Vec<UserSocial>>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, SurrealValue)]
 #[graphql(complex)]
 pub struct User {
     #[graphql(skip, secret)]
@@ -69,14 +73,14 @@ pub struct User {
     pub middle_name: Option<String>,
     pub last_name: Option<String>,
     pub gender: Option<Gender>,
-    pub dob: Option<String>,
+    pub dob: Option<DateTime<Utc>>,
     pub email: String,
     pub country: Option<String>,
     pub phone: Option<String>,
     #[graphql(secret)]
     pub password: Option<String>,
-    pub created_at: Option<String>,
-    pub updated_at: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
     pub status: Option<AccountStatus>,
     pub oauth_client: Option<OAuthClientName>,
     pub oauth_user_id: Option<String>,
@@ -89,8 +93,11 @@ pub struct User {
 
 #[ComplexObject]
 impl User {
-    async fn id(&self) -> String {
-        self.id.key().to_string()
+    async fn id(&self) -> Option<String> {
+        match &self.id.key {
+            RecordIdKey::String(s) => Some(s.clone()),
+            _ => None,
+        }
     }
 
     async fn full_name(&self) -> String {
@@ -103,20 +110,14 @@ impl User {
     }
 
     async fn age(&self) -> Option<u32> {
-        // calculate age from &self.dob
-        match &self.dob.as_ref() {
-            Some(dob) => {
-                let dob = DateTime::parse_from_rfc3339(dob).ok()?;
-                let from_ymd = NaiveDate::from_ymd_opt(dob.year(), dob.month(), dob.day())?;
-                let today = Utc::now().date_naive();
-                today.years_since(from_ymd)
-            }
-            None => None,
-        }
+        let dob = self.dob.as_ref()?.date_naive();
+        let today = Utc::now().date_naive();
+
+        today.years_since(dob)
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, InputObject, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, InputObject, Default, SurrealValue)]
 pub struct FetchUsersQueryFilters {
     pub organization_id: Option<String>,
     pub department_id: Option<String>,
@@ -181,7 +182,7 @@ pub enum OAuthUser {
     Github(GithubUserProfile),
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject)]
+#[derive(Clone, Debug, Serialize, Deserialize, SimpleObject, InputObject, SurrealValue)]
 #[graphql(input_name = "UserUpdateInput")]
 pub struct UserUpdate {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -202,8 +203,6 @@ pub struct UserUpdate {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub password: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub updated_at: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub profile_picture: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bio: Option<String>,
@@ -219,7 +218,7 @@ pub struct OAuthTokenPair {
     pub refresh_token: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, InputObject)]
+#[derive(Debug, Clone, Serialize, Deserialize, InputObject, SurrealValue)]
 pub struct ApiKeyInput {
     #[graphql(skip)]
     pub owner: Option<RecordId>,
@@ -230,12 +229,12 @@ pub struct ApiKeyInput {
     pub name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, InputObject)]
+#[derive(Debug, Clone, Serialize, Deserialize, InputObject, SurrealValue)]
 pub struct ApiKeyInputMetadata {
     pub role_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, SimpleObject)]
+#[derive(Debug, Clone, Serialize, Deserialize, SimpleObject, SurrealValue)]
 #[graphql(complex)]
 pub struct ApiKey {
     #[graphql(skip)]
@@ -247,18 +246,23 @@ pub struct ApiKey {
     pub status: ApiKeyStatus,
     pub last_used_at: Option<String>,
     pub last_used_ip: Option<String>,
-    pub created_at: String,
+    pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Enum, Copy)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Enum, Copy, SurrealValue)]
 pub enum ApiKeyStatus {
+    #[graphql(name = "Active")]
     Active,
+    #[graphql(name = "Revoked")]
     Revoked,
 }
 
 #[ComplexObject]
 impl ApiKey {
-    async fn id(&self) -> String {
-        self.id.key().to_string()
+    async fn id(&self) -> Option<String> {
+        match &self.id.key {
+            RecordIdKey::String(s) => Some(s.clone()),
+            _ => None,
+        }
     }
 }

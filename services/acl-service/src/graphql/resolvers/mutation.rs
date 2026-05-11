@@ -18,7 +18,11 @@ use lib::utils::{
 use rand::{rngs::OsRng, RngCore};
 use rsa::{pkcs8::DecodePublicKey, Pkcs1v15Encrypt, RsaPublicKey};
 use rumqttc::v5::mqttbytes::QoS;
-use surrealdb::{engine::remote::ws::Client, RecordId, Surreal};
+use surrealdb::{
+    engine::remote::ws::Client,
+    types::{RecordId, RecordIdKey},
+    Surreal,
+};
 use tokio::fs;
 
 use crate::{
@@ -103,7 +107,16 @@ impl Mutation {
                 let auth_claim = AuthClaim { roles: vec![] };
                 let token_duration = Duration::from_secs(15 * 60); // minutes by 60 seconds;
 
-                let user_id = user.id.key().to_string();
+                let Some(user_id) = (match user.id.key {
+                    RecordIdKey::String(s) => Some(s.clone()),
+                    _ => None,
+                }) else {
+                    return Err(ExtendedError::new(
+                        "Bad Request",
+                        StatusCode::BAD_REQUEST.as_str(),
+                    )
+                    .build());
+                };
 
                 let signed_jwt = sign_jwt(&auth_claim, token_duration, &user_id).await;
 
@@ -262,16 +275,13 @@ impl Mutation {
             _ => {}
         };
 
-        role_input.created_by = Some(RecordId::from_table_key("user", &authenticated_ref.sub));
+        role_input.created_by = Some(RecordId::new("user", authenticated_ref.sub.clone()));
 
         let mut create_role_query = db
             .query(
                 "
                 BEGIN TRANSACTION;
-                LET $user = type::thing('user', $user_id);
-                IF !$user.exists() {
-                    THROW 'Invalid Input: User not found!';
-                };
+                LET $user = type::record('user', $user_id);
 
                 IF ($role_metadata.organization_id IS NONE AND $role_metadata.department_id IS NONE) OR ($role_metadata.organization_id IS NOT NONE AND $role_metadata.department_id IS NOT NONE) {
                     THROW 'Invalid Input: Check organization_id and/or department_id!';
@@ -280,10 +290,8 @@ impl Mutation {
                 LET $created_role = (CREATE role CONTENT $role_input RETURN AFTER);
                 LET $role_record_id = (SELECT VALUE id FROM $created_role);
                 FOR $permission_id IN $role_metadata.permission_ids {
-                    LET $permission = type::thing('permission', $permission_id);
-                    IF !$permission.exists() {
-                        THROW 'Invalid Input: Permission not found!';
-                    };
+                    LET $permission = type::record('permission', $permission_id);
+
                     LET $permission_is_admin = (SELECT VALUE is_admin FROM ONLY $permission);
 
                     IF $permission_is_admin AND !$role_input.is_admin {
@@ -293,18 +301,14 @@ impl Mutation {
                     RELATE $role_record_id -> granted -> $permission;
                 };
                 IF $role_metadata.organization_id IS NOT NONE {
-                    LET $organization = type::thing('organization', $role_metadata.organization_id);
-                    IF !$organization.exists() {
-                        THROW 'Invalid Input: Organization not found!';
-                    };
+                    LET $organization = type::record('organization', $role_metadata.organization_id);
+
                     RELATE $role_record_id -> is_under -> $organization;
                 };
 
                 IF $role_metadata.department_id IS NOT NONE {
-                    LET $department = type::thing('department', $role_metadata.department_id);
-                    IF !$department.exists() {
-                        THROW 'Invalid Input: Department not found!';
-                    };
+                    LET $department = type::record('department', $role_metadata.department_id);
+
                     RELATE $role_record_id -> is_under -> $department;
                 };
 
@@ -322,7 +326,7 @@ impl Mutation {
                     .build()
             })?;
 
-        let user_role: Option<SystemRole> = create_role_query.take(0).map_err(|e| {
+        let user_role: Option<SystemRole> = create_role_query.take(8).map_err(|e| {
             tracing::error!("Failed to create role: {}", e);
             ExtendedError::new("Failed to create role", StatusCode::BAD_REQUEST.as_str()).build()
         })?;
@@ -396,43 +400,47 @@ impl Mutation {
                             .build()
                         })?;
 
+                        let Some(user_id) = (match &user.id.key {
+                            RecordIdKey::String(s) => Some(s.clone()),
+                            _ => None,
+                        }) else {
+                            return Err(ExtendedError::new(
+                                "Bad Request",
+                                StatusCode::BAD_REQUEST.as_str(),
+                            )
+                            .build());
+                        };
+
                         let refresh_token_expiry_duration = Duration::from_secs(30 * 24 * 60 * 60); // days by hours by minutes by 60 seconds
                         let access_token_expiry_duration = Duration::from_secs(1 * 60); // minutes by 60 seconds
 
-                        let user_roles =
-                            fetch_user_roles(db, &user.id.key().to_string(), None).await?;
+                        let user_roles = fetch_user_roles(db, &user_id, None).await?;
 
                         let auth_claim = AuthClaim { roles: user_roles };
 
-                        let token_str = sign_jwt(
-                            &auth_claim,
-                            access_token_expiry_duration,
-                            &user.id.key().to_string(),
-                        )
-                        .await
-                        .map_err(|e| {
-                            tracing::error!("Failed to sign Access Token: {}", e);
-                            ExtendedError::new(
-                                "Internal Server Error",
-                                StatusCode::INTERNAL_SERVER_ERROR.as_str(),
-                            )
-                            .build()
-                        })?;
+                        let token_str =
+                            sign_jwt(&auth_claim, access_token_expiry_duration, &user_id)
+                                .await
+                                .map_err(|e| {
+                                    tracing::error!("Failed to sign Access Token: {}", e);
+                                    ExtendedError::new(
+                                        "Internal Server Error",
+                                        StatusCode::INTERNAL_SERVER_ERROR.as_str(),
+                                    )
+                                    .build()
+                                })?;
 
-                        let refresh_token_str = sign_jwt(
-                            &auth_claim,
-                            refresh_token_expiry_duration,
-                            &user.id.key().to_string(),
-                        )
-                        .await
-                        .map_err(|e| {
-                            tracing::error!("Failed to sign Refresh Token: {}", e);
-                            ExtendedError::new(
-                                "Internal Server Error",
-                                StatusCode::INTERNAL_SERVER_ERROR.as_str(),
-                            )
-                            .build()
-                        })?;
+                        let refresh_token_str =
+                            sign_jwt(&auth_claim, refresh_token_expiry_duration, &user_id)
+                                .await
+                                .map_err(|e| {
+                                    tracing::error!("Failed to sign Refresh Token: {}", e);
+                                    ExtendedError::new(
+                                        "Internal Server Error",
+                                        StatusCode::INTERNAL_SERVER_ERROR.as_str(),
+                                    )
+                                    .build()
+                                })?;
 
                         let public_key_path = match env::var("RSA_PUBLIC_KEY_PATH") {
                             Ok(path) => path,
@@ -538,6 +546,11 @@ impl Mutation {
     async fn sign_out(&self, ctx: &Context<'_>) -> Result<GraphQLApiResponse<bool>> {
         // Clear the refresh token cookie
         ctx.insert_http_header(SET_COOKIE, format!("t=; Path=/; Max-Age=0"));
+        ctx.append_http_header(
+            SET_COOKIE,
+            format!("oauth_user_roles_jwt=; Path=/; Max-Age=0"),
+        );
+        ctx.append_http_header(SET_COOKIE, format!("oauth_client=; Path=/; Max-Age=0"));
 
         // TODO: Add logic to revoke tokens/delete sessions
 
@@ -656,13 +669,9 @@ impl Mutation {
             .query(
                 "
                 BEGIN TRANSACTION;
-                LET $role = type::thing('role', $role_id);
-                LET $user = type::thing('user', $user_id);
+                LET $role = type::record('role', $role_id);
+                LET $user = type::record('user', $user_id);
                 LET $role_creator = (SELECT VALUE created_by FROM ONLY $role LIMIT 1);
-
-                IF !$role.exists() OR !$user.exists() {
-                    THROW 'Invalid Input';
-                };
 
                 LET $role_is_under_user_org = array::len((SELECT * FROM role WHERE id = $role AND ->is_under->(organization WHERE created_by = $user))) > 0 || array::len((SELECT * FROM role WHERE id = $role AND @.{..}(->is_under->department)->is_under->(organization WHERE created_by = $user))) > 0;
                	LET $role_is_under_user_dep = array::len((SELECT * FROM role WHERE id = $role AND ->is_under->(department WHERE created_by = $user))) > 0 || array::len((SELECT * FROM role WHERE id = $role AND @.{..}(->is_under->department)->is_under->(department WHERE created_by = $user))) > 0;
@@ -689,7 +698,7 @@ impl Mutation {
                     .build()
             })?;
 
-        let user_role: Option<SystemRole> = assign_role_query.take(0).map_err(|e| {
+        let user_role: Option<SystemRole> = assign_role_query.take(9).map_err(|e| {
             tracing::error!("Failed to assign role: {}", e);
             ExtendedError::new("Failed to assign role", StatusCode::BAD_REQUEST.as_str()).build()
         })?;
@@ -722,7 +731,6 @@ impl Mutation {
             tracing::error!("Error extracting Surreal Client: {:?}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
-        let header_map = ctx.data_opt::<HeaderMap>();
 
         let authenticated = confirm_authentication(db, ctx).await?;
 
@@ -743,13 +751,9 @@ impl Mutation {
             .query(
                 "
                 BEGIN TRANSACTION;
-                LET $role = type::thing('role', $role_id);
-                LET $user = type::thing('user', $user_id);
+                LET $role = type::record('role', $role_id);
+                LET $user = type::record('user', $user_id);
                 LET $role_creator = (SELECT VALUE created_by FROM ONLY $role LIMIT 1);
-
-                IF !$role.exists() OR !$user.exists() {
-                    THROW 'Invalid Input';
-                };
 
                 LET $role_is_under_user_org = array::len((SELECT * FROM role WHERE id = $role AND ->is_under->(organization WHERE created_by = $user))) > 0 || array::len((SELECT * FROM role WHERE id = $role AND @.{..}(->is_under->department)->is_under->(organization WHERE created_by = $user))) > 0;
                	LET $role_is_under_user_dep = array::len((SELECT * FROM role WHERE id = $role AND ->is_under->(department WHERE created_by = $user))) > 0 || array::len((SELECT * FROM role WHERE id = $role AND @.{..}(->is_under->department)->is_under->(department WHERE created_by = $user))) > 0;
@@ -774,7 +778,7 @@ impl Mutation {
                     .build()
             })?;
 
-        let user_role: Option<SystemRole> = assign_role_query.take(0).map_err(|e| {
+        let user_role: Option<SystemRole> = assign_role_query.take(9).map_err(|e| {
             tracing::error!("Failed to assign role: {}", e);
             ExtendedError::new("Failed to assign role", StatusCode::BAD_REQUEST.as_str()).build()
         })?;
@@ -822,8 +826,7 @@ impl Mutation {
             return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
         }
 
-        organization_input.created_by =
-            Some(RecordId::from_table_key("user", &authenticated_ref.sub));
+        organization_input.created_by = Some(RecordId::new("user", authenticated_ref.sub.clone()));
 
         let mut create_organization_query = db
             .query(
@@ -847,7 +850,7 @@ impl Mutation {
             })?;
 
         let organization_response: Option<Organization> =
-            create_organization_query.take(0).map_err(|e| {
+            create_organization_query.take(2).map_err(|e| {
                 tracing::error!("Failed to create organization: {}", e);
                 ExtendedError::new(
                     "Failed to create organization",
@@ -903,16 +906,15 @@ impl Mutation {
             return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
         }
 
-        department_input.created_by =
-            Some(RecordId::from_table_key("user", &authenticated_ref.sub));
+        department_input.created_by = Some(RecordId::new("user", authenticated_ref.sub.clone()));
 
         let mut create_department_query = db
             .query(
                 "
                 BEGIN TRANSACTION;
                 IF $department_metadata.organization_id {
-                    LET $org = type::thing('organization', $department_metadata.organization_id);
-                    IF !$org.exists() {
+                    LET $org = type::record('organization', $department_metadata.organization_id);
+                    IF !($org.exists()) {
                         THROW 'Invalid Input';
                     };
                     LET $created_department = (CREATE department CONTENT $department_input RETURN AFTER);
@@ -921,8 +923,8 @@ impl Mutation {
 
                     RETURN $created_department;
                 } ELSE IF $department_metadata.department_id {
-                    LET $dep = type::thing('department', $department_metadata.department_id);
-                    IF !$dep.exists() {
+                    LET $dep = type::record('department', $department_metadata.department_id);
+                    IF !($dep.exists()) {
                         THROW 'Invalid Input';
                     };
                     LET $created_department = (CREATE department CONTENT $department_input RETURN AFTER);
@@ -950,7 +952,7 @@ impl Mutation {
             })?;
 
         let department_response: Option<Department> =
-            create_department_query.take(0).map_err(|e| {
+            create_department_query.take(1).map_err(|e| {
                 tracing::error!("Failed to create department: {}", e);
                 ExtendedError::new(
                     "Failed to create department",
@@ -1180,11 +1182,10 @@ impl Mutation {
             _ => {}
         };
 
-        permission_input.created_by =
-            Some(RecordId::from_table_key("user", &authenticated_ref.sub));
-        permission_input.resource = Some(RecordId::from_table_key(
+        permission_input.created_by = Some(RecordId::new("user", authenticated_ref.sub.clone()));
+        permission_input.resource = Some(RecordId::new(
             "resource",
-            &permission_metadata.resource_id,
+            permission_metadata.resource_id.clone(),
         ));
 
         let mut create_permission_query = db
@@ -1211,7 +1212,7 @@ impl Mutation {
             })?;
 
         let permission_response: Option<Permission> =
-            create_permission_query.take(0).map_err(|e| {
+            create_permission_query.take(5).map_err(|e| {
                 tracing::error!("Failed to create permission: {}", e);
                 ExtendedError::new(
                     "Failed to create permission",
@@ -1272,22 +1273,10 @@ impl Mutation {
             .query(
                 "
                 BEGIN TRANSACTION;
-                LET $permission = type::thing('permission', $permission_id);
-                LET $role = type::thing('role', $role_id);
-                LET $user = type::thing('user', $user_id);
+                LET $permission = type::record('permission', $permission_id);
+                LET $role = type::record('role', $role_id);
+                LET $user = type::record('user', $user_id);
                 LET $role_creator = (SELECT VALUE created_by FROM ONLY $role LIMIT 1);
-
-                IF !$permission.exists() {
-                    THROW 'Invalid Input: Permission does not exist!';
-                };
-
-                IF !$role.exists() {
-                    THROW 'Invalid Input: Role does not exist!';
-                };
-
-                IF !$user.exists() {
-                    THROW 'Invalid Input: User does not exist!';
-                };
 
                 LET $role_is_under_user_org = array::len((SELECT * FROM role WHERE id = $role AND ->is_under->(organization WHERE created_by = $user))) > 0 || array::len((SELECT * FROM role WHERE id = $role AND @.{..}(->is_under->department)->is_under->(organization WHERE created_by = $user))) > 0;
                	LET $role_is_under_user_dep = array::len((SELECT * FROM role WHERE id = $role AND ->is_under->(department WHERE created_by = $user))) > 0 || array::len((SELECT * FROM role WHERE id = $role AND @.{..}(->is_under->department)->is_under->(department WHERE created_by = $user))) > 0;
@@ -1323,7 +1312,7 @@ impl Mutation {
             })?;
 
         let permission_response: Option<Permission> =
-            grant_permission_query.take(0).map_err(|e| {
+            grant_permission_query.take(10).map_err(|e| {
                 tracing::error!("Failed to grant permission: {}", e);
                 ExtendedError::new(
                     "Failed to grant permission",
@@ -1384,22 +1373,10 @@ impl Mutation {
             .query(
                 "
                 BEGIN TRANSACTION;
-                LET $permission = type::thing('permission', $permission_id);
-                LET $role = type::thing('role', $role_id);
-                LET $user = type::thing('user', $user_id);
+                LET $permission = type::record('permission', $permission_id);
+                LET $role = type::record('role', $role_id);
+                LET $user = type::record('user', $user_id);
                 LET $role_creator = (SELECT VALUE created_by FROM ONLY $role LIMIT 1);
-
-                IF !$permission.exists() {
-                    THROW 'Invalid Input: Permission does not exist!';
-                };
-
-                IF !$role.exists() {
-                    THROW 'Invalid Input: Role does not exist!';
-                };
-
-                IF !$user.exists() {
-                    THROW 'Invalid Input: User does not exist!';
-                };
 
                 LET $role_is_under_user_org = array::len((SELECT * FROM role WHERE id = $role AND ->is_under->(organization WHERE created_by = $user))) > 0 || array::len((SELECT * FROM role WHERE id = $role AND @.{..}(->is_under->department)->is_under->(organization WHERE created_by = $user))) > 0;
                	LET $role_is_under_user_dep = array::len((SELECT * FROM role WHERE id = $role AND ->is_under->(department WHERE created_by = $user))) > 0 || array::len((SELECT * FROM role WHERE id = $role AND @.{..}(->is_under->department)->is_under->(department WHERE created_by = $user))) > 0;
@@ -1435,7 +1412,7 @@ impl Mutation {
             })?;
 
         let permission_response: Option<Permission> =
-            revoke_permission_query.take(0).map_err(|e| {
+            revoke_permission_query.take(11).map_err(|e| {
                 tracing::error!("Failed to revoke permission: {}", e);
                 ExtendedError::new(
                     "Failed to revoke permission",
@@ -1492,7 +1469,7 @@ impl Mutation {
             return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
         }
 
-        resource_input.created_by = Some(RecordId::from_table_key("user", &authenticated_ref.sub));
+        resource_input.created_by = Some(RecordId::new("user", authenticated_ref.sub.clone()));
 
         let mut create_resource_query = db
             .query(
@@ -1502,20 +1479,14 @@ impl Mutation {
 
                 LET $resource_id = (SELECT VALUE id FROM ONLY $resource LIMIT 1);
                 IF $resource_metadata.organization_id IS NOT NONE {
-                    LET $organization = type::thing('organization', $resource_metadata.organization_id);
+                    LET $organization = type::record('organization', $resource_metadata.organization_id);
 
-                    IF !$organization.exists() {
-                        THROW 'Organization not found';
-                    };
                     RELATE $resource_id -> is_under -> $organization;
                 };
 
                 IF $resource_metadata.department_id IS NOT NONE {
-                    LET $department = type::thing('department', $resource_metadata.department_id);
+                    LET $department = type::record('department', $resource_metadata.department_id);
 
-                    IF !$department.exists() {
-                        THROW 'Department not found';
-                    };
                     RELATE $resource_id -> is_under -> $department;
                 };
 
@@ -1535,7 +1506,7 @@ impl Mutation {
                 .build()
             })?;
 
-        let resource_response: Option<Resource> = create_resource_query.take(0).map_err(|e| {
+        let resource_response: Option<Resource> = create_resource_query.take(5).map_err(|e| {
             tracing::error!("Failed to create resource: {}", e);
             ExtendedError::new(
                 "Failed to create resource",
@@ -1608,13 +1579,9 @@ impl Mutation {
         })?;
         let aggregated_api_key = format!("{prefix}.{secret_ref}");
 
-        api_key_input.owner = Some(RecordId::from_table_key("user", &authenticated_ref.sub));
+        api_key_input.owner = Some(RecordId::new("user", authenticated_ref.sub.clone()));
         api_key_input.key_prefix = prefix;
         api_key_input.secret_hash = hashed_secret;
-        tracing::debug!("api_key_input: {:?}", api_key_input);
-        tracing::debug!("api_key_input_metadata: {:?}", api_key_input_metadata);
-        tracing::debug!("user_id: {:?}", authenticated_ref.sub);
-        tracing::debug!("current_role_name: {:?}", authenticated_ref.current_role);
 
         let mut query_result = db
             .query(
@@ -1622,8 +1589,8 @@ impl Mutation {
                 BEGIN TRANSACTION;
                 LET $api_key = (CREATE api_key CONTENT $api_key_input RETURN AFTER);
                 LET $api_key_id = (SELECT VALUE id FROM $api_key);
-                LET $user = type::thing('user', $user_id);
-                LET $role_id = type::thing('role', $api_key_input_metadata.role_id);
+                LET $user = type::record('user', $user_id);
+                LET $role_id = type::record('role', $api_key_input_metadata.role_id);
                 LET $role = (SELECT (->assigned->(role WHERE id = $role_id OR role_name = $current_role_name)) AS role FROM ONLY $user LIMIT 1)['role'][0];
                 RELATE $api_key_id -> assigned -> $role;
                 RETURN (SELECT * FROM $api_key FETCH owner);
@@ -1641,7 +1608,7 @@ impl Mutation {
                     .build()
             })?;
 
-        let query_response: Option<ApiKey> = query_result.take(0).map_err(|e| {
+        let query_response: Option<ApiKey> = query_result.take(7).map_err(|e| {
             tracing::error!("Failed to create api_key: {}", e);
             ExtendedError::new("Failed to create api_key", StatusCode::BAD_REQUEST.as_str()).build()
         })?;

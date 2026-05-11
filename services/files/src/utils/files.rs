@@ -13,7 +13,7 @@ use lib::{
         models::{CreateFileInfo, ForeignKey, PurchaseFileDetails, UserId},
     },
 };
-use surrealdb::{engine::remote::ws::Client, Surreal};
+use surrealdb::{engine::remote::ws::Client, types::RecordIdKey, Surreal};
 use tokio::{fs::File, io::AsyncWriteExt};
 use uuid::Uuid;
 
@@ -48,7 +48,17 @@ pub async fn get_file_id<T: Clone + AsSurrealClient>(
     })?;
 
     match response {
-        Some(file) => Ok(file.id.key().to_string()),
+        Some(file) => {
+            let Some(file_id) = (match &file.id.key {
+                RecordIdKey::String(s) => Some(s.clone()),
+                _ => None,
+            }) else {
+                tracing::error!("Invalid file");
+                return Err(Error::new(ErrorKind::Other, "Bad Request"));
+            };
+
+            Ok(file_id)
+        }
         None => Err(Error::new(ErrorKind::InvalidData, "Not Found!")),
     }
 }
@@ -61,9 +71,9 @@ pub async fn get_system_filename<T: Clone + AsSurrealClient>(
         .query(
             "
         BEGIN TRANSACTION;
-        LET $file_thing = type::thing($file_id);
+        LET $file_thing = type::record($file_id);
 
-        IF !$file_thing.exists() {
+        IF !($file_thing.exists()) {
             THROW 'Invalid Input';
         };
 
@@ -108,8 +118,8 @@ pub async fn purchase_file<T: Clone + AsSurrealClient>(
         .query(
             "
             BEGIN TRANSACTION;
-            LET $file_thing = type::thing($file_id);
-            IF !$file_thing.exists() {
+            LET $file_thing = type::record($file_id);
+            IF !($file_thing.exists()) {
                 THROW 'Invalid Input';
             };
             LET $user = (SELECT * FROM ONLY user_id WHERE user_id = $user_id LIMIT 1);
@@ -172,16 +182,21 @@ pub async fn create_file_from_content<T: Clone + AsSurrealClient>(
         foreign_key: user_id.to_owned(),
     };
 
-    let user_fk: Option<UserId> = add_foreign_key_if_not_exists(db, user_fk_body).await;
-
-    if user_fk.is_none() {
+    let Some(user_fk) = add_foreign_key_if_not_exists(db, user_fk_body).await as Option<UserId>
+    else {
         return Err(Error::new(
             ErrorKind::Other,
             "Failed to insert file into database",
         ));
-    }
+    };
 
-    let user_id_raw = user_fk.unwrap().id.key().to_string();
+    let Some(user_id_raw) = (match &user_fk.id.key {
+        RecordIdKey::String(s) => Some(s.clone()),
+        _ => None,
+    }) else {
+        tracing::error!("Invalid user");
+        return Err(Error::new(ErrorKind::Other, "Bad Request"));
+    };
 
     // Insert uploaded files into the database
     let mut db_query_result = db
@@ -189,9 +204,9 @@ pub async fn create_file_from_content<T: Clone + AsSurrealClient>(
         .query(
             "
             BEGIN TRANSACTION;
-            LET $user = type::thing('user_id', $user_id);
+            LET $user = type::record('user_id', $user_id);
 
-            IF !$user.exists() {
+            IF !($user.exists()) {
                 THROW 'Invalid Input';
             };
 
@@ -228,7 +243,17 @@ pub async fn create_file_from_content<T: Clone + AsSurrealClient>(
     })?;
 
     match saved_file {
-        Some(file_info) => Ok(file_info.id.key().to_string()),
+        Some(file_info) => {
+            let Some(file_id) = (match &file_info.id.key {
+                RecordIdKey::String(s) => Some(s.clone()),
+                _ => None,
+            }) else {
+                tracing::error!("Invalid file");
+                return Err(Error::new(ErrorKind::Other, "Bad Request"));
+            };
+
+            Ok(file_id)
+        }
         None => Err(Error::new(
             ErrorKind::Other,
             "Failed to insert file into database",
