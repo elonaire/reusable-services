@@ -46,6 +46,7 @@ use hyper::{
 use grpc::server::EmailServiceImplementation;
 use surrealdb::{engine::remote::ws::Client, Surreal};
 use tower_http::cors::CorsLayer;
+use uuid::Uuid;
 
 use graphql::resolvers::mutation::Mutation;
 
@@ -62,8 +63,17 @@ async fn graphql_handler(
     req: GraphQLRequest,
 ) -> GraphQLResponse {
     let mut request = req.0;
-    request = request.data(db.clone());
-    request = request.data(headers.clone());
+
+    let db = db.clone();
+    let mut headers = headers.clone();
+
+    let request_id = Uuid::new_v4();
+    headers.insert(
+        "x-request-id",
+        HeaderValue::from_str(&request_id.to_string()).unwrap_or(HeaderValue::from_static("")),
+    );
+    request = request.data(db);
+    request = request.data(headers);
     let operation_name = request.operation_name.clone();
 
     // Log request info(I just want to deploy Email again)

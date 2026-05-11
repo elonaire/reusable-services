@@ -1,11 +1,12 @@
 use crate::utils::{custom_traits::AsSurrealClient, models::ForeignKey};
 use serde::{Deserialize, Serialize};
+use surrealdb::types::SurrealValue;
 
 /// Integration method to set foreign keys in the target service database
 pub async fn add_foreign_key_if_not_exists<T, F>(db: &T, foreign_key: ForeignKey) -> Option<F>
 where
     T: Clone + AsSurrealClient,
-    F: for<'de> Deserialize<'de> + Serialize + std::fmt::Debug,
+    F: for<'de> Deserialize<'de> + Serialize + std::fmt::Debug + SurrealValue,
 {
     let result = db
         .as_client()

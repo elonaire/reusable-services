@@ -1,7 +1,8 @@
 use axum::http::HeaderValue;
+use chrono::Utc;
 use jwt_simple::prelude::*;
 use lib::utils::custom_traits::AuthMetadataContext;
-use lib::utils::models::{AdminPrivilege, AuthorizationConstraint, MetadataView};
+use lib::utils::models::AuthorizationConstraint;
 use lib::utils::{
     auth::AuthClaim, cookie_parser::parse_cookies, custom_traits::AsSurrealClient,
     models::AuthStatus,
@@ -11,17 +12,21 @@ use std::{
     collections::HashMap,
     io::{Error, ErrorKind},
 };
+use surrealdb::types::{RecordIdKey, SurrealValue};
+use tokio::fs;
 
 use async_graphql::{Context, Enum};
+use base64::{engine::general_purpose, Engine as _engine};
 use hyper::{
     header::{COOKIE, SET_COOKIE},
-    HeaderMap, Method,
+    Method,
 };
 use oauth2::{
     basic::{BasicClient, BasicErrorResponseType, BasicTokenType},
     EndpointNotSet, EndpointSet,
 };
 use reqwest::{header::HeaderMap as ReqWestHeaderMap, Client as ReqWestClient};
+use rsa::{pkcs8::DecodePrivateKey, Pkcs1v15Encrypt, RsaPrivateKey};
 
 use oauth2::{
     AuthUrl, Client, ClientId, ClientSecret, CsrfToken, EmptyExtraTokenFields, PkceCodeChallenge,
@@ -31,9 +36,8 @@ use oauth2::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::graphql::schemas::role::SystemRole;
 use crate::graphql::schemas::user::{
-    AccountStatus, GithubUserProfile, OAuthTokenPair, User, UserInput, UserLogins,
+    AccountStatus, ApiKey, GithubUserProfile, OAuthTokenPair, User, UserInput, UserLogins,
 };
 use crate::graphql::schemas::user::{GoogleUserInfo, OAuthUser};
 use crate::utils::user::create_user;
@@ -60,7 +64,7 @@ pub enum OAuthFlow {
     RefreshToken,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq, SurrealValue)]
 pub enum OAuthClientName {
     #[graphql(name = "Google")]
     Google,
@@ -231,7 +235,7 @@ pub async fn navigate_to_redirect_url(
     ctx.insert_http_header(
         SET_COOKIE,
         format!(
-            "oauth_client={}; HttpOnly; SameSite=Lax; Path=/; Secure",
+            "oauth_client={}; HttpOnly; SameSite=Strict; Path=/; Secure",
             oauth_client_name.fmt()
         ),
     );
@@ -240,7 +244,7 @@ pub async fn navigate_to_redirect_url(
     ctx.append_http_header(
         SET_COOKIE,
         format!(
-            "j={}; Max-Age={}; HttpOnly; SameSite=Lax; Path=/; Secure",
+            "j={}; Max-Age={}; HttpOnly; SameSite=Strict; Path=/; Secure",
             csrf_token.secret(),
             sensitive_cookies_expiry_duration.as_secs()
         ),
@@ -248,7 +252,7 @@ pub async fn navigate_to_redirect_url(
     ctx.append_http_header(
         SET_COOKIE,
         format!(
-            "k={}; Max-Age={}; HttpOnly; SameSite=Lax; Path=/; Secure",
+            "k={}; Max-Age={}; HttpOnly; SameSite=Strict; Path=/; Secure",
             pkce_verifier.secret(),
             sensitive_cookies_expiry_duration.as_secs()
         ),
@@ -346,7 +350,10 @@ where
 
     // Normal auth flow
     if oauth_client.is_empty() {
-        return handle_normal_auth(token, &cookies, db, ctx).await;
+        return match cookies.get("t") {
+            Some(_auth_cookie) => handle_normal_auth(token, &cookies, db, ctx).await,
+            None => handle_api_key_auth(token, db).await,
+        };
     }
 
     // OAuth flow
@@ -467,6 +474,117 @@ where
     }
 }
 
+async fn handle_api_key_auth<T>(token: &HeaderValue, db: &T) -> Result<AuthStatus, Error>
+where
+    T: Clone + AsSurrealClient,
+{
+    let token_str = token
+        .to_str()
+        .map_err(|e| {
+            tracing::error!("Failed to convert header to str: {}", e);
+            Error::new(ErrorKind::InvalidData, "Unauthorized!")
+        })?
+        .strip_prefix("Bearer ")
+        .map(|s| s.to_owned());
+
+    match token_str {
+        Some(valid_token) => {
+            let Some((key_prefix, secret)) = valid_token.split_once('.') else {
+                return Err(Error::new(ErrorKind::InvalidData, "Unauthorized!"));
+            };
+
+            let key_prefix = key_prefix.to_owned();
+            let secret = secret.to_owned();
+
+            let query = r#"
+                (SELECT * FROM ONLY api_key WHERE key_prefix = $key_prefix AND status = 'Active' LIMIT 1 FETCH owner);
+
+                (SELECT (->assigned->role.role_name) AS current_role FROM ONLY api_key WHERE key_prefix = $key_prefix AND status = 'Active' LIMIT 1)['current_role'][0];
+
+                (SELECT (->assigned->role->granted->permission.name) AS current_permissions FROM ONLY api_key WHERE key_prefix = $key_prefix AND status = 'Active' LIMIT 1)['current_permissions'];
+            "#;
+
+            let mut query_result = db
+                .as_client()
+                .query(query)
+                .bind(("key_prefix", key_prefix.clone()))
+                .await
+                .map_err(|e| {
+                    tracing::error!("{}", e);
+                    Error::new(ErrorKind::Other, "Database query failed")
+                })?;
+
+            // Get the first result from the first query
+            let response: Option<ApiKey> = query_result.take(0).map_err(|e| {
+                tracing::error!("Database query deserialization failed: {}", e);
+                Error::new(ErrorKind::Other, "Database query deserialization failed")
+            })?;
+
+            match response {
+                Some(api_key) => {
+                    if !bcrypt::verify(&secret, &api_key.secret_hash).map_err(|e| {
+                        tracing::error!("Failed to verify user credentials: {}", e);
+                        Error::new(ErrorKind::PermissionDenied, "Invalid API Key")
+                    })? {
+                        return Err(Error::new(ErrorKind::PermissionDenied, "Forbidden!"));
+                    }
+
+                    let current_role_response: Option<String> =
+                        query_result.take(1).map_err(|e| {
+                            tracing::error!("Database query deserialization failed: {}", e);
+                            Error::new(ErrorKind::Other, "Database query deserialization failed")
+                        })?;
+
+                    let current_permissions_response: Vec<String> =
+                        query_result.take(2).map_err(|e| {
+                            tracing::error!("Database query deserialization failed: {}", e);
+                            Error::new(ErrorKind::Other, "Database query deserialization failed")
+                        })?;
+
+                    let Some(current_role) = current_role_response else {
+                        return Err(Error::new(ErrorKind::PermissionDenied, "Forbidden!"));
+                    };
+
+                    let now_utc = Utc::now().to_rfc3339();
+
+                    let query = r#"
+                        UPDATE api_key SET last_used_at = $now_utc WHERE key_prefix = $key_prefix AND status = 'Active' RETURN NONE
+                    "#;
+
+                    let _query_result = db
+                        .as_client()
+                        .query(query)
+                        .bind(("key_prefix", key_prefix))
+                        .bind(("now_utc", now_utc))
+                        .await
+                        .map_err(|e| {
+                            tracing::error!("{}", e);
+                            Error::new(ErrorKind::Other, "Database query failed")
+                        })?;
+
+                    let Some(owner_id) = (match &api_key.owner.id.key {
+                        RecordIdKey::String(s) => Some(s.clone()),
+                        _ => None,
+                    }) else {
+                        tracing::error!("Invalid user");
+                        return Err(Error::new(ErrorKind::Other, "Bad Request"));
+                    };
+
+                    Ok(AuthStatus {
+                        is_auth: true,
+                        sub: owner_id,
+                        current_role,
+                        new_access_token: None,
+                        current_role_permissions: current_permissions_response,
+                    })
+                }
+                None => Err(Error::new(ErrorKind::InvalidData, "Unauthorized!")),
+            }
+        }
+        None => Err(Error::new(ErrorKind::InvalidData, "Unauthorized!")),
+    }
+}
+
 /// A utility function to handle refresh tokens
 async fn handle_refresh_token<T, C>(
     cookies: &HashMap<String, String>,
@@ -480,8 +598,42 @@ where
     let converted_jwt_secret_key = get_converted_jwt_secret_key().await?;
     match cookies.get("t") {
         Some(refresh_token) => {
+            let private_key_path = env::var("RSA_PRIVATE_KEY_PATH").map_err(|e| {
+                tracing::error!("Failed to get RSA_PRIVATE_KEY_PATH env var: {}", e);
+                Error::new(ErrorKind::Other, "Unauthorized!")
+            })?;
+
+            let private_key_file = fs::read_to_string(&private_key_path).await.map_err(|e| {
+                tracing::error!("Failed to read private key file: {}", e);
+                Error::new(ErrorKind::Other, "Unauthorized!")
+            })?;
+
+            let private_key = RsaPrivateKey::from_pkcs8_pem(&private_key_file).map_err(|e| {
+                tracing::error!("Failed to parse private key: {}", e);
+                Error::new(ErrorKind::Other, "Unauthorized!")
+            })?;
+
+            let decoded_token = general_purpose::URL_SAFE_NO_PAD
+                .decode(refresh_token)
+                .map_err(|e| {
+                    tracing::error!("Failed to decode token: {}", e);
+                    Error::new(ErrorKind::Other, "Unauthorized!")
+                })?;
+
+            let decrypted_token = private_key
+                .decrypt(Pkcs1v15Encrypt, &decoded_token)
+                .map_err(|e| {
+                    tracing::error!("Failed to decrypt token: {}", e);
+                    Error::new(ErrorKind::Other, "Unauthorized!")
+                })?;
+
+            let signed_refresh_token = String::from_utf8(decrypted_token).map_err(|e| {
+                tracing::error!("Failed to create signed JWT: {}", e);
+                Error::new(ErrorKind::Other, "Unauthorized!")
+            })?;
+
             let refresh_claims =
-                converted_jwt_secret_key.verify_token::<AuthClaim>(&refresh_token, None);
+                converted_jwt_secret_key.verify_token::<AuthClaim>(&signed_refresh_token, None);
 
             match refresh_claims {
                 Ok(refresh_claims) => {
@@ -492,12 +644,14 @@ where
                     let sub_ref = &sub;
                     let current_roles = refresh_claims.custom.roles;
 
+                    tracing::debug!("current_roles: {:?}", current_roles);
+
                     let user: Option<User> = db
                         .as_client()
-                        .select(("user", sub_ref))
+                        .select(("user", sub_ref.clone()))
                         .await
-                        .map_err(|_e| {
-                            tracing::error!("User deserialization failed");
+                        .map_err(|e| {
+                            tracing::error!("User deserialization failed: {:?}", e);
                             Error::new(ErrorKind::Other, "User deserialization failed")
                         })?;
 
@@ -507,22 +661,26 @@ where
                                 roles: current_roles.to_vec(),
                             };
 
+                            let Some(user_id) = (match &user.id.key {
+                                RecordIdKey::String(s) => Some(s.clone()),
+                                _ => None,
+                            }) else {
+                                tracing::error!("Invalid user");
+                                return Err(Error::new(ErrorKind::Other, "Bad Request"));
+                            };
+
                             let token_expiry_duration = Duration::from_secs(1 * 60);
-                            let token = sign_jwt(
-                                &auth_claim,
-                                token_expiry_duration,
-                                &user.id.key().to_string(),
-                            )
-                            .await
-                            .map_err(|e| {
-                                tracing::error!("Error: {}", e);
-                                Error::new(ErrorKind::PermissionDenied, "Unauthorized")
-                            })?;
+                            let token = sign_jwt(&auth_claim, token_expiry_duration, &user_id)
+                                .await
+                                .map_err(|e| {
+                                    tracing::error!("Error: {}", e);
+                                    Error::new(ErrorKind::PermissionDenied, "Unauthorized")
+                                })?;
 
                             // Set response headers using the AuthMetadataContext trait - works for REST, gRPC, and GraphQL!
                             ctx.set_response_metadata(
                                 "set-cookie",
-                                "oauth_client=; HttpOnly; SameSite=Lax; Path=/; Secure",
+                                "oauth_client=; HttpOnly; SameSite=Strict; Path=/; Secure",
                             )
                             .await;
 
@@ -535,7 +693,7 @@ where
 
                             return Ok(AuthStatus {
                                 is_auth: true,
-                                sub: user.id.key().to_string(),
+                                sub: user_id,
                                 current_role: current_roles[0].clone(),
                                 new_access_token: Some(token),
                                 current_role_permissions,
@@ -680,65 +838,31 @@ pub async fn confirm_authorization<T: Clone + AsSurrealClient>(
     auth_status: &AuthStatus,
     auth_constraint: &AuthorizationConstraint,
 ) -> Result<bool, Error> {
-    let formated_query =  match &auth_constraint.privilege {
-        AdminPrivilege::Admin => format!(
-            "
-            BEGIN TRANSACTION;
-            LET $user = type::thing('user', $user_id);
-            IF !$user.exists() {{
-          		THROW 'Invalid Input';
-           	}};
-
-            LET $matching_roles = (SELECT ->assigned->(role WHERE (role_name = $current_role_name AND (is_admin OR is_super_admin) AND ->granted->(permission WHERE is_admin OR is_super_admin).name CONTAINSALL $permission_constraints)) AS admin_roles FROM ONLY $user)['admin_roles'];
-            IF $matching_roles != NONE AND array::len($matching_roles) > 0 {{
-          		RETURN $matching_roles.map(|$matching_role: any| record::id($matching_role));
-           	}} ELSE {{
-          		RETURN [];
-           	}};
-
-            COMMIT TRANSACTION;
-            "
-        ),
-        AdminPrivilege::SuperAdmin => format!(
-            "
-            BEGIN TRANSACTION;
-            LET $user = type::thing('user', $user_id);
-            IF !$user.exists() {{
-          		THROW 'Invalid Input';
-           	}};
-            LET $matching_roles = (SELECT ->assigned->(role WHERE role_name = $current_role_name AND is_super_admin AND ->granted->(permission WHERE is_super_admin OR is_admin).name CONTAINSALL $permission_constraints) AS super_admin_roles FROM ONLY $user)['super_admin_roles'];
-            IF $matching_roles != NONE AND array::len($matching_roles) > 0 {{
-          		RETURN $matching_roles.map(|$matching_role: any| record::id($matching_role));
-           	}} ELSE {{
-          		RETURN [];
-           	}};
-
-            COMMIT TRANSACTION;
-            "
-        ),
-        AdminPrivilege::None => format!(
-            "
-            BEGIN TRANSACTION;
-            LET $user = type::thing('user', $user_id);
-            IF !$user.exists() {{
-          		THROW 'Invalid Input';
-           	}};
-
-            LET $matching_roles = (SELECT ->assigned->(role WHERE role_name = $current_role_name AND ->granted->permission.name CONTAINSALL $permission_constraints) AS user_roles FROM ONLY $user)['user_roles'];
-            IF $matching_roles != NONE AND array::len($matching_roles) > 0 {{
-          		RETURN $matching_roles.map(|$matching_role: any| record::id($matching_role));
-           	}} ELSE {{
-          		RETURN [];
-           	}};
-
-            COMMIT TRANSACTION;
-            "
-        ),
-    };
+    let formated_query = r#"
+        LET $user = type::record('user', $user_id);
+        LET $matching_roles = (
+            SELECT ->assigned->(role WHERE
+                (
+                    role_name = $current_role_name
+                    AND ->granted->permission.name CONTAINSALL $permission_constraints
+                )) AS matching_roles
+            FROM ONLY $user
+        )['matching_roles'];
+        IF $matching_roles != NONE
+        AND array::len($matching_roles) > 0 {
+            RETURN $matching_roles.map(
+                |$matching_role: any| {
+                    record::id($matching_role);
+                }
+            );
+        } ELSE {
+            RETURN [];
+        };
+    "#;
 
     let mut admin_privilege_check_query = db
         .as_client()
-        .query(formated_query.as_str())
+        .query(formated_query)
         .bind(("user_id", auth_status.sub.to_owned()))
         .bind(("current_role_name", auth_status.current_role.to_owned()))
         .bind((
@@ -752,7 +876,7 @@ pub async fn confirm_authorization<T: Clone + AsSurrealClient>(
         })?;
 
     // Get the first result from the first query
-    let response: Vec<String> = admin_privilege_check_query.take(0).map_err(|e| {
+    let response: Vec<String> = admin_privilege_check_query.take(2).map_err(|e| {
         tracing::error!("admin_privilege_check_query: {}", e);
         Error::new(ErrorKind::Other, "Database query deserialization failed")
     })?;
@@ -908,14 +1032,6 @@ pub async fn create_oauth_user_if_not_exists<T: Clone + AsSurrealClient>(
                 match existing_user {
                     Some(existing_user) => Ok(existing_user),
                     None => {
-                        // let email = google_user
-                        //     .email;
-
-                        // if email.is_none() {
-                        //     tracing::error!("No primary email found");
-                        //     return Err(Error::new(ErrorKind::Other, "No primary email found"));
-                        // }
-
                         let user = UserInput {
                             email: google_user.email.clone(),
                             oauth_client: Some(OAuthClientName::Google),
@@ -1025,33 +1141,14 @@ pub async fn fetch_user_roles<T: Clone + AsSurrealClient>(
         .as_client()
         .query(
             "
-            BEGIN TRANSACTION;
-            LET $user = type::thing('user', $user_id);
-            IF !$user.exists() {
-          		THROW 'User does not exist';
-           	};
+            LET $user = type::record('user', $user_id);
 
-            LET $roles = (SELECT ->(assigned WHERE is_default=true)->role.* AS roles FROM ONLY user WHERE id = $user LIMIT 1)['roles'];
-            RETURN $roles;
-            COMMIT TRANSACTION;
-            "
-        )
-        // Apparently SurrealDB formats the query string before executing it. It may result in unexpected behavior.
-        .query(
-            "
-            BEGIN TRANSACTION;
-            LET $role = type::thing('role', $role_id);
-            LET $user = type::thing('user', $user_id);
-            IF !$role.exists() {
-          		THROW 'Role does not exist';
-           	};
-            IF !$user.exists() {
-          		THROW 'User does not exist';
-           	};
+            (SELECT ->(assigned WHERE is_default=true)->role.* AS roles FROM ONLY user WHERE id = $user LIMIT 1)['roles'];
 
-            LET $roles = (SELECT ->assigned->(role WHERE id = $role)[*] AS roles FROM ONLY user WHERE id = $user LIMIT 1)['roles'];
-            RETURN $roles;
-            COMMIT TRANSACTION;
+            LET $role = type::record('role', $role_id);
+            LET $user = type::record('user', $user_id);
+
+            (SELECT ->assigned->(role WHERE id = $role)[*] AS roles FROM ONLY user WHERE id = $user LIMIT 1)['roles'];
             "
         )
         .bind(("user_id", owned_user_id))
@@ -1062,11 +1159,11 @@ pub async fn fetch_user_roles<T: Clone + AsSurrealClient>(
             Error::new(ErrorKind::Other, "DB Query failed: Get Roles")
         })?;
     let user_roles: Vec<String> = match role_id {
-        Some(_) => user_roles_res.take((1, "role_name")).map_err(|e| {
+        Some(_) => user_roles_res.take((4, "role_name")).map_err(|e| {
             tracing::error!("Failed to deserialize roles(take(1)): {}", e);
             Error::new(ErrorKind::Other, "Failed to fetch roles")
         })?,
-        None => user_roles_res.take((0, "role_name")).map_err(|e| {
+        None => user_roles_res.take((1, "role_name")).map_err(|e| {
             tracing::error!("Failed to deserialize roles(take(0)): {}", e);
             Error::new(ErrorKind::Other, "Failed to fetch roles")
         })?,
@@ -1152,7 +1249,7 @@ where
         ctx.set_response_metadata(
             "set-cookie",
             &format!(
-                "t={}; HttpOnly; SameSite=Lax; Path=/; Secure",
+                "t={}; HttpOnly; SameSite=Strict; Path=/; Secure",
                 new_refresh_token
             ),
         )
@@ -1210,17 +1307,12 @@ pub async fn fetch_current_role_permissions<T: Clone + AsSurrealClient>(
         // Apparently SurrealDB formats the query string before executing it. It may result in unexpected behavior.
         .query(
             "
-            BEGIN TRANSACTION;
             LET $role = (SELECT VALUE id FROM ONLY role WHERE role_name = $role_name LIMIT 1);
-            LET $user = type::thing('user', $user_id);
-            IF !$role.exists() {
-          		THROW 'Role does not exist';
-           	};
+            LET $user = type::record('user', $user_id);
 
 
             LET $permissions = (SELECT ->assigned->(role WHERE id = $role)->granted->permission[*] AS permissions FROM ONLY user WHERE id = $user OR oauth_user_id = $user_id LIMIT 1)['permissions'];
             RETURN $permissions;
-            COMMIT TRANSACTION;
             "
         )
         .bind(("user_id", owned_user_id))
@@ -1230,7 +1322,7 @@ pub async fn fetch_current_role_permissions<T: Clone + AsSurrealClient>(
             tracing::error!("DB Query failed. Failed to get role permissions: {}", e);
             Error::new(ErrorKind::Other, "Failed to fetch permissions")
         })?;
-    let user_role_permissions: Vec<String> = query_response.take((0, "name")).map_err(|e| {
+    let user_role_permissions: Vec<String> = query_response.take((3, "name")).map_err(|e| {
         tracing::error!("Failed to deserialize permissions(take(0)): {}", e);
         Error::new(ErrorKind::Other, "Failed to fetch permissions")
     })?;

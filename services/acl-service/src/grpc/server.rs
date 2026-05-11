@@ -1,8 +1,5 @@
 use std::{env, sync::Arc};
 
-use axum::http::HeaderValue;
-use hyper::header::{AUTHORIZATION, COOKIE};
-use hyper::HeaderMap;
 use jwt_simple::prelude::*;
 use lib::integration::grpc::clients::acl_service::{
     ConfirmAuthenticationRequest, ConfirmAuthenticationResponse, ConfirmAuthorizationRequest,
@@ -12,6 +9,7 @@ use lib::integration::grpc::clients::acl_service::{
 use lib::utils::auth::AuthClaim;
 use lib::utils::models::{AuthStatus, AuthorizationConstraint, GrpcAuthContext};
 use surrealdb::engine::remote::ws::Client;
+use surrealdb::types::RecordIdKey;
 use surrealdb::Surreal;
 use tokio::sync::Mutex;
 use tonic::{Request, Response, Status};
@@ -102,16 +100,20 @@ impl Acl for AclServiceImplementation {
                 let auth_claim = AuthClaim { roles: vec![] };
                 let service_token_expiry_duration = Duration::from_secs(30);
 
-                let signed_jwt = sign_jwt(
-                    &auth_claim,
-                    service_token_expiry_duration,
-                    &user.id.key().to_string(),
-                )
-                .await
-                .map_err(|e| {
-                    tracing::error!("Failed to sign JWT: {}", e);
-                    Status::unauthenticated("Unauthorized")
-                })?;
+                let Some(user_id) = (match &user.id.key {
+                    RecordIdKey::String(s) => Some(s.clone()),
+                    _ => None,
+                }) else {
+                    tracing::error!("Invalid user");
+                    return Err(Status::invalid_argument("Unauthorized"));
+                };
+
+                let signed_jwt = sign_jwt(&auth_claim, service_token_expiry_duration, &user_id)
+                    .await
+                    .map_err(|e| {
+                        tracing::error!("Failed to sign JWT: {}", e);
+                        Status::unauthenticated("Unauthorized")
+                    })?;
 
                 Ok(Response::new(SignInAsServiceResponse { token: signed_jwt }))
             }

@@ -6,6 +6,7 @@ use axum::{
 use hex;
 use hmac::{Hmac, Mac};
 
+use lib::utils::models::PaymentDetailsMetadata;
 use rumqttc::v5::mqttbytes::QoS;
 use serde_json::Value;
 use sha2::Sha512;
@@ -64,26 +65,27 @@ pub async fn handle_paystack_webhook(
                     // This is the reference to the resource in question that is being paid for. Should not be confused with Rust references.
                     if let Some(reference) = data.get("reference").and_then(|r| r.as_str()) {
                         let owned_reference = reference.to_string();
-                        let borrowed_reference = &owned_reference;
 
-                        let Some((resource, id)) = borrowed_reference.split_once(':') else {
-                            tracing::error!("The reference is wrongly formatted. It needs a \":\" to separate resource and id. Nothing will proceed from here. Consider manual reconciliation urgently!");
-                            // if let Err(e) = shared_state
-                            //     .mqtt_client
-                            //     .publish(
-                            //         &format!("{resource}/payment/failed"),
-                            //         QoS::ExactlyOnce,
-                            //         false,
-                            //         format!("The reference is wrongly formatted. It needs a \":\" to separate resource and id."),
-                            //     )
-                            //     .await
-                            // {
-                            //     tracing::error!("Failed to publish payment successful event: {}", e);
-                            // };
-
+                        let Some(metadata) = data.get("metadata") else {
+                            tracing::error!("Failed to extract metadata!");
                             return (StatusCode::CREATED, format!("Transaction successful!"))
                                 .into_response();
                         };
+
+                        let payment_metadata: PaymentDetailsMetadata =
+                            match serde_json::from_value(metadata.clone()) {
+                                Ok(metadata) => metadata,
+                                Err(e) => {
+                                    tracing::error!("Failed to deserialize metadata: {:?}", e);
+                                    return (
+                                        StatusCode::CREATED,
+                                        format!("Transaction successful!"),
+                                    )
+                                        .into_response();
+                                }
+                            };
+
+                        let resource = payment_metadata.resource;
 
                         if let Err(e) = shared_state
                             .mqtt_client
@@ -91,7 +93,7 @@ pub async fn handle_paystack_webhook(
                                 &format!("{resource}/payment/successful"),
                                 QoS::ExactlyOnce,
                                 false,
-                                id.to_string(),
+                                owned_reference,
                             )
                             .await
                         {
@@ -102,23 +104,17 @@ pub async fn handle_paystack_webhook(
                         }
                     }
                 }
-                (StatusCode::CREATED, format!("Transaction successful!")).into_response()
+                (StatusCode::CREATED, "Transaction successful!").into_response()
             } else {
-                (
-                    StatusCode::BAD_REQUEST,
-                    format!("Unhandled event type: {}", event),
-                )
-                    .into_response()
+                tracing::error!("Unhandled event type: {}", event);
+                (StatusCode::BAD_REQUEST, "Payment failed!").into_response()
             }
         } else {
-            (
-                StatusCode::BAD_REQUEST,
-                format!("Event type missing or invalid"),
-            )
-                .into_response()
+            tracing::error!("Event type missing or invalid");
+            (StatusCode::BAD_REQUEST, "Event type missing or invalid").into_response()
         }
     } else {
         tracing::error!("Invalid signature: expected {}, got {}", signature, hash);
-        (StatusCode::BAD_REQUEST, format!("Transaction failed!")).into_response()
+        (StatusCode::BAD_REQUEST, "Transaction failed!").into_response()
     }
 }

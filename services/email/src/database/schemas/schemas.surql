@@ -1,7 +1,7 @@
 -- Subscribers
 DEFINE TABLE OVERWRITE subscriber SCHEMAFULL;
 
-DEFINE FIELD email ON TABLE subscriber TYPE string ASSERT string::is::email($value);
+DEFINE FIELD email ON TABLE subscriber TYPE string ASSERT string::is_email($value);
 DEFINE FIELD first_name ON TABLE subscriber TYPE option<string>;
 DEFINE FIELD last_name ON TABLE subscriber TYPE option<string>;
 

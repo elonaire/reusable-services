@@ -22,15 +22,8 @@ message AuthStatus {
   repeated string current_role_permissions = 5;
 }
 
-enum AdminPrivilege {
-  ADMIN = 0;
-  SUPER_ADMIN = 1;
-  NONE = 2;
-}
-
 message AuthorizationConstraint {
   repeated string permissions = 1;
-  optional AdminPrivilege privilege = 2;
 }
 
 message ConfirmAuthorizationResponse {
