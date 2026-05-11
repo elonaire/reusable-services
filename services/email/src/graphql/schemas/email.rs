@@ -1,10 +1,11 @@
 use async_graphql::{ComplexObject, Enum, InputObject, OutputType, SimpleObject};
+use chrono::{DateTime, Utc};
 use lib::utils::models::ApiResponse;
 
 use serde::{Deserialize, Serialize};
-use surrealdb::RecordId;
+use surrealdb::types::{RecordId, RecordIdKey, SurrealValue};
 
-#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq, Enum, Eq)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq, Enum, Eq, SurrealValue)]
 pub enum SubscriberStatus {
     #[graphql(name = "Active")]
     Active,
@@ -14,7 +15,7 @@ pub enum SubscriberStatus {
     Bounced,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, SimpleObject)]
+#[derive(Debug, Clone, Serialize, Deserialize, SimpleObject, SurrealValue)]
 #[graphql(complex)]
 pub struct Subscriber {
     #[graphql(skip)]
@@ -23,65 +24,74 @@ pub struct Subscriber {
     pub first_name: Option<String>,
     pub last_name: Option<String>,
     pub status: SubscriberStatus,
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[ComplexObject]
 impl Subscriber {
-    async fn id(&self) -> String {
-        self.id.key().to_string()
+    async fn id(&self) -> Option<String> {
+        match &self.id.key {
+            RecordIdKey::String(s) => Some(s.clone()),
+            _ => None,
+        }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, InputObject)]
+#[derive(Debug, Clone, Serialize, Deserialize, InputObject, SurrealValue)]
 pub struct SubscriberInput {
     pub email: String,
     pub first_name: Option<String>,
     pub last_name: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, SimpleObject)]
+#[derive(Debug, Clone, Serialize, Deserialize, SimpleObject, SurrealValue)]
 #[graphql(complex)]
 pub struct MailingList {
     #[graphql(skip)]
     pub id: RecordId,
     pub name: String,
     pub description: Option<String>,
-    pub created_at: String,
+    pub created_at: DateTime<Utc>,
 }
 
 #[ComplexObject]
 impl MailingList {
-    async fn id(&self) -> String {
-        self.id.key().to_string()
+    async fn id(&self) -> Option<String> {
+        match &self.id.key {
+            RecordIdKey::String(s) => Some(s.clone()),
+            _ => None,
+        }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, InputObject)]
+#[derive(Debug, Clone, Serialize, Deserialize, InputObject, SurrealValue)]
 pub struct MailingListInput {
     pub name: String,
     pub description: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, SimpleObject)]
+#[derive(Debug, Clone, Serialize, Deserialize, SimpleObject, SurrealValue)]
 #[graphql(complex)]
 pub struct Subscription {
     #[graphql(skip)]
     pub id: RecordId,
     pub subscriber: Subscriber,
     pub mailing_list: MailingList,
-    pub created_at: String,
+    pub created_at: DateTime<Utc>,
 }
 
 #[ComplexObject]
 impl Subscription {
-    async fn id(&self) -> String {
-        self.id.key().to_string()
+    async fn id(&self) -> Option<String> {
+        match &self.id.key {
+            RecordIdKey::String(s) => Some(s.clone()),
+            _ => None,
+        }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, InputObject)]
+#[derive(Debug, Clone, Serialize, Deserialize, InputObject, SurrealValue)]
 pub struct SubscriptionInput {
     pub subscriber: SubscriberInput,
     #[graphql(skip)]
@@ -89,7 +99,7 @@ pub struct SubscriptionInput {
     pub subscription_input_metadata: SubscriptionInputMetadata,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, InputObject)]
+#[derive(Debug, Clone, Serialize, Deserialize, InputObject, SurrealValue)]
 pub struct SubscriptionInputMetadata {
     pub mailing_list_id: String,
 }

@@ -1,12 +1,9 @@
-use std::{env, sync::Arc};
+use std::sync::Arc;
 
 use async_graphql::{Context, Object, Result};
 use axum::Extension;
-use hyper::{HeaderMap, StatusCode};
-use lib::{
-    middleware::auth::false_graphql::confirm_authentication,
-    utils::{api_responses::synthesize_graphql_response, custom_error::ExtendedError},
-};
+use hyper::StatusCode;
+use lib::utils::{api_responses::synthesize_graphql_response, custom_error::ExtendedError};
 use surrealdb::{engine::remote::ws::Client, Surreal};
 
 use crate::graphql::schemas::{
@@ -32,13 +29,10 @@ impl PaymentQuery {
         let filter_query = match &filters {
             Some(_existing_filters) => {
                 r#"
-                BEGIN TRANSACTION;
                 RETURN IF $filters != NONE {
               		RETURN IF $filters.currency_id != NONE AND string::len($filters.currency_id) > 0 {
-                        LET $currency_record = type::thing('currency', $filters.currency_id);
-                        IF !$currency_record.exists() {
-                            []
-                   	    };
+                        LET $currency_record = type::record('currency', $filters.currency_id);
+
                         (SELECT * FROM currency WHERE id = $currency_record)
                     }
                     ELSE IF $filters.code != NONE AND string::len($filters.code) > 0 {
@@ -54,7 +48,6 @@ impl PaymentQuery {
                         []
                     };
                 };
-                COMMIT TRANSACTION;
                 "#
             }
             None => "(SELECT * FROM currency)",

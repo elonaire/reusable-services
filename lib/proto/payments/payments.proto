@@ -10,6 +10,11 @@ message UserPaymentDetails {
     string amount = 2;
     string reference = 3;
     string currency = 4;
+    PaymentDetailsMetadata metadata = 5;
+}
+
+message PaymentDetailsMetadata {
+    string resource = 1;
 }
 
 message PaymentIntegrationResponse {

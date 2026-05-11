@@ -13,9 +13,18 @@ use crate::{
 use axum::{extract::Request, http::HeaderValue, middleware::Next, response::Response};
 use hyper::header::{AUTHORIZATION, COOKIE, SET_COOKIE};
 use tonic::transport::Channel;
+use uuid::Uuid;
 
 pub async fn handle_auth_with_refresh(mut req: Request, next: Next) -> Result<Response, ApiError> {
     let headers = req.headers().clone();
+    let headers_mut = req.headers_mut();
+
+    let request_id = Uuid::new_v4();
+    headers_mut.insert(
+        "x-request-id",
+        HeaderValue::from_str(&request_id.to_string()).unwrap_or(HeaderValue::from_static("")),
+    );
+
     let auth_header = headers.get(AUTHORIZATION);
     let cookie_header = headers.get(COOKIE);
     let mut request = tonic::Request::new(ConfirmAuthenticationRequest {});

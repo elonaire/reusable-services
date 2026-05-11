@@ -13,7 +13,7 @@ use lib::{
 };
 
 use hyper::{HeaderMap, StatusCode};
-use surrealdb::{engine::remote::ws::Client, RecordId, Surreal};
+use surrealdb::{engine::remote::ws::Client, types::RecordId, Surreal};
 
 use crate::{
     graphql::schemas::email::{
@@ -80,7 +80,6 @@ impl EmailMutation {
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["write:mailing_list".into()],
-            privilege: AdminPrivilege::Admin,
         };
 
         let authorized =
@@ -148,11 +147,12 @@ impl EmailMutation {
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
 
-        subscription_input.mailing_list = Some(RecordId::from_table_key(
+        subscription_input.mailing_list = Some(RecordId::new(
             "mailing_list",
-            &subscription_input
+            subscription_input
                 .subscription_input_metadata
-                .mailing_list_id,
+                .mailing_list_id
+                .clone(),
         ));
 
         let mut query = db
@@ -180,7 +180,7 @@ impl EmailMutation {
                     .build()
             })?;
 
-        let db_response: Option<Subscription> = query.take(0).map_err(|e| {
+        let db_response: Option<Subscription> = query.take(6).map_err(|e| {
             tracing::error!("Failed to create subscription: {}", e);
             ExtendedError::new(
                 "Failed to create subscription",

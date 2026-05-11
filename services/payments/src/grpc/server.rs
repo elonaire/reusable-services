@@ -24,7 +24,13 @@ impl PaymentsService for PaymentsServiceImplementation {
         &self,
         request: Request<UserPaymentDetails>,
     ) -> Result<Response<PaymentIntegrationResponse>, Status> {
-        match utils::payments::initiate_payment_integration(&mut request.into_inner().into()).await
+        match utils::payments::initiate_payment_integration(
+            &mut request
+                .into_inner()
+                .try_into()
+                .map_err(|e| Status::invalid_argument(format!("{:?}", e)))?,
+        )
+        .await
         {
             Ok(res) => Ok(Response::new(PaymentIntegrationResponse {
                 authorization_url: res.data.authorization_url,

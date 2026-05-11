@@ -9,7 +9,7 @@ use hyper::{
 use lib::utils::{
     api_responses::synthesize_graphql_response,
     custom_error::ExtendedError,
-    models::{AdminPrivilege, ApiResponse, AuthStatus, AuthorizationConstraint},
+    models::{ApiResponse, AuthStatus, AuthorizationConstraint},
 };
 use surrealdb::{engine::remote::ws::Client, Surreal};
 
@@ -43,7 +43,6 @@ impl Query {
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["read:user".into()],
-            privilege: AdminPrivilege::Admin,
         };
 
         let authorized =
@@ -56,26 +55,21 @@ impl Query {
         let mut fetch_users_query = db
             .query(
                 r#"
-                BEGIN TRANSACTION;
-                LET $user = type::thing('user', $user_id);
-                IF !$user.exists()
-               	{
-              		THROW 'Invalid Input';
-               	};
+                LET $user = type::record('user', $user_id);
 
                 LET $org = IF $filters.organization_id != NONE
-                { type::thing('organization', $filters.organization_id) }
+                { type::record('organization', $filters.organization_id) }
                 ;
                 LET $dept = IF $filters.department_id != NONE
-                { type::thing('department', $filters.department_id) }
+                { type::record('department', $filters.department_id) }
                 ;
                 LET $role = IF $filters.role_id != NONE
-                { type::thing('role', $filters.role_id) }
+                { type::record('role', $filters.role_id) }
                 ;
                 RETURN IF $filters != NONE
                	{
 
-              		LET $filtered_users = <set> array::flatten([
+              		LET $filtered_users = <array><set> array::flatten([
              			(SELECT * FROM user WHERE ($filters.department_id = NONE AND $filters.organization_id != NONE AND $filters.status != NONE AND status = $filters.status AND ->assigned->role->is_under->(organization WHERE (created_by = $user AND id = $org))) OR ($filters.department_id = NONE AND $filters.organization_id = NONE AND $filters.status != NONE AND status = $filters.status AND ->assigned->role->is_under->(organization WHERE created_by = $user))),
              			(SELECT * FROM user WHERE ($filters.department_id != NONE AND $filters.organization_id = NONE AND $filters.status != NONE AND status = $filters.status AND ->assigned->role->is_under->(department WHERE (created_by = $user AND id = $dept))) OR ($filters.department_id != NONE AND $filters.organization_id != NONE AND $filters.status != NONE AND status = $filters.status AND ->assigned->role->is_under->(department WHERE (created_by = $user AND id = $dept))->is_under->(organization WHERE id = $org)) OR ($filters.department_id = NONE AND $filters.organization_id = NONE AND $filters.status != NONE AND status = $filters.status AND ->assigned->role->is_under->(department WHERE created_by = $user))),
              			(SELECT * FROM user WHERE ($filters.department_id = NONE AND $filters.organization_id != NONE AND $filters.status != NONE AND status = $filters.status AND @.{..}(->assigned->role->is_under->department)->is_under->(organization WHERE (created_by = $user AND id = $org))) OR ($filters.department_id != NONE AND $filters.organization_id != NONE AND $filters.status != NONE AND status = $filters.status AND @.{..}(->assigned->role->is_under->(department WHERE id = $dept))->is_under->(organization WHERE (created_by = $user AND id = $org))) OR ($filters.department_id = NONE AND $filters.organization_id = NONE AND $filters.status != NONE AND status = $filters.status AND @.{..}(->assigned->role->is_under->department)->is_under->(organization WHERE created_by = $user))),
@@ -87,7 +81,7 @@ impl Query {
 
                 } ELSE {
 
-              		LET $scoped_users = <set> array::flatten([
+              		LET $scoped_users = <array><set> array::flatten([
              			(SELECT * FROM user WHERE ->assigned->role->is_under->(organization WHERE created_by = $user)),
              			(SELECT * FROM user WHERE ->assigned->role->is_under->(department WHERE created_by = $user)),
              			(SELECT * FROM user WHERE @.{..}(->assigned->role->is_under->department)->is_under->(organization WHERE created_by = $user)),
@@ -99,7 +93,6 @@ impl Query {
 
                 }
                 ;
-                COMMIT TRANSACTION;
                 "#
             )
             .bind(("user_id", authenticated_ref.sub.to_owned()))
@@ -110,7 +103,7 @@ impl Query {
             ExtendedError::new("Error fetching users", StatusCode::BAD_REQUEST.as_str()).build()
         })?;
 
-        let response: Vec<User> = fetch_users_query.take(0).map_err(|e| {
+        let response: Vec<User> = fetch_users_query.take(4).map_err(|e| {
             tracing::error!("Users deserialization error: {}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
@@ -144,11 +137,9 @@ impl Query {
                     let mut user_query = db
                         .query(
                             "
-                            BEGIN TRANSACTION;
-                            LET $user_record = type::thing('user', $user_id);
+                            LET $user_record = type::record('user', $user_id);
                             LET $found_user = (SELECT * OMIT password, user_name, status FROM ONLY user WHERE id = $user_record OR oauth_user_id = $user_id LIMIT 1);
                             RETURN $found_user;
-                            COMMIT TRANSACTION;
                             "
                         )
                         .bind(("user_id", user_id))
@@ -158,7 +149,7 @@ impl Query {
                         ExtendedError::new("Error fetching user", StatusCode::BAD_REQUEST.as_str()).build()
                     })?;
 
-                    let user: Option<User> = user_query.take(0).map_err(|e| {
+                    let user: Option<User> = user_query.take(2).map_err(|e| {
                         tracing::error!("User deserialization error: {}", e);
                         ExtendedError::new(
                             "Server Error",
@@ -196,7 +187,6 @@ impl Query {
 
                 let authorization_constraint = AuthorizationConstraint {
                     permissions: vec!["read:user".into()],
-                    privilege: AdminPrivilege::Admin,
                 };
 
                 let authorized =
@@ -212,21 +202,11 @@ impl Query {
                 let mut user_query = db
                     .query(
                         "
-                        BEGIN TRANSACTION;
-                        LET $user = type::thing('user', $user_id);
-                        LET $found_user = (SELECT * FROM ONLY $user LIMIT 1);
-                        RETURN $found_user;
-                        COMMIT TRANSACTION;
-                        "
-                    )
-                    .query(
-                        "
-                        BEGIN TRANSACTION;
-                        LET $user = type::thing('user', $user_id);
-                        LET $auth_user = type::thing('user', $auth_sub);
-                        LET $found_user = (SELECT * FROM ONLY $user WHERE (->assigned->(role WHERE created_by = $auth_user) OR ->assigned->role->is_under->(organization WHERE created_by = $auth_user) OR ->assigned->role->is_under->(department WHERE created_by = $auth_user) OR @.{..}(->assigned->role->is_under->department)->is_under->(organization WHERE created_by = $auth_user) OR @.{..}(->assigned->role->is_under->department)->is_under->(department WHERE created_by = $auth_user)));
-                        RETURN $found_user;
-                        COMMIT TRANSACTION;
+                        LET $user = type::record('user', $user_id);
+                        (SELECT * FROM ONLY $user LIMIT 1);
+
+                        LET $auth_user = type::record('user', $auth_sub);
+                        (SELECT * FROM ONLY $user WHERE (->assigned->(role WHERE created_by = $auth_user) OR ->assigned->role->is_under->(organization WHERE created_by = $auth_user) OR ->assigned->role->is_under->(department WHERE created_by = $auth_user) OR @.{..}(->assigned->role->is_under->department)->is_under->(organization WHERE created_by = $auth_user) OR @.{..}(->assigned->role->is_under->department)->is_under->(department WHERE created_by = $auth_user)));
                         "
                     )
                     .bind(("user_id", user_id))
@@ -238,7 +218,7 @@ impl Query {
                 })?;
 
                 let user: Option<User> = if is_owner {
-                    user_query.take(0).map_err(|e| {
+                    user_query.take(1).map_err(|e| {
                         tracing::error!("User deserialization error: {}", e);
                         ExtendedError::new(
                             "Server Error",
@@ -247,7 +227,7 @@ impl Query {
                         .build()
                     })?
                 } else {
-                    user_query.take(1).map_err(|e| {
+                    user_query.take(3).map_err(|e| {
                         tracing::error!("User deserialization error: {}", e);
                         ExtendedError::new(
                             "Server Error",
@@ -300,10 +280,7 @@ impl Query {
         let mut user_query = db
             .query(
                 "
-                BEGIN TRANSACTION;
-                LET $found_user = (SELECT * OMIT password, user_name, status, phone, oauth_client, oauth_user_id FROM ONLY user WHERE ->assigned->(role WHERE is_super_admin) LIMIT 1);
-                RETURN $found_user;
-                COMMIT TRANSACTION;
+                (SELECT * OMIT password, user_name, status, phone, oauth_client, oauth_user_id FROM ONLY user WHERE ->assigned->(role WHERE is_super_admin) LIMIT 1)
                 "
             )
             .await
@@ -374,7 +351,6 @@ impl Query {
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["read:role".into()],
-            privilege: AdminPrivilege::Admin,
         };
 
         let authorized =
@@ -392,20 +368,15 @@ impl Query {
             let mut fetch_user_roles_query = db
                 .query(
                     "
-                    BEGIN TRANSACTION;
-                    LET $user = type::thing('user', $user_id);
-                    IF !$user.exists()
-                   	{
-                  		THROW 'Invalid Input';
-                   	};
-                    LET $roles = array::flatten([
+                    LET $user = type::record('user', $user_id);
+
+                    LET $roles = <array><set>array::flatten([
                    	(SELECT * FROM role WHERE ->is_under->(organization WHERE created_by = $user)),
                    	(SELECT * FROM role WHERE ->is_under->(department WHERE created_by = $user)),
                    	(SELECT * FROM role WHERE @.{..}(->is_under->department)->is_under->(organization WHERE created_by = $user)),
                    	(SELECT * FROM role WHERE @.{..}(->is_under->department)->is_under->(department WHERE created_by = $user))
                     ]);
                     RETURN $roles;
-                    COMMIT TRANSACTION;
                     "
                 )
                 .bind(("user_id", authenticated_ref.sub.to_owned()))
@@ -414,7 +385,7 @@ impl Query {
                 ExtendedError::new("Error fetching roles", StatusCode::BAD_REQUEST.as_str()).build()
             })?;
 
-            let response: Vec<SystemRole> = fetch_user_roles_query.take(0).map_err(|e| {
+            let response: Vec<SystemRole> = fetch_user_roles_query.take(2).map_err(|e| {
                 tracing::error!("SystemRole deserialization error: {}", e);
                 ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str())
                     .build()
@@ -438,15 +409,10 @@ impl Query {
             let mut fetch_user_roles_query = db
                 .query(
                     "
-                BEGIN TRANSACTION;
-                LET $user = type::thing('user', $user_id);
+                LET $user = type::record('user', $user_id);
 
-                IF !$user.exists() {
-                    THROW 'Invalid Input';
-                };
                 LET $roles = (SELECT ->assigned->role.* AS roles FROM ONLY $user)['roles'];
                 RETURN $roles;
-                COMMIT TRANSACTION;
                 ",
                 )
                 .bind(("user_id", user_id))
@@ -457,7 +423,7 @@ impl Query {
                         .build()
                 })?;
 
-            let response: Vec<SystemRole> = fetch_user_roles_query.take(0).map_err(|e| {
+            let response: Vec<SystemRole> = fetch_user_roles_query.take(2).map_err(|e| {
                 tracing::error!("SystemRole deserialization error: {}", e);
                 ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str())
                     .build()
@@ -490,15 +456,10 @@ impl Query {
         let mut fetch_role_permissions_query = db
             .query(
                 "
-            BEGIN TRANSACTION;
-            LET $user = type::thing('user', $user_id);
+            LET $user = type::record('user', $user_id);
 
-            IF !$user.exists() {
-                THROW 'Invalid Input';
-            };
             LET $permissions = (SELECT *, resource[*] FROM permission WHERE <-granted<-(role WHERE role_name = $current_role_name)<-assigned<-(user WHERE id = $user));
             RETURN $permissions;
-            COMMIT TRANSACTION;
             ",
             )
             .bind(("user_id", authenticated_ref.sub.to_owned()))
@@ -510,7 +471,7 @@ impl Query {
                     .build()
             })?;
 
-        let response: Vec<Permission> = fetch_role_permissions_query.take(0).map_err(|e| {
+        let response: Vec<Permission> = fetch_role_permissions_query.take(2).map_err(|e| {
             tracing::error!("SystemRole deserialization error: {}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
@@ -540,7 +501,6 @@ impl Query {
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["read:organization".into()],
-            privilege: AdminPrivilege::Admin,
         };
 
         let authorized =
@@ -553,13 +513,9 @@ impl Query {
         let mut fetch_user_orgs_query = db
             .query(
                 "
-                BEGIN TRANSACTION;
-                LET $user = type::thing('user', $user_id);
-                IF !$user.exists()
-               	{
-              		THROW 'Invalid Input';
-               	};
-                LET $organizations = <set> array::flatten([
+                LET $user = type::record('user', $user_id);
+
+                LET $organizations = <array><set> array::flatten([
                    	(SELECT * FROM organization WHERE created_by = $user),
                    	(SELECT * FROM organization WHERE <-is_under<-(role WHERE (is_admin OR is_super_admin) AND ->granted->permission.name CONTAINSANY [
                   		'write:department',
@@ -568,7 +524,6 @@ impl Query {
                    	])<-assigned<-(user WHERE id = $user))
                 ]);
                 RETURN $organizations;
-                COMMIT TRANSACTION;
                 ",
             )
             .bind(("user_id", authenticated_ref.sub.to_owned()))
@@ -578,7 +533,7 @@ impl Query {
                 ExtendedError::new("Error fetching organizations", StatusCode::BAD_REQUEST.as_str()).build()
             })?;
 
-        let response: Vec<Organization> = fetch_user_orgs_query.take(0).map_err(|e| {
+        let response: Vec<Organization> = fetch_user_orgs_query.take(2).map_err(|e| {
             tracing::error!("Organization deserialization error: {}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
@@ -608,7 +563,6 @@ impl Query {
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["read:department".into()],
-            privilege: AdminPrivilege::Admin,
         };
 
         let authorized =
@@ -621,13 +575,9 @@ impl Query {
         let mut fetch_user_departments_query = db
             .query(
                 "
-                BEGIN TRANSACTION;
-                LET $user = type::thing('user', $user_id);
-                IF !$user.exists()
-               	{
-              		THROW 'Invalid Input';
-               	};
-                LET $departments = <set>array::flatten([
+                LET $user = type::record('user', $user_id);
+
+                LET $departments = <array><set>array::flatten([
                    	(SELECT * FROM department WHERE created_by = $user),
                    	(SELECT * FROM department WHERE <-is_under<-(role WHERE (is_admin OR is_super_admin) AND ->granted->permission.name CONTAINSANY [
                   		'write:department',
@@ -638,7 +588,6 @@ impl Query {
                     (SELECT * FROM department WHERE @.{..}(->is_under)->(department WHERE created_by = $user)),
                 ]).filter(|$v| $v);
                 RETURN $departments;
-                COMMIT TRANSACTION;
                 ",
             )
             .bind(("user_id", authenticated_ref.sub.to_owned()))
@@ -648,7 +597,7 @@ impl Query {
                 ExtendedError::new("Error fetching departments", StatusCode::BAD_REQUEST.as_str()).build()
             })?;
 
-        let response: Vec<Department> = fetch_user_departments_query.take(0).map_err(|e| {
+        let response: Vec<Department> = fetch_user_departments_query.take(2).map_err(|e| {
             tracing::error!("Department deserialization error: {}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
@@ -678,7 +627,6 @@ impl Query {
 
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["read:resource".into()],
-            privilege: AdminPrivilege::SuperAdmin,
         };
 
         let authorized =
@@ -691,15 +639,10 @@ impl Query {
         let mut fetch_role_permissions_resources_query = db
             .query(
                 "
-            BEGIN TRANSACTION;
-            LET $user = type::thing('user', $user_id);
+            LET $user = type::record('user', $user_id);
 
-            IF !$user.exists() {
-                THROW 'Invalid Input';
-            };
             LET $resources =(SELECT * FROM resource);
             RETURN $resources;
-            COMMIT TRANSACTION;
             ",
             )
             .bind(("user_id", authenticated_ref.sub.to_owned()))
@@ -716,7 +659,7 @@ impl Query {
 
         let response: Vec<Resource> =
             fetch_role_permissions_resources_query
-                .take(0)
+                .take(2)
                 .map_err(|e| {
                     tracing::error!("SystemRole deserialization error: {}", e);
                     ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str())

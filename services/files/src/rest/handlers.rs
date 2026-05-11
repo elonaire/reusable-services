@@ -15,7 +15,7 @@ use lib::{
     },
 };
 use tokio::{
-    fs::{remove_file, File},
+    fs::{create_dir_all, remove_file, File},
     io::{AsyncReadExt, AsyncWriteExt},
 };
 use uuid::Uuid;
@@ -26,7 +26,7 @@ use std::{
     path::Path,
     sync::Arc,
 };
-use surrealdb::{engine::remote::ws::Client, Surreal};
+use surrealdb::{engine::remote::ws::Client, types::RecordIdKey, Surreal};
 
 use crate::graphql::schemas::general::{UploadedFile, UploadedFileResponse};
 
@@ -37,6 +37,7 @@ pub struct ImageResizeParams {
 }
 
 pub async fn upload(
+    AxumUrlParams(path): AxumUrlParams<String>,
     headers: HeaderMap,
     Extension(db): Extension<Arc<Surreal<Client>>>,
     Extension(auth_status): Extension<AuthStatus>,
@@ -44,7 +45,7 @@ pub async fn upload(
 ) -> Result<ApiResponseRest<Vec<UploadedFileResponse>>, ApiError> {
     let upload_dir = env::var("FILE_UPLOADS_DIR").map_err(|e| {
         tracing::error!("Missing FILE_UPLOADS_DIR environment variable: {}", e);
-        ApiError::Internal(e.into())
+        ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
     })?;
 
     let user_fk_body = ForeignKey {
@@ -57,17 +58,150 @@ pub async fn upload(
         .await
         .ok_or(ApiError::Unauthorized("Unauthorized".into()))?;
 
-    let user_id_raw = user_fk.id.key().to_string();
+    let Some(user_id_raw) = (match &user_fk.id.key {
+        RecordIdKey::String(s) => Some(s.clone()),
+        _ => None,
+    }) else {
+        tracing::error!("Invalid user");
+        return Err(ApiError::BadRequest("Bad Request".into()));
+    };
 
-    std::fs::create_dir_all(&upload_dir).map_err(|e| {
+    create_dir_all(&upload_dir).await.map_err(|e| {
         tracing::error!("Failed to create upload directory: {}", e);
         ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
     })?;
 
-    let mut total_size: u64 = 0;
+    let (bucket, key) = path
+        .split_once('/')
+        .map(|(b, k)| (b.to_owned(), Some(k.to_owned())))
+        .unwrap_or_else(|| (path.clone(), None));
+
+    let bucket_ref = &bucket;
+
+    let split_keys = key
+        .map(|provided_key| {
+            provided_key
+                .split('/')
+                .map(|s| s.to_owned())
+                .collect::<Vec<String>>()
+        })
+        .unwrap_or_default();
+
+    let split_keys_ref = split_keys.as_slice();
+
+    let validation_result = db
+        .query(
+            r#"
+            LET $bucket = (
+                SELECT VALUE id
+                FROM ONLY bucket
+                WHERE name = $bucket_name
+                LIMIT 1
+            );
+            IF $bucket = NONE {
+                THROW 'Invalid Input';
+            };
+
+            IF array::len($split_keys) = 0 {
+                RETURN true;
+            } ELSE {
+                LET $immediate_key = array::first($split_keys);
+                LET $rest_keys = array::remove($split_keys, 0);
+
+                LET $key_found_in_bucket = (
+                    SELECT VALUE id
+                    FROM ONLY key
+                    WHERE
+                        name = $immediate_key
+                        AND ->(belongs_to WHERE out = $bucket)
+                    LIMIT 1
+                );
+
+                IF $key_found_in_bucket = NONE {
+                    THROW 'Invalid Input';
+                };
+
+                IF array::len($rest_keys) = 0 {
+                    RETURN true;
+                } ELSE {
+                    LET $rest_keys_validity = $rest_keys.map(
+                        |$key,$index| {
+                            LET $parent_key = IF $index = 0 {
+                                (
+                                    SELECT VALUE id
+                                    FROM ONLY key
+                                    WHERE name = $immediate_key
+                                    LIMIT 1
+                                );
+                            } ELSE {
+                                LET $prev_index = $index - 1;
+
+                                LET $prev_key = $split_keys.at($prev_index);
+
+                                (
+                                    SELECT VALUE id
+                                    FROM ONLY key
+                                    WHERE name = $prev_key
+                                    LIMIT 1
+                                );
+                            };
+
+                            LET $key_found = (
+                                SELECT VALUE id
+                                FROM ONLY key
+                                WHERE
+                                    name = $key
+                                    AND ->(belongs_to WHERE out = $parent_key)
+                                LIMIT 1
+                            );
+
+                            IF $key_found = NONE {
+                                false;
+                            } ELSE {
+                                true;
+                            };
+                        }
+                    );
+
+                    RETURN $rest_keys_validity.reduce(|$key_one,$key_two| $key_one && $key_two);
+                };
+            };
+            "#,
+        )
+        .bind(("bucket_name", bucket_ref.clone()))
+        .bind(("split_keys", split_keys_ref.to_vec()))
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to validate bucket and key: {}", e);
+            ApiError::BadRequest("Invalid bucket or key".into())
+        })
+        .and_then(|mut res| {
+            res.take(2).map_err(|e| {
+                tracing::error!("Failed to deserialize: {}", e);
+                ApiError::BadRequest("Invalid bucket or key".into())
+            })
+        });
+
+    let bucket_key_are_valid: Option<bool> = match validation_result {
+        Ok(val) => val,
+        Err(e) => {
+            while let Ok(Some(_)) = multipart.next_field().await {} // drain body to prevent ECONNRESET errors
+            return Err(e);
+        }
+    };
+
+    if bucket_key_are_valid != Some(true) {
+        while let Ok(Some(_)) = multipart.next_field().await {} // drain body to prevent ECONNRESET errors
+        return Err(ApiError::BadRequest("Invalid bucket or key".into()));
+    };
+
     let mut all_uploaded_files_response: Vec<UploadedFileResponse> = Vec::new();
 
-    while let Some(field) = multipart.next_field().await.unwrap_or_else(|_| None) {
+    while let Some(field) = multipart.next_field().await.map_err(|e| {
+        tracing::error!("Multipart error: {}", e);
+        ApiError::BadRequest("Invalid multipart payload".into())
+    })? {
+        let mut total_size: u64 = 0;
         let system_filename = Uuid::new_v4();
         let filepath = Path::new(&upload_dir).join(system_filename.to_string());
         let mut field = field;
@@ -114,11 +248,7 @@ pub async fn upload(
             .query(
                 "
                 BEGIN TRANSACTION;
-                LET $user = type::thing('user_id', $user_id);
-
-                IF !$user.exists() {
-                    THROW 'Invalid Input';
-                };
+                LET $user = type::record('user_id', $user_id);
 
                 LET $new_file = (CREATE file CONTENT {
                     owner: $user,
@@ -127,8 +257,31 @@ pub async fn upload(
                     mime_type: $mime_type,
                     system_filename: $system_filename,
                     is_free: $is_free
-                });
-                RETURN $new_file[0];
+                })[0];
+                LET $file_record = (SELECT VALUE id FROM ONLY $new_file);
+
+                IF array::len($split_keys) = 0 {
+                    LET $bucket = (
+                        SELECT VALUE id
+                        FROM ONLY bucket
+                        WHERE name = $bucket_name
+                        LIMIT 1
+                    );
+
+                    RELATE $file_record->belongs_to->$bucket;
+                } ELSE {
+                    LET $last_key = array::at($split_keys, -1);
+
+                    LET $key_id = (
+                        SELECT VALUE id
+                        FROM ONLY key
+                        WHERE name = $last_key
+                        LIMIT 1
+                    );
+
+                    RELATE $file_record->belongs_to->$key_id;
+                };
+                RETURN $new_file;
                 COMMIT TRANSACTION;
                 ",
             )
@@ -138,6 +291,8 @@ pub async fn upload(
             .bind(("mime_type", mime_type))
             .bind(("is_free", is_free))
             .bind(("system_filename", system_filename.to_string()))
+            .bind(("bucket_name", bucket_ref.clone()))
+            .bind(("split_keys", split_keys_ref.to_vec()))
             .await
             .map_err(|e| {
                 tracing::error!("Failed to insert file into database: {}", e);
@@ -145,7 +300,7 @@ pub async fn upload(
                 tokio::spawn(async move { remove_file(&filepath).await });
                 ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
             })?
-            .take(0)
+            .take(5)
             .map_err(|e| {
                 tracing::error!("Failed to retrieve file from database: {}", e);
                 let filepath = filepath.clone();
@@ -158,10 +313,18 @@ pub async fn upload(
             ApiError::Internal(anyhow::anyhow!("Failed to upload file"))
         })?;
 
+        let Some(file_id) = (match &stored_file.id.key {
+            RecordIdKey::String(s) => Some(s.clone()),
+            _ => None,
+        }) else {
+            tracing::error!("Invalid user");
+            return Err(ApiError::BadRequest("Bad Request".into()));
+        };
+
         all_uploaded_files_response.push(UploadedFileResponse {
             field_name,
             file_name: stored_file.system_filename,
-            file_id: stored_file.id.key().to_string(),
+            file_id,
         });
     }
 
@@ -173,9 +336,9 @@ pub async fn upload(
 }
 
 pub async fn download_file(
+    AxumUrlParams(key): AxumUrlParams<String>,
     Extension(db): Extension<Arc<Surreal<Client>>>,
     Extension(auth_status): Extension<AuthStatus>,
-    AxumUrlParams(file_name): AxumUrlParams<String>,
 ) -> Result<Response, StatusCode> {
     let upload_dir = env::var("FILE_UPLOADS_DIR");
 
@@ -185,7 +348,152 @@ pub async fn download_file(
     }
     let upload_dir = upload_dir.unwrap();
 
-    let path = Path::new(&upload_dir).join(&file_name);
+    let (bucket, key) = key
+        .split_once('/')
+        .map(|(b, k)| (b.to_owned(), Some(k.to_owned())))
+        .unwrap_or_else(|| (key.clone(), None));
+
+    let bucket_ref = &bucket;
+
+    let mut split_keys = key
+        .map(|provided_key| {
+            provided_key
+                .split('/')
+                .map(|s| s.to_owned())
+                .collect::<Vec<String>>()
+        })
+        .unwrap_or_default();
+
+    let original_file_name = split_keys.pop();
+    let split_keys_ref = split_keys.as_slice();
+
+    let mut file_details_query = db
+        .query(
+            "
+            LET $bucket = (
+                SELECT VALUE id
+                FROM ONLY bucket
+                WHERE name = $bucket_name
+                LIMIT 1
+            );
+            IF $bucket = NONE {
+                THROW 'Invalid Input';
+            };
+
+            LET $bucket_and_key_are_valid = IF array::len($split_keys) = 0 {
+                LET $file_found_in_bucket = (
+                    SELECT <-belongs_to<-(file WHERE name = $file_name) AS files
+                    FROM ONLY $bucket
+                )['files'];
+
+                IF array::len($file_found_in_bucket) = 0 {
+                    THROW 'Invalid Input';
+                };
+                true
+            } ELSE {
+                LET $immediate_key = array::first($split_keys);
+                LET $last_key = array::last($split_keys);
+                LET $rest_keys = array::remove($split_keys, 0);
+
+                LET $key_found_in_bucket = (
+                    SELECT VALUE id
+                    FROM ONLY key
+                    WHERE
+                        name = $immediate_key
+                        AND ->(belongs_to WHERE out = $bucket)
+                    LIMIT 1
+                );
+
+                IF $key_found_in_bucket = NONE {
+                    THROW 'Invalid Input';
+                };
+
+                LET $key_is_valid = IF array::len($rest_keys) = 0 {
+                    true
+                } ELSE {
+                    LET $rest_keys_validity = $rest_keys.map(
+                        |$key,$index| {
+                            LET $parent_key = IF $index = 0 {
+                                (
+                                    SELECT VALUE id
+                                    FROM ONLY key
+                                    WHERE name = $immediate_key
+                                    LIMIT 1
+                                );
+                            } ELSE {
+                                LET $prev_index = $index - 1;
+
+                                LET $prev_key = $split_keys.at($prev_index);
+
+                                (
+                                    SELECT VALUE id
+                                    FROM ONLY key
+                                    WHERE name = $prev_key
+                                    LIMIT 1
+                                );
+                            };
+
+                            LET $key_found = (
+                                SELECT VALUE id
+                                FROM ONLY key
+                                WHERE
+                                    name = $key
+                                    AND ->(belongs_to WHERE out = $parent_key)
+                                LIMIT 1
+                            );
+
+                            IF $key_found = NONE {
+                                false;
+                            } ELSE {
+                                true;
+                            };
+                        }
+                    );
+
+                    LET $file_found_in_last_key = (
+                        SELECT <-belongs_to<-(file WHERE name = $file_name) AS files
+                        FROM ONLY key
+                        WHERE name = $last_key
+                        LIMIT 1
+                    )['files'];
+
+                    LET $file_path_is_valid = array::len($file_found_in_last_key) > 0;
+
+                    $rest_keys_validity.reduce(|$key_one,$key_two| $key_one && $key_two) && $file_path_is_valid
+                };
+
+                $key_is_valid
+            };
+
+            RETURN IF $bucket_and_key_are_valid {
+                (SELECT * FROM ONLY file WHERE name=$file_name LIMIT 1)
+            } ELSE {
+                NONE
+            };
+            ",
+        )
+        .bind(("file_name", original_file_name.clone()))
+        .bind(("bucket_name", bucket_ref.clone()))
+        .bind(("split_keys", split_keys_ref.to_vec()))
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed database query: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    let file_details: Option<UploadedFile> = file_details_query.take(3).map_err(|e| {
+        tracing::error!("Failed deserialization: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    let Some(file_details) = file_details else {
+        tracing::error!("File does not exist!");
+        return Err(StatusCode::NOT_FOUND);
+    };
+
+    let file_details_ref = &file_details;
+
+    let path = Path::new(&upload_dir).join(file_details_ref.system_filename.clone());
 
     if path.exists() {
         let mut file = File::open(&path).await.map_err(|_| StatusCode::NOT_FOUND)?;
@@ -194,116 +502,87 @@ pub async fn download_file(
             .await
             .map_err(|_| StatusCode::NOT_FOUND)?;
 
-        let mut file_details_query = db
-            .query(
-                "
-                SELECT * FROM ONLY file WHERE system_filename=$file_name LIMIT 1
-                ",
-            )
-            .bind(("file_name", file_name.clone()))
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed database query: {}", e);
+        if !file_details_ref.is_free {
+            // verify that they actually bought the file
+            let mut bought_file_query = db
+                .query(
+                    "
+                    LET $internal_user = (SELECT VALUE id FROM ONLY user_id WHERE user_id = $user_id LIMIT 1);
+                    LET $bought_file = (SELECT * FROM (SELECT VALUE ->bought.out[*] FROM ONLY $internal_user LIMIT 1) WHERE system_filename = $file_name)[0];
+
+                    RETURN $bought_file;
+                    "
+                )
+                    .bind(("user_id", auth_status.sub.clone()))
+                    .bind(("file_name", file_details_ref.system_filename.clone()))
+                    .await
+                    .map_err(|e| {
+                        tracing::error!("Failed database transaction: {}", e);
+                        StatusCode::INTERNAL_SERVER_ERROR
+                    })?;
+
+            let bought_file: Option<UploadedFile> = bought_file_query.take(2).map_err(|e| {
+                tracing::error!("Failed deserialization: {}", e);
                 StatusCode::INTERNAL_SERVER_ERROR
             })?;
 
-        let file_details: Option<UploadedFile> = file_details_query.take(0).map_err(|e| {
-            tracing::error!("Failed deserialization: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-
-        match file_details {
-            Some(file_details) => {
-                if !file_details.is_free {
-                    // verify that they actually bought the file
-                    let mut bought_file_query = db
+            match bought_file {
+                Some(_) => {
+                    // Continue to generate the response
+                }
+                None => {
+                    // verify that they own the file
+                    let mut owned_file_query = db
                         .query(
                             "
-                            BEGIN TRANSACTION;
-                            LET $internal_user = (SELECT VALUE id FROM ONLY user_id WHERE user_id = $user_id LIMIT 1);
-                            LET $bought_file = (SELECT * FROM (SELECT VALUE ->bought_file.out[*] FROM ONLY $internal_user LIMIT 1) WHERE system_filename = $file_name)[0];
+                            LET $internal_user = (SELECT VALUE id FROM ONLY user_id WHERE user_id=$user_id LIMIT 1);
 
-                            RETURN $bought_file;
-                            COMMIT TRANSACTION;
+                            LET $owned_file = (SELECT * FROM ONLY file WHERE owner=$internal_user AND system_filename=$file_name LIMIT 1);
+
+                            RETURN $owned_file;
                             "
                         )
-                            .bind(("user_id", auth_status.sub.clone()))
-                            .bind(("file_name", file_name.clone()))
+                            .bind(("user_id", auth_status.sub))
+                            .bind(("file_name", file_details_ref.system_filename.clone()))
                             .await
                             .map_err(|e| {
                                 tracing::error!("Failed database transaction: {}", e);
-                                StatusCode::INTERNAL_SERVER_ERROR
-                            })?;
+                                StatusCode::INTERNAL_SERVER_ERROR})?;
 
-                    let bought_file: Option<UploadedFile> =
-                        bought_file_query.take(0).map_err(|e| {
+                    let file_info: Option<UploadedFile> =
+                        owned_file_query.take(2).map_err(|e| {
                             tracing::error!("Failed deserialization: {}", e);
                             StatusCode::INTERNAL_SERVER_ERROR
                         })?;
 
-                    match bought_file {
+                    match file_info {
                         Some(_) => {
                             // Continue to generate the response
                         }
                         None => {
-                            // verify that they own the file
-                            let mut owned_file_query = db
-                                .query(
-                                    "
-                                    BEGIN TRANSACTION;
-                                    LET $internal_user = (SELECT VALUE id FROM ONLY user_id WHERE user_id=$user_id LIMIT 1);
-
-                                    LET $owned_file = (SELECT * FROM ONLY file WHERE owner=$internal_user AND system_filename=$file_name LIMIT 1);
-
-                                    RETURN $owned_file;
-                                    COMMIT TRANSACTION;
-                                    "
-                                )
-                                    .bind(("user_id", auth_status.sub))
-                                    .bind(("file_name", file_name.clone()))
-                                    .await
-                                    .map_err(|e| {
-                                        tracing::error!("Failed database transaction: {}", e);
-                                        StatusCode::INTERNAL_SERVER_ERROR})?;
-
-                            let file_info: Option<UploadedFile> =
-                                owned_file_query.take(0).map_err(|e| {
-                                    tracing::error!("Failed deserialization: {}", e);
-                                    StatusCode::INTERNAL_SERVER_ERROR
-                                })?;
-
-                            match file_info {
-                                Some(_) => {
-                                    // Continue to generate the response
-                                }
-                                None => {
-                                    return Ok((StatusCode::FORBIDDEN, format!("Not Allowed!"))
-                                        .into_response());
-                                }
-                            }
+                            return Ok(
+                                (StatusCode::FORBIDDEN, format!("Not Allowed!")).into_response()
+                            );
                         }
                     }
                 }
-
-                let content_type = file_details.mime_type;
-
-                // let file_name_with_extension = file_name.to_string();
-
-                let response = Response::builder()
-                    .header(
-                        "Content-Disposition",
-                        format!("attachment; filename=\"{}\"", &file_details.name),
-                    )
-                    .header("Content-Type", content_type.to_string())
-                    .body(buffer.into())
-                    .map_err(|err| {
-                        tracing::error!("Failed to build response: {}", err);
-                        StatusCode::INTERNAL_SERVER_ERROR
-                    })?;
-                Ok(response)
             }
-            None => Err(StatusCode::NOT_FOUND),
         }
+
+        let content_type = file_details_ref.mime_type.clone();
+
+        let response = Response::builder()
+            .header(
+                "Content-Disposition",
+                format!("attachment; filename=\"{}\"", file_details_ref.name),
+            )
+            .header("Content-Type", content_type.to_string())
+            .body(buffer.into())
+            .map_err(|err| {
+                tracing::error!("Failed to build response: {}", err);
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+        Ok(response)
     } else {
         Err(StatusCode::NOT_FOUND)
     }
@@ -311,7 +590,7 @@ pub async fn download_file(
 
 pub async fn get_image(
     Extension(db): Extension<Arc<Surreal<Client>>>,
-    AxumUrlParams(file_name): AxumUrlParams<String>,
+    AxumUrlParams(key): AxumUrlParams<String>,
     Query(resize_params): Query<ImageResizeParams>,
 ) -> Result<Response, StatusCode> {
     let upload_dir = env::var("FILE_UPLOADS_DIR");
@@ -322,7 +601,152 @@ pub async fn get_image(
     }
     let upload_dir = upload_dir.unwrap();
 
-    let path = Path::new(&upload_dir).join(&file_name);
+    let (bucket, key) = key
+        .split_once('/')
+        .map(|(b, k)| (b.to_owned(), Some(k.to_owned())))
+        .unwrap_or_else(|| (key.clone(), None));
+
+    let bucket_ref = &bucket;
+
+    let mut split_keys = key
+        .map(|provided_key| {
+            provided_key
+                .split('/')
+                .map(|s| s.to_owned())
+                .collect::<Vec<String>>()
+        })
+        .unwrap_or_default();
+
+    let original_file_name = split_keys.pop();
+    let split_keys_ref = split_keys.as_slice();
+
+    let mut file_details_query = db
+        .query(
+            "
+            LET $bucket = (
+                SELECT VALUE id
+                FROM ONLY bucket
+                WHERE name = $bucket_name
+                LIMIT 1
+            );
+            IF $bucket = NONE {
+                THROW 'Invalid Input';
+            };
+
+            LET $bucket_and_key_are_valid = IF array::len($split_keys) = 0 {
+                LET $file_found_in_bucket = (
+                    SELECT <-belongs_to<-(file WHERE name = $file_name) AS files
+                    FROM ONLY $bucket
+                )['files'];
+
+                IF array::len($file_found_in_bucket) = 0 {
+                    THROW 'Invalid Input';
+                };
+                true
+            } ELSE {
+                LET $immediate_key = array::first($split_keys);
+                LET $last_key = array::last($split_keys);
+                LET $rest_keys = array::remove($split_keys, 0);
+
+                LET $key_found_in_bucket = (
+                    SELECT VALUE id
+                    FROM ONLY key
+                    WHERE
+                        name = $immediate_key
+                        AND ->(belongs_to WHERE out = $bucket)
+                    LIMIT 1
+                );
+
+                IF $key_found_in_bucket = NONE {
+                    THROW 'Invalid Input';
+                };
+
+                LET $key_is_valid = IF array::len($rest_keys) = 0 {
+                    true
+                } ELSE {
+                    LET $rest_keys_validity = $rest_keys.map(
+                        |$key,$index| {
+                            LET $parent_key = IF $index = 0 {
+                                (
+                                    SELECT VALUE id
+                                    FROM ONLY key
+                                    WHERE name = $immediate_key
+                                    LIMIT 1
+                                );
+                            } ELSE {
+                                LET $prev_index = $index - 1;
+
+                                LET $prev_key = $split_keys.at($prev_index);
+
+                                (
+                                    SELECT VALUE id
+                                    FROM ONLY key
+                                    WHERE name = $prev_key
+                                    LIMIT 1
+                                );
+                            };
+
+                            LET $key_found = (
+                                SELECT VALUE id
+                                FROM ONLY key
+                                WHERE
+                                    name = $key
+                                    AND ->(belongs_to WHERE out = $parent_key)
+                                LIMIT 1
+                            );
+
+                            IF $key_found = NONE {
+                                false;
+                            } ELSE {
+                                true;
+                            };
+                        }
+                    );
+
+                    LET $file_found_in_last_key = (
+                        SELECT <-belongs_to<-(file WHERE name = $file_name) AS files
+                        FROM ONLY key
+                        WHERE name = $last_key
+                        LIMIT 1
+                    )['files'];
+
+                    LET $file_path_is_valid = array::len($file_found_in_last_key) > 0;
+
+                    $rest_keys_validity.reduce(|$key_one,$key_two| $key_one && $key_two) && $file_path_is_valid
+                };
+
+                $key_is_valid
+            };
+
+            RETURN IF $bucket_and_key_are_valid {
+                (SELECT * FROM ONLY file WHERE name=$file_name LIMIT 1)
+            } ELSE {
+                NONE
+            };
+            ",
+        )
+        .bind(("file_name", original_file_name))
+        .bind(("bucket_name", bucket_ref.clone()))
+        .bind(("split_keys", split_keys_ref.to_vec()))
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed database query: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    let file_details: Option<UploadedFile> = file_details_query.take(3).map_err(|e| {
+        tracing::error!("Failed deserialization: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    let Some(file_details) = file_details else {
+        tracing::error!("File does not exist!");
+        return Err(StatusCode::NOT_FOUND);
+    };
+
+    let file_details_ref = &file_details;
+
+    let path = Path::new(&upload_dir).join(file_details_ref.system_filename.clone());
 
     if path.exists() {
         let mut file = File::open(&path).await.map_err(|_| StatusCode::NOT_FOUND)?;
@@ -331,54 +755,31 @@ pub async fn get_image(
             .await
             .map_err(|_| StatusCode::NOT_FOUND)?;
 
-        let mut file_details_query = db
-            .query(
-                "
-                SELECT * FROM ONLY file WHERE system_filename=$file_name LIMIT 1
-                ",
-            )
-            .bind(("file_name", file_name.clone()))
-            .await
+        let content_type = file_details_ref.mime_type.clone();
+
+        // Resize only if query params are provided and the file is an image we can process
+        let final_buffer = match (resize_params.width, resize_params.height) {
+            (None, None) => buffer,
+            (width, height) => {
+                match resize_image(&buffer, &content_type, width, height) {
+                    Ok(resized) => resized,
+                    Err(e) => {
+                        // Non-fatal: log and fall back to the original
+                        tracing::warn!("Could not resize image, serving original: {}", e);
+                        buffer
+                    }
+                }
+            }
+        };
+
+        let response = Response::builder()
+            .header("Content-Type", &content_type)
+            .body(final_buffer.into())
             .map_err(|e| {
-                tracing::error!("Failed database query: {}", e);
+                tracing::error!("Failed to build response: {}", e);
                 StatusCode::INTERNAL_SERVER_ERROR
             })?;
-
-        let file_details: Option<UploadedFile> = file_details_query.take(0).map_err(|e| {
-            tracing::error!("Failed deserialization: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-
-        match file_details {
-            Some(file_details) => {
-                let content_type = file_details.mime_type;
-
-                // Resize only if query params are provided and the file is an image we can process
-                let final_buffer = match (resize_params.width, resize_params.height) {
-                    (None, None) => buffer,
-                    (width, height) => {
-                        match resize_image(&buffer, &content_type, width, height) {
-                            Ok(resized) => resized,
-                            Err(e) => {
-                                // Non-fatal: log and fall back to the original
-                                tracing::warn!("Could not resize image, serving original: {}", e);
-                                buffer
-                            }
-                        }
-                    }
-                };
-
-                let response = Response::builder()
-                    .header("Content-Type", &content_type)
-                    .body(final_buffer.into())
-                    .map_err(|e| {
-                        tracing::error!("Failed to build response: {}", e);
-                        StatusCode::INTERNAL_SERVER_ERROR
-                    })?;
-                Ok(response)
-            }
-            None => Err(StatusCode::NOT_FOUND),
-        }
+        Ok(response)
     } else {
         Err(StatusCode::NOT_FOUND)
     }

@@ -17,11 +17,11 @@ use lib::utils::{
 use oauth2::{AuthorizationCode, PkceCodeVerifier, TokenResponse};
 use rsa::{pkcs8::DecodePrivateKey, Pkcs1v15Encrypt, RsaPrivateKey};
 use serde::{Deserialize, Serialize};
-use surrealdb::{engine::remote::ws::Client, Surreal};
+use surrealdb::{engine::remote::ws::Client, types::RecordIdKey, Surreal};
 use tokio::fs;
 
 use crate::{
-    graphql::schemas::user::{AuthDetails, GithubUserProfile, GoogleUserInfo, OAuthUser},
+    graphql::schemas::user::{AuthDetails, GithubUserProfile, GoogleUserInfo, OAuthUser, User},
     utils::auth::{
         create_oauth_user_if_not_exists, decode_token_string, fetch_user_roles,
         initiate_auth_code_grant_flow, sign_jwt, verify_oauth_token, OAuthClientName,
@@ -185,12 +185,18 @@ pub async fn exchange_code_for_token(
                 ApiError::Unauthorized("Unauthorized".into())
             })?;
 
-            let user_roles = fetch_user_roles(&db, &created_user.id.key().to_string(), None)
-                .await
-                .map_err(|e| {
-                    tracing::error!("Failed to fetch Google user roles: {}", e);
-                    ApiError::Unauthorized("Unauthorized".into())
-                })?;
+            let Some(user_id) = (match &created_user.id.key {
+                RecordIdKey::String(s) => Some(s.clone()),
+                _ => None,
+            }) else {
+                tracing::error!("Invalid user");
+                return Err(ApiError::Unauthorized("Unauthorized".into()));
+            };
+
+            let user_roles = fetch_user_roles(&db, &user_id, None).await.map_err(|e| {
+                tracing::error!("Failed to fetch Google user roles: {}", e);
+                ApiError::Unauthorized("Unauthorized".into())
+            })?;
 
             sign_jwt(
                 &AuthClaim {
@@ -226,12 +232,18 @@ pub async fn exchange_code_for_token(
                 ApiError::Unauthorized("Unauthorized".into())
             })?;
 
-            let user_roles = fetch_user_roles(&db, &created_user.id.key().to_string(), None)
-                .await
-                .map_err(|e| {
-                    tracing::error!("Failed to fetch GitHub user roles: {}", e);
-                    ApiError::Unauthorized("Unauthorized".into())
-                })?;
+            let Some(user_id) = (match &created_user.id.key {
+                RecordIdKey::String(s) => Some(s.clone()),
+                _ => None,
+            }) else {
+                tracing::error!("Invalid user");
+                return Err(ApiError::BadRequest("Bad Request".into()));
+            };
+
+            let user_roles = fetch_user_roles(&db, &user_id, None).await.map_err(|e| {
+                tracing::error!("Failed to fetch GitHub user roles: {}", e);
+                ApiError::Unauthorized("Unauthorized".into())
+            })?;
 
             sign_jwt(
                 &AuthClaim {
@@ -313,29 +325,31 @@ pub async fn verify_email_handler(
         ApiError::Unauthorized("Unauthorized".into())
     })?;
 
-    let user_id = claims
-        .subject
-        .as_ref()
-        .map(|t| t.to_string())
-        .unwrap_or_default();
+    let Some(user_id) = claims.subject else {
+        return Err(ApiError::Unauthorized("Unauthorized".into()));
+    };
 
-    db.query(
-        "
+    let _query_result: Option<User> = db
+        .query(
+            "
         BEGIN TRANSACTION;
-        LET $user = type::thing('user', $user_id);
-        IF !$user.exists() {
-            THROW 'Invalid Input';
-        };
-        UPDATE $user SET status = 'Active';
+        LET $user = type::record('user', $user_id);
+
+        UPDATE $user SET status = 'Active' RETURN AFTER;
         COMMIT TRANSACTION;
         ",
-    )
-    .bind(("user_id", user_id))
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to activate user account: {}", e);
-        ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
-    })?;
+        )
+        .bind(("user_id", user_id))
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to activate user account: {}", e);
+            ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
+        })?
+        .take(2)
+        .map_err(|e| {
+            tracing::error!("Failed to activate user account: {}", e);
+            ApiError::Unauthorized("Unauthorized".into())
+        })?;
 
     Ok(synthesize_rest_response(&headers, &(), StatusCode::OK))
 }

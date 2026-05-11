@@ -14,7 +14,13 @@ impl EmailService for EmailServiceImplementation {
         &self,
         request: Request<SendEmailRequest>,
     ) -> Result<Response<SendEmailResponse>, Status> {
-        let send_email_res = utils::email::send_email(&request.into_inner().into()).await;
+        let send_email_res = utils::email::send_email(
+            &request
+                .into_inner()
+                .try_into()
+                .map_err(|e| Status::invalid_argument(format!("{:?}", e)))?,
+        )
+        .await;
 
         match send_email_res {
             Ok(send_email_res) => Ok(Response::new(SendEmailResponse {

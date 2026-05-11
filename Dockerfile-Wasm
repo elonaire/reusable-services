@@ -2,39 +2,43 @@ FROM rust:1-slim-bullseye AS builder
 
 ARG SERVICE_NAME
 ENV SERVICE_NAME=${SERVICE_NAME}
-ENV RUSTFLAGS='-C linker=clang -C link-arg=-fuse-ld=lld -C link-arg=-Wl,-z,stack-size=16777216'
+
+# For WASM targets, skip the ELF-specific stack-size linker flag.
+# Stack size for WASM is passed differently (see .cargo/config.toml or build.rs).
+ENV RUSTFLAGS='-C link-arg=-zstack-size=16777216'
+
 ENV WASI_OS=linux
 ENV WASI_ARCH=x86_64
 ENV WASI_VERSION=24
 ENV WASI_VERSION_FULL=${WASI_VERSION}.0
 
-# Install dependencies
+# Install dependencies (lld/clang not needed for WASM; wasi-sdk provides its own linker)
 RUN apt-get update && apt-get install -y \
-    clang \
-    lld \
-    libssl-dev \
-    pkg-config \
     wget \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Install WASI SDK
-RUN wget https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_VERSION}/wasi-sdk-${WASI_VERSION_FULL}-${WASI_ARCH}-${WASI_OS}.tar.gz
-RUN tar xvf wasi-sdk-${WASI_VERSION_FULL}-${WASI_ARCH}-${WASI_OS}.tar.gz
+# Install WASI SDK — FIX: path was hardcoded to 22.0 but version is 24.0
+RUN wget https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_VERSION}/wasi-sdk-${WASI_VERSION_FULL}-${WASI_ARCH}-${WASI_OS}.tar.gz \
+    && tar xvf wasi-sdk-${WASI_VERSION_FULL}-${WASI_ARCH}-${WASI_OS}.tar.gz -C /usr/local \
+    && rm wasi-sdk-${WASI_VERSION_FULL}-${WASI_ARCH}-${WASI_OS}.tar.gz
 
-ENV WASI_SDK_PATH=/usr/local/wasi-sdk-22.0
+# FIX: Match the path to the actual extracted version
+ENV WASI_SDK_PATH=/usr/local/wasi-sdk-${WASI_VERSION_FULL}
 
-# Use nightly Rust which might have better support for WASI-P1
-RUN rustup default nightly-2024-08-08
+# Use recent stable — nightly-2024-08-08 has incomplete wasip1 async support
+RUN rustup default stable
 RUN rustup target add wasm32-wasip1
 
 WORKDIR /app
-
 COPY . .
 
 RUN cargo build --target wasm32-wasip1 --release --package ${SERVICE_NAME}
-
 RUN chmod a+x /app/target/wasm32-wasip1/release/${SERVICE_NAME}.wasm
 
 FROM scratch
-COPY --from=builder /app/target/wasm32-wasip1/release/${SERVICE_NAME}.wasm /${SERVICE_NAME}.wasm
-CMD ["/${SERVICE_NAME}.wasm"]
+ARG SERVICE_NAME
+ENV SERVICE_NAME=${SERVICE_NAME}
+
+COPY --from=builder /app/target/wasm32-wasip1/release/${SERVICE_NAME}.wasm /app.wasm
+ENTRYPOINT ["/app.wasm"]

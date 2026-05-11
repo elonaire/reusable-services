@@ -10,14 +10,16 @@ DEFINE INDEX userNameIndex ON TABLE user COLUMNS user_name UNIQUE;
 DEFINE FIELD first_name ON TABLE user TYPE option<string>;
 DEFINE FIELD middle_name ON TABLE user TYPE option<string>;
 DEFINE FIELD last_name ON TABLE user TYPE option<string>;
-DEFINE FIELD gender ON TABLE user TYPE option<string>
--- Allow only these values in the array
-  ASSERT $value INSIDE ['Male', 'Female', 'Other', NONE];
-DEFINE FIELD dob ON TABLE user VALUE
+DEFINE FIELD OVERWRITE gender ON TABLE user TYPE option<
+    { Male: object }
+  | { Female: object }
+  | { Other: object }
+>;
+DEFINE FIELD OVERWRITE dob ON TABLE user TYPE option<datetime> VALUE
   IF $value IS NOT NONE { <datetime>$value } ELSE { NONE };
 -- DEFINE FIELD dob ON TABLE user TYPE option<datetime> VALUE time::now();
 DEFINE FIELD email ON TABLE user TYPE string
-  ASSERT string::is::email($value);
+  ASSERT string::is_email($value);
 DEFINE INDEX userEmailIndex ON TABLE user COLUMNS email UNIQUE;
 DEFINE FIELD country ON TABLE user TYPE option<string>;
 DEFINE FIELD phone ON TABLE user TYPE option<string>;
@@ -34,29 +36,32 @@ DEFINE EVENT user_created ON TABLE user WHEN $event = 'CREATE' THEN (
     -- add default role to user
     fn::assign_default_role($after.id)
 );
-DEFINE FIELD status ON TABLE user TYPE string
-  DEFAULT 'Inactive'
--- Allow only these values in the array
-  ASSERT $value INSIDE ['Active', 'Inactive', 'Suspended', 'Deleted'];
-DEFINE FIELD oauth_client ON TABLE user TYPE option<string>
--- Allow only these values in the array
-  ASSERT $value INSIDE ['Google', 'Github', NONE];
+DEFINE FIELD OVERWRITE status ON TABLE user TYPE
+    { Active: object }
+  | { Inactive: object }
+  | { Suspended: object }
+  | { Deleted: object }
+  DEFAULT { Inactive: {} };
+  DEFINE FIELD OVERWRITE oauth_client ON TABLE user TYPE option<
+      { Google: object }
+    | { Github: object }
+  >;
 DEFINE FIELD oauth_user_id ON TABLE user TYPE option<string>
   DEFAULT NONE;
 DEFINE FIELD address ON TABLE user TYPE option<string>
   DEFAULT NONE;
 DEFINE FIELD profile_picture ON TABLE user TYPE option<string>
-  ASSERT string::is::url($value)
+  ASSERT string::is_url($value)
   DEFAULT NONE;
 DEFINE FIELD bio ON TABLE user TYPE option<string>
   DEFAULT NONE;
 DEFINE FIELD website ON TABLE user TYPE option<string>
-  ASSERT string::is::url($value)
+  ASSERT string::is_url($value)
   DEFAULT NONE;
 DEFINE FIELD OVERWRITE socials ON TABLE user TYPE option<array<{ name: string, url: string }>>
     DEFAULT NONE;
 DEFINE FIELD OVERWRITE socials[*].url ON TABLE user TYPE string
-    ASSERT string::is::url($value);
+    ASSERT string::is_url($value);
 DEFINE FIELD created_at ON TABLE user TYPE datetime
   DEFAULT time::now() READONLY;
 DEFINE FIELD updated_at ON TABLE user TYPE datetime
@@ -124,15 +129,15 @@ DEFINE FIELD created_at ON TABLE permission TYPE datetime
 DEFINE FIELD updated_at ON TABLE permission TYPE datetime
     VALUE time::now();
 
--- Relationship between permissions and roles
-DEFINE TABLE granted SCHEMAFULL TYPE RELATION IN role OUT permission;
+-- Relationship between permission and role
+DEFINE TABLE OVERWRITE granted SCHEMAFULL TYPE RELATION IN role OUT permission;
 DEFINE INDEX rolePermissionIndex ON TABLE granted COLUMNS in, out UNIQUE;
 DEFINE FIELD created_at ON TABLE granted TYPE datetime
     DEFAULT time::now() READONLY;
 
 
--- Relationship between user and roles
-DEFINE TABLE assigned SCHEMAFULL TYPE RELATION IN user OUT role;
+-- Relationship between user and role
+DEFINE TABLE OVERWRITE assigned SCHEMAFULL TYPE RELATION IN user | api_key OUT role;
 DEFINE FIELD is_default ON TABLE assigned TYPE bool DEFAULT false;
 DEFINE EVENT enforce_one_default_assigned_role ON TABLE assigned WHEN $event = 'CREATE' OR $event = 'UPDATE' THEN {
     IF $after.is_default {
@@ -197,11 +202,33 @@ DEFINE FIELD created_at ON TABLE is_under TYPE datetime
   DEFAULT time::now() READONLY;
 
 
+-- A schema-full api_key table
+DEFINE TABLE OVERWRITE api_key SCHEMAFULL TYPE NORMAL;
+-- relationship
+DEFINE FIELD owner ON TABLE api_key TYPE record<user>;
+-- lookup (public part)
+DEFINE FIELD key_prefix ON TABLE api_key TYPE string;
+DEFINE INDEX apiKeyPrefixIndex ON TABLE api_key FIELDS key_prefix UNIQUE;
+-- secret (hashed)
+DEFINE FIELD secret_hash ON TABLE api_key TYPE string;
+-- human-friendly label
+DEFINE FIELD name ON TABLE api_key TYPE string;
+DEFINE FIELD OVERWRITE status ON TABLE api_key TYPE
+    { Active: object }
+  | { Revoked: object }
+  DEFAULT { Active: {} };
+-- observability
+DEFINE FIELD OVERWRITE last_used_at ON TABLE api_key TYPE option<datetime> VALUE IF $value IS NOT NONE { <datetime>$value } ELSE { NONE };
+DEFINE FIELD last_used_ip ON TABLE api_key TYPE option<string>;
+DEFINE FIELD created_at ON TABLE api_key TYPE datetime
+    DEFAULT time::now() READONLY;
+
+
 -- Function to check if user has a role, if not, assign a default role using edge relationship
-DEFINE FUNCTION fn::assign_default_role($user_id: record) {
+DEFINE FUNCTION OVERWRITE fn::assign_default_role($user_id: record) {
   LET $results = (SELECT ->assigned AS roles FROM ONLY $user_id);
 
-  IF array::len($results.roles) == 0 {
+  IF $results == NONE {
     LET $default_role = (SELECT VALUE id FROM ONLY role WHERE is_default = true LIMIT 1);
 
     RELATE $user_id->assigned->$default_role CONTENT {
@@ -216,3 +243,19 @@ DEFINE FUNCTION fn::assign_default_role($user_id: record) {
 -- UPDATE role SET is_admin = false, is_super_admin = false WHERE is_admin IS NONE OR is_super_admin IS NONE;
 -- UPDATE organization SET created_by = user:8beo2dgkz7yoy26d04rt WHERE created_by IS NONE;
 -- UPDATE department SET created_by = user:8beo2dgkz7yoy26d04rt WHERE created_by IS NONE;
+REMOVE TABLE service_account;
+
+UPDATE user SET status = { Active: {} } WHERE status = 'Active';
+UPDATE user SET status = { Inactive: {} } WHERE status = 'Inactive' OR status = NONE;
+UPDATE user SET status = { Suspended: {} } WHERE status = 'Suspended';
+UPDATE user SET status = { Deleted: {} } WHERE status = 'Deleted';
+
+UPDATE user SET gender = { Male: {} } WHERE gender = 'Male';
+UPDATE user SET gender = { Female: {} } WHERE gender = 'Female';
+UPDATE user SET gender = { Other: {} } WHERE gender = 'Other';
+
+UPDATE user SET oauth_client = { Google: {} } WHERE oauth_client = 'Google';
+UPDATE user SET oauth_client = { Github: {} } WHERE oauth_client = 'Github';
+
+UPDATE api_key SET status = { Active: {} } WHERE status = 'Active';
+UPDATE api_key SET status = { Revoked: {} } WHERE status = 'Revoked';

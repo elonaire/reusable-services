@@ -29,6 +29,7 @@ async-trait = { workspace = true }
 tonic-middleware = { workspace = true }
 rumqttc = { workspace = true }
 tower_governor = { workspace = true }
+uuid = { workspace = true }
 
 [lints.rust]
 unsafe_code = "forbid"
