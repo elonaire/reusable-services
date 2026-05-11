@@ -66,7 +66,7 @@ DEFINE INDEX bucketStatsIndex ON bucket_stats FIELDS bucket, created_at UNIQUE;
 -- UPDATE file SET is_free = true WHERE is_free IS NONE;
 UPDATE file SET is_public = true WHERE is_public IS NONE;
 REMOVE TABLE bought_file;
-CREATE bucket SET name = "default", owner = user:3ryxtyeo959ecjv1sr7t;
+CREATE bucket SET name = "default", owner = user_id:67r4atxrdwje57ydqaub;
 RELATE (SELECT VALUE id FROM file WHERE array::len(->belongs_to) = 0)->belongs_to->(SELECT VALUE id FROM ONLY bucket WHERE name="default" LIMIT 1);
 UPDATE bucket SET storage_class = { Standard: {} } WHERE storage_class = 'Standard' OR storage_class = NONE;
 UPDATE bucket SET storage_class = { Nearline: {} } WHERE storage_class = 'Nearline';
