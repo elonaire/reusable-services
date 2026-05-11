@@ -55,7 +55,7 @@ RUN adduser -D myuser
 USER myuser
 
 # Copy the binary from the builder stage
-COPY --from=0 /app/target/release/${SERVICE_NAME} ./app
+COPY --from=0 /app/target/release/${SERVICE_NAME} ./app_bin
 # Copy the DB schema
 COPY --from=0 /app/services/${SERVICE_NAME}/src/database/schemas/ /usr/src/db/
 
@@ -64,4 +64,4 @@ EXPOSE ${PORT}
 EXPOSE ${GRPC_PORT}
 
 # Command to run
-CMD ["./app"]
+CMD ["./app_bin"]
