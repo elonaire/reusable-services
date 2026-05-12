@@ -325,6 +325,7 @@ pub async fn upload(
             field_name,
             file_name: stored_file.system_filename,
             file_id,
+            original_filename: stored_file.name,
         });
     }
 
