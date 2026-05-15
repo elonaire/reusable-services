@@ -13,8 +13,16 @@ message EmailUser {
 message SendEmailRequest {
     EmailUser recipient = 1;
     string subject = 2;
-    string title = 3;
-    string body = 4;
+    string body = 3;
+    repeated EmailAttachment attachments = 4;
+}
+
+message EmailAttachment {
+    string url = 1;
+    string filename = 2;
+    string content_type = 3;
+    bool inline = 4;
+    optional string cid = 5;
 }
 
 message SendEmailResponse {

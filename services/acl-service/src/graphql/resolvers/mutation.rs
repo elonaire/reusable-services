@@ -1,4 +1,4 @@
-use std::{env, sync::Arc};
+use std::{env, sync::Arc, time::SystemTime};
 
 use async_graphql::{Context, Object, Result};
 use axum::Extension;
@@ -179,52 +179,49 @@ impl Mutation {
                     encoded_token
                 );
 
-                let email_template = format!(
-                    r#"
-                <div style="font-family: Arial, sans-serif; background-color: #f4f4f4;">
-                    <div style="max-width: 600px; margin: auto; background-color: #ffffff; border-radius: 8px; box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);">
-                        <h2 style="background-color: #4CAF50; color: #ffffff; padding: 10px; border-radius: 8px 8px 0 0; text-align: center;">Please Verify Your Email</h2>
-                        <div style="padding: 10px;">
-                            <p>Dear Customer,</p>
-                            <p>We are pleased to inform you that you have successfully registered on our platform.</p>
-                            <p>We just need to verify your email address. Please click the link below to confirm your email address.</p>
-                            <p>
-                                <a href="{}" style="display: inline-block; padding: 10px 20px; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 5px; font-weight: bold;">Verify Email</a>
-                            </p>
-                            <p>If you have any questions or concerns, please do not hesitate to contact our support team.</p>
-                            <p>Thank you!</p>
-                            <p>Sincerely,<br/>Elon A. Idiong'o<br />CEO</p>
-                        </div>
-                    </div>
-                </div>
-                "#,
-                    verification_url
-                );
+                let email_verification_template_id = env::var("EMAIL_VERIFICATION_TEMPLATE_ID");
 
-                let email_payload = EmailMQTTPayload {
-                    recipient: &user.email,
-                    subject: "Email Address Verification",
-                    title: "Verify Your Email Address",
-                    template: email_template,
-                };
-
-                let encoded_payload = serde_json::to_vec(&email_payload);
-
-                if let Err(e) = &encoded_payload {
-                    tracing::error!("Error serializing Email Payload: {:?}", e);
+                if let Err(e) = &email_verification_template_id {
+                    tracing::error!(
+                        "Failed to get EMAIL_VERIFICATION_TEMPLATE_ID env var: {}",
+                        e
+                    );
 
                     return Ok(api_response.into());
+                };
+
+                let current_year = {
+                    let now = SystemTime::now();
+                    let datetime: chrono::DateTime<chrono::Utc> = now.into();
+                    datetime.format("%Y").to_string()
+                };
+
+                let email_payload = EmailMQTTPayload {
+                    recipient: user.email.clone(),
+                    subject: "Email Address Verification".to_string(),
+                    template_id: email_verification_template_id.unwrap(),
+                    variables: serde_json::json!({
+                        "verification_url": verification_url,
+                        "business_name": "Techie Tenka",
+                        "business_address": "Kisumu, Kenya",
+                        "business_email": "elon@techietenka.com",
+                        "current_year": current_year
+                    }),
+                    attachments: None,
+                };
+
+                let encoded_payload = match serde_json::to_vec(&email_payload) {
+                    Ok(payload) => payload,
+                    Err(e) => {
+                        tracing::error!("Error serializing Email Payload: {:?}", e);
+                        return Ok(api_response.into());
+                    }
                 };
 
                 if let Err(e) = shared_state
                     .unwrap()
                     .mqtt_client
-                    .publish(
-                        "email/send",
-                        QoS::AtLeastOnce,
-                        false,
-                        encoded_payload.unwrap(),
-                    )
+                    .publish("email/send", QoS::AtLeastOnce, false, encoded_payload)
                     .await
                 {
                     tracing::error!("Failed to publish email/send event: {}", e);

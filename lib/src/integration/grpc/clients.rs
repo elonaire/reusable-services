@@ -124,9 +124,21 @@ impl TryFrom<email_service::SendEmailRequest> for utils::models::Email {
                 .ok_or_else(|| anyhow::anyhow!("recipient is required for sending email"))?
                 .into(),
             subject: email.subject,
-            title: email.title,
             body: email.body,
+            attachments: email.attachments.into_iter().map(|a| a.into()).collect(),
         })
+    }
+}
+
+impl From<email_service::EmailAttachment> for utils::models::EmailAttachment {
+    fn from(attachment: email_service::EmailAttachment) -> Self {
+        Self {
+            url: attachment.url,
+            filename: attachment.filename,
+            content_type: attachment.content_type,
+            inline: attachment.inline,
+            cid: attachment.cid,
+        }
     }
 }
 
