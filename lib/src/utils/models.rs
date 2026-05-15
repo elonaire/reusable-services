@@ -60,8 +60,8 @@ pub struct EmailUser {
 pub struct Email {
     pub recipient: EmailUser,
     pub subject: String,
-    pub title: String,
     pub body: String,
+    pub attachments: Vec<EmailAttachment>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
@@ -116,12 +116,23 @@ impl From<AllowedCreateFileExtension> for i32 {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct EmailMQTTPayload<'a> {
-    pub recipient: &'a str,
-    pub subject: &'a str,
-    pub title: &'a str,
-    pub template: String,
+#[derive(Serialize, Deserialize, Debug, SurrealValue, Clone)]
+pub struct EmailMQTTPayload {
+    pub recipient: String,
+    pub subject: String,
+    pub template_id: String,
+    pub variables: serde_json::Value,
+    pub attachments: Option<Vec<EmailAttachment>>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, InputObject, SimpleObject, SurrealValue)]
+#[graphql(input_name = "EmailAttachmentInput")]
+pub struct EmailAttachment {
+    pub url: String,
+    pub filename: String,
+    pub content_type: String,
+    pub inline: bool,
+    pub cid: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Enum, Copy, Eq, SurrealValue)]

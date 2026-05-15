@@ -1,6 +1,6 @@
 use async_graphql::{ComplexObject, Enum, InputObject, OutputType, SimpleObject};
 use chrono::{DateTime, Utc};
-use lib::utils::models::ApiResponse;
+use lib::utils::models::{ApiResponse, EmailAttachment};
 
 use serde::{Deserialize, Serialize};
 use surrealdb::types::{RecordId, RecordIdKey, SurrealValue};
@@ -104,11 +104,62 @@ pub struct SubscriptionInputMetadata {
     pub mailing_list_id: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, InputObject, SurrealValue)]
+pub struct EmailTemplateInput {
+    pub name: String,
+    pub subject: String,
+    pub html: String,
+    pub variables: Vec<String>,
+    pub attachments: Vec<EmailAttachment>,
+}
+
+impl EmailTemplateInput {
+    pub fn sanitized(mut self) -> Self {
+        self.html = ammonia::Builder::new()
+            .add_tags(&[
+                "style", "head", "html", "body", "meta", "div", "span", "img", "a", "p", "h1",
+                "h2", "h3", "hr",
+            ])
+            .add_generic_attributes(&["style", "class", "id", "align", "valign"])
+            .add_tag_attributes("a", &["href", "target"])
+            .add_tag_attributes("img", &["src", "alt", "width", "height"])
+            .add_tag_attributes("meta", &["charset", "name", "content"])
+            .clean(&self.html)
+            .to_string();
+        self
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, SimpleObject, SurrealValue)]
+#[graphql(complex)]
+pub struct EmailTemplate {
+    #[graphql(skip)]
+    pub id: RecordId,
+    pub name: String,
+    pub subject: String,
+    pub html: String,
+    pub variables: Vec<String>,
+    pub attachments: Vec<EmailAttachment>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[ComplexObject]
+impl EmailTemplate {
+    async fn id(&self) -> Option<String> {
+        match &self.id.key {
+            RecordIdKey::String(s) => Some(s.clone()),
+            _ => None,
+        }
+    }
+}
+
 #[derive(SimpleObject)]
 #[graphql(concrete(name = "SubscriberResponse", params(Subscriber)))]
 #[graphql(concrete(name = "SendEmailResponse", params(String)))]
 #[graphql(concrete(name = "MailingListResponse", params(MailingList)))]
 #[graphql(concrete(name = "SubscriptionResponse", params(Subscription)))]
+#[graphql(concrete(name = "EmailTemplateResponse", params(EmailTemplate)))]
 pub struct GraphQLApiResponse<T: OutputType> {
     pub data: T,
     pub metadata: GraphQLApiResponseMetadata,

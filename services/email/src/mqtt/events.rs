@@ -1,9 +1,12 @@
+use std::sync::Arc;
+
 use lib::utils::models::{Email, EmailMQTTPayload, EmailUser};
 use rumqttc::v5::{mqttbytes::v5::Packet, Event};
+use surrealdb::{engine::remote::ws::Client, Surreal};
 
-use crate::utils::email::send_email;
+use crate::utils::email::{send_email, synthesize_email};
 
-pub async fn handle_events(event: &Event) -> () {
+pub async fn handle_events(db: &Arc<Surreal<Client>>, event: &Event) -> () {
     match event {
         Event::Incoming(packet) => {
             // Handle Incoming event
@@ -14,17 +17,14 @@ pub async fn handle_events(event: &Event) -> () {
                         b"email/send" => {
                             // tracing::debug!("Payload: {:?}", &message.payload);
 
-                            let deserialized_payload: EmailMQTTPayload =
-                                serde_json::from_slice(&message.payload).unwrap();
+                            let Ok(deserialized_payload) = serde_json::from_slice(&message.payload)
+                            else {
+                                return;
+                            };
 
-                            let email_arg = Email {
-                                recipient: EmailUser {
-                                    email_address: deserialized_payload.recipient.to_string(),
-                                    full_name: None,
-                                },
-                                subject: deserialized_payload.subject.to_string(),
-                                title: deserialized_payload.title.to_string(),
-                                body: deserialized_payload.template,
+                            let Ok(email_arg) = synthesize_email(db, &deserialized_payload).await
+                            else {
+                                return;
                             };
 
                             // Send email using email service
