@@ -21,7 +21,9 @@ use surrealdb::{engine::remote::ws::Client, types::RecordIdKey, Surreal};
 use tokio::fs;
 
 use crate::{
-    graphql::schemas::user::{AuthDetails, GithubUserProfile, GoogleUserInfo, OAuthUser, User},
+    graphql::schemas::user::{
+        AccountStatus, AuthDetails, GithubUserProfile, GoogleUserInfo, OAuthUser, User,
+    },
     utils::auth::{
         create_oauth_user_if_not_exists, decode_token_string, fetch_user_roles,
         initiate_auth_code_grant_flow, sign_jwt, verify_oauth_token, OAuthClientName,
@@ -335,11 +337,12 @@ pub async fn verify_email_handler(
         BEGIN TRANSACTION;
         LET $user = type::record('user', $user_id);
 
-        UPDATE $user SET status = 'Active' RETURN AFTER;
+        UPDATE $user SET status = $status RETURN AFTER;
         COMMIT TRANSACTION;
         ",
         )
         .bind(("user_id", user_id))
+        .bind(("status", AccountStatus::Active))
         .await
         .map_err(|e| {
             tracing::error!("Failed to activate user account: {}", e);

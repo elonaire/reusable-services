@@ -117,7 +117,12 @@ async fn main() -> Result<(), Error> {
         .init();
 
     dotenv().ok();
-    let db = Arc::new(database::connection::create_db_connection().await.unwrap());
+    let connection_pool = match database::connection::create_db_connection().await {
+        Ok(connection_pool) => connection_pool,
+        Err(e) => return Err(Error::new(ErrorKind::Other, format!("{:?}", e))),
+    };
+    let db = Arc::new(connection_pool);
+    let db_ref = &db;
 
     // Bring in some needed env vars
     let deployment_env = env::var("ENVIRONMENT").unwrap_or_else(|_| "prod".to_string()); // default to production because it's the most secure
@@ -203,7 +208,7 @@ async fn main() -> Result<(), Error> {
         .layer(GovernorLayer::new(governor_conf))
         .layer(Extension(shared_state))
         .layer(Extension(schema))
-        .layer(Extension(db))
+        .layer(Extension(db_ref.clone()))
         .layer(
             CorsLayer::new()
                 .allow_origin(origins)
@@ -248,9 +253,10 @@ async fn main() -> Result<(), Error> {
             .ok();
     });
 
+    let cloned_db = db_ref.clone();
     tokio::spawn(async move {
         while let Ok(event) = eventloop.poll().await {
-            handle_events(&event).await;
+            handle_events(&cloned_db, &event).await;
         }
     });
 

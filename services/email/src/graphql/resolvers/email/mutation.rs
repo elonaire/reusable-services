@@ -8,7 +8,7 @@ use lib::{
         api_responses::synthesize_graphql_response,
         custom_error::ExtendedError,
         grpc::confirm_authorization,
-        models::{AdminPrivilege, AuthorizationConstraint, Email},
+        models::{AuthorizationConstraint, Email},
     },
 };
 
@@ -17,7 +17,8 @@ use surrealdb::{engine::remote::ws::Client, types::RecordId, Surreal};
 
 use crate::{
     graphql::schemas::email::{
-        GraphQLApiResponse, MailingList, MailingListInput, Subscription, SubscriptionInput,
+        EmailTemplate, EmailTemplateInput, GraphQLApiResponse, MailingList, MailingListInput,
+        Subscription, SubscriptionInput,
     },
     utils,
 };
@@ -200,6 +201,84 @@ impl EmailMutation {
             }
             None => Err(ExtendedError::new(
                 "Failed to create subscription",
+                StatusCode::BAD_REQUEST.as_str(),
+            )
+            .build()),
+        }
+    }
+
+    pub async fn create_email_template(
+        &self,
+        ctx: &Context<'_>,
+        email_template_input: EmailTemplateInput,
+    ) -> Result<GraphQLApiResponse<EmailTemplate>> {
+        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
+            tracing::error!("Error extracting Surreal Client: {:?}", e);
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
+        })?;
+
+        let headers = ctx.data::<HeaderMap>().map_err(|e| {
+            tracing::error!("Error HeaderMap: {:?}", e);
+            ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
+        })?;
+
+        let authenticated = confirm_authentication(ctx).await?;
+        let authenticated_ref = &authenticated;
+
+        let authorization_constraint = AuthorizationConstraint {
+            permissions: vec!["write:email_template".into()],
+        };
+
+        let authorized =
+            confirm_authorization(authenticated_ref, &authorization_constraint, headers)
+                .await
+                .map_err(|e| {
+                    tracing::error!("Error creating mailing list: {}", e);
+                    ExtendedError::new("Failed to assign role", StatusCode::BAD_REQUEST.as_str())
+                        .build()
+                })?;
+
+        if !authorized {
+            return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
+        }
+
+        let mut query = db
+            .query(
+                "
+                (CREATE email_template CONTENT $email_template_input)
+                ",
+            )
+            .bind(("email_template_input", email_template_input.sanitized()))
+            .await
+            .map_err(|e| {
+                tracing::error!("Error creating email template: {}", e);
+                ExtendedError::new(
+                    "Failed to create email template",
+                    StatusCode::BAD_REQUEST.as_str(),
+                )
+                .build()
+            })?;
+
+        let db_response: Option<EmailTemplate> = query.take(0).map_err(|e| {
+            tracing::error!("Failed to create email template: {}", e);
+            ExtendedError::new(
+                "Failed to create email template",
+                StatusCode::BAD_REQUEST.as_str(),
+            )
+            .build()
+        })?;
+
+        match db_response {
+            Some(template) => {
+                let api_response =
+                    synthesize_graphql_response(ctx, &template, None).ok_or_else(|| {
+                        tracing::error!("Failed to synthesize response!");
+                        ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+                    })?;
+                Ok(api_response.into())
+            }
+            None => Err(ExtendedError::new(
+                "Failed to create email template",
                 StatusCode::BAD_REQUEST.as_str(),
             )
             .build()),

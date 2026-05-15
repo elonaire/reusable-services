@@ -1,228 +1,157 @@
-use lib::utils::models::Email;
+use axum::body::Bytes;
+use handlebars::Handlebars;
+use lib::utils::models::{Email, EmailMQTTPayload, EmailUser};
 use std::{
     env,
     io::{Error, ErrorKind},
-    time::SystemTime,
+    sync::Arc,
 };
+use surrealdb::{engine::remote::ws::Client, Surreal};
 
 // use async_graphql::{Context, Error, Object, Result};
-use hyper::Method;
 use lettre::{
-    message::{Attachment, Body, MultiPart, SinglePart},
+    message::{header::ContentType, Attachment, MultiPart, SinglePart},
     transport::smtp::authentication::Credentials,
     Message, SmtpTransport, Transport,
 };
 use reqwest::Client as ReqWestClient;
 
+use crate::graphql::schemas::email::EmailTemplate;
+
 pub async fn send_email(email: &Email) -> Result<&'static str, Error> {
     let smtp_user = env::var("SMTP_USER").map_err(|e| {
-        tracing::error!("Missing the SMTP_USER environment variable.: {:?}", e);
+        tracing::error!("Missing SMTP_USER: {:?}", e);
         Error::new(ErrorKind::Other, "Server Error")
     })?;
     let smtp_password = env::var("SMTP_PASSWORD").map_err(|e| {
-        tracing::error!("Missing the SMTP_PASSWORD environment variable.: {:?}", e);
+        tracing::error!("Missing SMTP_PASSWORD: {:?}", e);
         Error::new(ErrorKind::Other, "Server Error")
     })?;
     let smtp_server = env::var("SMTP_SERVER").map_err(|e| {
-        tracing::error!("Missing the SMTP_SERVER environment variable.: {:?}", e);
-        Error::new(ErrorKind::Other, "Server Error")
-    })?;
-    // let files_service = env::var("FILES_SERVICE").map_err(|e| {
-    //     tracing::error!("Missing the FILES_SERVICE environment variable.: {:?}", e);
-    //     Error::new(ErrorKind::Other, "Server Error")
-    // })?;
-    let primary_logo = env::var("PRIMARY_LOGO").map_err(|e| {
-        tracing::error!("Missing the PRIMARY_LOGO environment variable.: {:?}", e);
+        tracing::error!("Missing SMTP_SERVER: {:?}", e);
         Error::new(ErrorKind::Other, "Server Error")
     })?;
     let business_name = env::var("BUSINESS_NAME").map_err(|e| {
-        tracing::error!("Missing the BUSINESS_NAME environment variable.: {:?}", e);
-        Error::new(ErrorKind::Other, "Server Error")
-    })?;
-    let business_permanent_address = env::var("BUSINESS_PERMANENT_ADDRESS").map_err(|e| {
-        tracing::error!(
-            "Missing the BUSINESS_PERMANENT_ADDRESS environment variable.: {:?}",
-            e
-        );
-        Error::new(ErrorKind::Other, "Server Error")
-    })?;
-    let header_footer_bg_color = env::var("HEADER_FOOTER_BG_COLOR").map_err(|e| {
-        tracing::error!(
-            "Missing the HEADER_FOOTER_BG_COLOR environment variable.: {:?}",
-            e
-        );
-        Error::new(ErrorKind::Other, "Server Error")
-    })?;
-    let header_footer_text_color = env::var("HEADER_FOOTER_TEXT_COLOR").map_err(|e| {
-        tracing::error!(
-            "Missing the HEADER_FOOTER_TEXT_COLOR environment variable.: {:?}",
-            e
-        );
+        tracing::error!("Missing BUSINESS_NAME: {:?}", e);
         Error::new(ErrorKind::Other, "Server Error")
     })?;
 
-    let current_year = {
-        let now = SystemTime::now();
-        let datetime: chrono::DateTime<chrono::Utc> = now.into();
-        datetime.format("%Y").to_string()
-    };
-
-    let email_title = &email.title;
-    let email_content = &email.body;
-    let business_email = &smtp_user;
-    let business_name_ref = &business_name;
-    let business_permanent_address_ref = &business_permanent_address;
-    let header_footer_bg_color_ref = &header_footer_bg_color;
-    let header_footer_text_color_ref = &header_footer_text_color;
-
-    // let logo_url = format!("{}/view/{}", files_service, primary_logo);
     let client = ReqWestClient::builder()
         .danger_accept_invalid_certs(true)
         .build()
         .map_err(|e| {
-            tracing::error!("Failed to build client: {:?}", e);
-            Error::new(ErrorKind::Other, "Failed to send email")
-        })?;
-    // let logo_image = fs::read("https://imagedelivery.net/fa3SWf5GIAHiTnHQyqU8IQ/5d0feb5f-2b15-4b86-9cf3-1f99372f4600/public")?;
-    let logo_image = client
-        .request(Method::GET, &primary_logo)
-        .send()
-        .await
-        .map_err(|e| {
-            tracing::error!("Error sending: {:?}", e);
-            Error::new(ErrorKind::Other, "Failed to send email")
-        })?
-        .bytes()
-        .await
-        .map_err(|e| {
-            tracing::error!("Error deserializing: {:?}", e);
-            // Error::new(e.to_string())
+            tracing::error!("Failed to build HTTP client: {:?}", e);
             Error::new(ErrorKind::Other, "Failed to send email")
         })?;
 
-    let email_body = format!(
-        r#"
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <style>
-                /* General email body styling */
-                body {{
-                    font-family: Arial, sans-serif;
-                    margin: 0 30px;
-                    padding: 0;
-                    background-color: #FFF7EF;
-                }}
-                .email-container {{
-                    width: 100%;
-                    background-color: #ffffff;
-                }}
-                .header {{
-                    background-color: #{header_footer_bg_color_ref};
-                    padding: 10px;
-                    text-align: center;
-                    color: #{header_footer_text_color_ref};
-                }}
-                .header img {{
-                    width: 200px;
-                }}
-                .title {{
-                    text-align: center;
-                }}
-                .content {{
-                    padding: 20px;
-                    color: #333333;
-                }}
-                .footer {{
-                    background-color: #{header_footer_bg_color_ref};
-                    color: #{header_footer_text_color_ref};
-                    text-align: center;
-                    padding: 10px 0;
-                }}
-            </style>
-        </head>
-        <body>
-            <div class="email-container">
-                <!-- Header with logo -->
-                <div class="header">
-                    <img src=cid:logo alt="Business Logo">
-                </div>
+    // Fetch all attachment bytes upfront, in parallel
+    let attachment_futures: Vec<_> = email
+        .attachments
+        .iter()
+        .map(|att| {
+            let client = client.clone();
+            let url = att.url.clone();
+            async move {
+                client
+                    .get(&url)
+                    .send()
+                    .await
+                    .map_err(|e| {
+                        tracing::error!("Failed to fetch attachment {}: {:?}", url, e);
+                        Error::new(ErrorKind::Other, "Failed to fetch attachment")
+                    })?
+                    .bytes()
+                    .await
+                    .map_err(|e| {
+                        tracing::error!("Failed to read attachment bytes {}: {:?}", url, e);
+                        Error::new(ErrorKind::Other, "Failed to read attachment")
+                    })
+            }
+        })
+        .collect();
 
-                <!-- Main content -->
-                <div class="content">
-                    <!-- Replace the content below with your email-specific content -->
-                    <h1 class="title">{email_title}</h1>
-                    {email_content}
-                    <!-- End of email-specific content -->
-                </div>
-                    <!-- Footer -->
-                    <div class="footer">
-                        <div style="text-align: center; padding: 10px; font-size: 12px;">
-                            <p>{business_name_ref} | {business_permanent_address_ref} | {business_email}</p>
-                        </div>
-                        &copy; {current_year} {business_name_ref}. All rights reserved.
-                    </div>
-                </div>
-            </body>
-            </html>
-        "#
-    );
+    let attachment_bytes: Vec<Bytes> = futures::future::try_join_all(attachment_futures)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to join attachment futures: {:?}", e);
+            Error::new(ErrorKind::Other, "Invalid attachment content type")
+        })?;
 
-    let logo_image_body = Body::new(logo_image.to_vec());
+    // Build the related part starting with the HTML body
+    let mut related = MultiPart::related().singlepart(SinglePart::html(email.body.clone()));
+
+    // Separate inline and regular attachments with their bytes
+    let mut regular_parts: Vec<SinglePart> = Vec::new();
+
+    for (att, bytes) in email.attachments.iter().zip(attachment_bytes.iter()) {
+        let content_type: ContentType = att.content_type.parse().map_err(|e| {
+            tracing::error!("Invalid content type '{}': {}", att.content_type, e);
+            Error::new(ErrorKind::Other, "Invalid attachment content type")
+        })?;
+
+        if att.inline {
+            let cid = att.cid.clone().ok_or_else(|| {
+                tracing::error!("Inline attachment '{}' missing cid", att.filename);
+                Error::new(ErrorKind::Other, "Inline attachment missing cid")
+            })?;
+            related =
+                related.singlepart(Attachment::new_inline(cid).body(bytes.to_vec(), content_type));
+        } else {
+            regular_parts
+                .push(Attachment::new(att.filename.clone()).body(bytes.to_vec(), content_type));
+        }
+    }
+
+    // Fold regular attachments into the mixed builder
+    let multipart = if regular_parts.is_empty() {
+        MultiPart::mixed().multipart(related)
+    } else {
+        regular_parts
+            .into_iter()
+            .fold(MultiPart::mixed().multipart(related), |builder, part| {
+                builder.singlepart(part)
+            })
+    };
 
     let message = Message::builder()
         .from(
-            format!("{business_name_ref} <{}>", &smtp_user)
+            format!("{} <{}>", business_name, smtp_user)
                 .parse()
                 .map_err(|e| {
-                    tracing::error!("Failed to parse sender email address: {}", e);
+                    tracing::error!("Failed to parse sender: {}", e);
                     Error::new(ErrorKind::Other, "Failed to send email")
                 })?,
         )
-        .reply_to(format!(" <{}>", &smtp_user).parse().map_err(|e| {
-            tracing::error!("Failed to parse reply-to email address: {}", e);
+        .reply_to(format!("<{}>", smtp_user).parse().map_err(|e| {
+            tracing::error!("Failed to parse reply-to: {}", e);
             Error::new(ErrorKind::Other, "Failed to send email")
         })?)
         .to(format!(
             "{} <{}>",
-            &email.recipient.clone().full_name.unwrap_or(String::new()),
-            &email.recipient.clone().email_address
+            email.recipient.full_name.clone().unwrap_or_default(),
+            email.recipient.email_address
         )
         .parse()
         .map_err(|e| {
-            tracing::error!("Failed to parse recipient email address: {}", e);
+            tracing::error!("Failed to parse recipient: {}", e);
             Error::new(ErrorKind::Other, "Failed to send email")
         })?)
         .subject(&email.subject)
-        .multipart(
-            MultiPart::related()
-                .singlepart(SinglePart::html(email_body))
-                .singlepart(Attachment::new_inline(String::from("logo")).body(
-                    logo_image_body,
-                    "image/png".parse().map_err(|e| {
-                        tracing::error!("Failed to parse image content type: {}", e);
-                        Error::new(ErrorKind::Other, "Failed to send email")
-                    })?,
-                )),
-        )
+        .multipart(multipart)
         .map_err(|e| {
-            tracing::error!("Failed to send email: {}", e);
+            tracing::error!("Failed to build message: {}", e);
             Error::new(ErrorKind::Other, "Failed to send email")
         })?;
 
     let creds = Credentials::new(smtp_user, smtp_password);
+    let mailer = SmtpTransport::starttls_relay(&smtp_server)
+        .map_err(|e| {
+            tracing::error!("Failed to start TLS relay: {}", e);
+            Error::new(ErrorKind::Other, "Failed to send email")
+        })?
+        .credentials(creds)
+        .build();
 
-    // Open a remote connection to smtp server
-    let mailer = (SmtpTransport::starttls_relay(&smtp_server).map_err(|e| {
-        tracing::error!("Failed to start TLS relay: {}", e);
-        Error::new(ErrorKind::Other, "Failed to send email")
-    })?)
-    .credentials(creds)
-    .build();
-
-    // Send the email
     match mailer.send(&message) {
         Ok(_) => Ok("Email sent successfully!"),
         Err(e) => {
@@ -230,4 +159,77 @@ pub async fn send_email(email: &Email) -> Result<&'static str, Error> {
             Err(Error::new(ErrorKind::Other, "Failed to send email"))
         }
     }
+}
+
+pub async fn synthesize_email(
+    db: &Arc<Surreal<Client>>,
+    payload: &EmailMQTTPayload,
+) -> Result<Email, Error> {
+    let mut result = db
+        .query(
+            r#"
+            LET $template_record = type::record('email_template', $payload.template_id);
+            SELECT * FROM email_template WHERE id = $template_record LIMIT 1;
+            "#,
+        )
+        .bind(("payload", payload.clone()))
+        .await
+        .map_err(|e| {
+            tracing::error!("{}", e);
+            Error::new(ErrorKind::Other, "Database query failed")
+        })?;
+
+    let response: Option<EmailTemplate> = result.take(1).map_err(|e| {
+        tracing::error!("{}", e);
+        Error::new(ErrorKind::Other, "Database query deserialization failed")
+    })?;
+
+    let Some(email_template) = response else {
+        return Err(Error::new(ErrorKind::Other, "Email template not found!"));
+    };
+
+    for variable in &email_template.variables {
+        if payload.variables.get(variable).is_none() {
+            tracing::error!("Payload is missing a required template variable!");
+            return Err(Error::new(
+                ErrorKind::Other,
+                "Payload is missing a required template variable!",
+            ));
+        }
+    }
+
+    let mut handlebars = Handlebars::new();
+    handlebars
+        .register_template_string("email_template", email_template.html)
+        .map_err(|e| {
+            tracing::error!("register_template_string: {:?}", e);
+            Error::new(
+                ErrorKind::Other,
+                "Error encountered while parsing template!",
+            )
+        })?;
+
+    let body = handlebars
+        .render("email_template", &payload.variables)
+        .map_err(|e| {
+            tracing::error!("render: {:?}", e);
+            Error::new(
+                ErrorKind::Other,
+                "Error encountered while rendering template!",
+            )
+        })?;
+
+    Ok(Email {
+        recipient: EmailUser {
+            email_address: payload.recipient.to_string(),
+            full_name: None,
+        },
+        subject: payload.subject.to_string(),
+        body,
+        attachments: email_template
+            .attachments
+            .into_iter()
+            .chain(payload.attachments.clone().unwrap_or_default().into_iter())
+            .collect(),
+    })
 }

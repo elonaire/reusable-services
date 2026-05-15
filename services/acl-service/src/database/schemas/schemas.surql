@@ -238,24 +238,3 @@ DEFINE FUNCTION OVERWRITE fn::assign_default_role($user_id: record) {
 };
 
 -- Migrations
--- UPDATE assigned SET is_default = false WHERE is_default IS NONE;
--- UPDATE role SET is_default = false WHERE is_default IS NONE;
--- UPDATE role SET is_admin = false, is_super_admin = false WHERE is_admin IS NONE OR is_super_admin IS NONE;
--- UPDATE organization SET created_by = user:8beo2dgkz7yoy26d04rt WHERE created_by IS NONE;
--- UPDATE department SET created_by = user:8beo2dgkz7yoy26d04rt WHERE created_by IS NONE;
-REMOVE TABLE service_account;
-
-UPDATE user SET status = { Active: {} } WHERE status = 'Active';
-UPDATE user SET status = { Inactive: {} } WHERE status = 'Inactive' OR status = NONE;
-UPDATE user SET status = { Suspended: {} } WHERE status = 'Suspended';
-UPDATE user SET status = { Deleted: {} } WHERE status = 'Deleted';
-
-UPDATE user SET gender = { Male: {} } WHERE gender = 'Male';
-UPDATE user SET gender = { Female: {} } WHERE gender = 'Female';
-UPDATE user SET gender = { Other: {} } WHERE gender = 'Other';
-
-UPDATE user SET oauth_client = { Google: {} } WHERE oauth_client = 'Google';
-UPDATE user SET oauth_client = { Github: {} } WHERE oauth_client = 'Github';
-
-UPDATE api_key SET status = { Active: {} } WHERE status = 'Active';
-UPDATE api_key SET status = { Revoked: {} } WHERE status = 'Revoked';
