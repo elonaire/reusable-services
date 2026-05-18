@@ -105,7 +105,7 @@ impl Mutation {
                 };
 
                 let auth_claim = AuthClaim { roles: vec![] };
-                let token_duration = Duration::from_secs(15 * 60); // minutes by 60 seconds;
+                let token_duration = Duration::from_mins(15); // from minutes
 
                 let Some(user_id) = (match user.id.key {
                     RecordIdKey::String(s) => Some(s.clone()),
@@ -408,8 +408,8 @@ impl Mutation {
                             .build());
                         };
 
-                        let refresh_token_expiry_duration = Duration::from_secs(30 * 24 * 60 * 60); // days by hours by minutes by 60 seconds
-                        let access_token_expiry_duration = Duration::from_secs(1 * 60); // minutes by 60 seconds
+                        let refresh_token_expiry_duration = Duration::from_days(30); // from days
+                        let access_token_expiry_duration = Duration::from_mins(5); // from minutes
 
                         let user_roles = fetch_user_roles(db, &user_id, None).await?;
 
@@ -1024,7 +1024,7 @@ impl Mutation {
                             roles: user_roles.to_vec(),
                         };
 
-                        let refresh_token_expiry_duration = Duration::from_secs(30 * 24 * 60 * 60); // days by hours by minutes by 60 seconds
+                        let refresh_token_expiry_duration = Duration::from_days(30); // from days
 
                         let refresh_token_str = sign_jwt(
                             &auth_claim,
@@ -1044,8 +1044,7 @@ impl Mutation {
                         match cookies.get("oauth_client") {
                             Some(oauth_client) => {
                                 if oauth_client.is_empty() {
-                                    let access_token_expiry_duration =
-                                        Duration::from_secs(5 * 24 * 60 * 60); // days by hours by minutes by 60 seconds
+                                    let access_token_expiry_duration = Duration::from_mins(5); // from minutes
 
                                     let access_token_str = sign_jwt(
                                         &auth_claim,
