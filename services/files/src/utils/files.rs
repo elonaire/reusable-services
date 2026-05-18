@@ -27,12 +27,7 @@ pub async fn get_file_id<T: Clone + AsSurrealClient>(
         .as_client()
         .query(
             "
-        BEGIN TRANSACTION;
-
-        LET $file = (SELECT * FROM ONLY file WHERE system_filename=$file_name LIMIT 1);
-
-        RETURN $file;
-        COMMIT TRANSACTION;
+            (SELECT * FROM ONLY file WHERE system_filename=$file_name LIMIT 1)
         ",
         )
         .bind(("file_name", file_name))
@@ -70,17 +65,11 @@ pub async fn get_system_filename<T: Clone + AsSurrealClient>(
         .as_client()
         .query(
             "
-        BEGIN TRANSACTION;
         LET $file_thing = type::record($file_id);
-
-        IF !($file_thing.exists()) {
-            THROW 'Invalid Input';
-        };
 
         LET $file = (SELECT * FROM ONLY $file_thing LIMIT 1);
 
         RETURN $file;
-        COMMIT TRANSACTION;
         ",
         )
         .bind(("file_id", format!("file:{}", file_id)))
@@ -90,7 +79,7 @@ pub async fn get_system_filename<T: Clone + AsSurrealClient>(
             Error::new(ErrorKind::Other, "DB Query failed")
         })?;
 
-    let response: Option<UploadedFile> = file_query.take(0).map_err(|e| {
+    let response: Option<UploadedFile> = file_query.take(2).map_err(|e| {
         tracing::error!("Error: {}", e);
         Error::new(ErrorKind::Other, "UploadedFile deserialization failed")
     })?;
@@ -119,9 +108,7 @@ pub async fn purchase_file<T: Clone + AsSurrealClient>(
             "
             BEGIN TRANSACTION;
             LET $file_thing = type::record($file_id);
-            IF !($file_thing.exists()) {
-                THROW 'Invalid Input';
-            };
+
             LET $user = (SELECT * FROM ONLY user_id WHERE user_id = $user_id LIMIT 1);
             LET $purchased_file = (RELATE $user->bought_file->$file_thing RETURN AFTER);
             RETURN $user_id;
@@ -139,7 +126,7 @@ pub async fn purchase_file<T: Clone + AsSurrealClient>(
             Error::new(ErrorKind::Other, "DB Query failed")
         })?;
 
-    let _response: Option<String> = purchase_file_query.take(0).map_err(|e| {
+    let _response: Option<String> = purchase_file_query.take(4).map_err(|e| {
         tracing::error!("purchase_file_query Deserialization Error: {}", e);
         Error::new(ErrorKind::Other, "UploadedFile deserialization failed")
     })?;
@@ -206,10 +193,6 @@ pub async fn create_file_from_content<T: Clone + AsSurrealClient>(
             BEGIN TRANSACTION;
             LET $user = type::record('user_id', $user_id);
 
-            IF !($user.exists()) {
-                THROW 'Invalid Input';
-            };
-
             LET $new_file = (CREATE file CONTENT {
                	owner: $user,
                	name: $name,
@@ -237,7 +220,7 @@ pub async fn create_file_from_content<T: Clone + AsSurrealClient>(
             Error::new(ErrorKind::Other, "Failed to insert file into database")
         })?;
 
-    let saved_file: Option<UploadedFile> = db_query_result.take(0).map_err(|e| {
+    let saved_file: Option<UploadedFile> = db_query_result.take(3).map_err(|e| {
         tracing::error!("Failed to insert file into database: {}", e);
         Error::new(ErrorKind::Other, "Failed to insert file into database")
     })?;
