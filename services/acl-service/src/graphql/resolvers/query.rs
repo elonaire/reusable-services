@@ -56,43 +56,84 @@ impl Query {
             .query(
                 r#"
                 LET $user = type::record('user', $user_id);
+                LET $org = type::record('organization', $filters.organization_id);
+                LET $dept = type::record('department', $filters.department_id);
+                LET $role = type::record('role', $filters.role_id);
 
-                LET $org = IF $filters.organization_id != NONE
-                { type::record('organization', $filters.organization_id) }
-                ;
-                LET $dept = IF $filters.department_id != NONE
-                { type::record('department', $filters.department_id) }
-                ;
-                LET $role = IF $filters.role_id != NONE
-                { type::record('role', $filters.role_id) }
-                ;
-                RETURN IF $filters != NONE
-               	{
+                LET $status = $filters.status;
+                LET $org_id = $filters.organization_id;
+                LET $dept_id = $filters.department_id;
+                LET $role_id = $filters.role_id;
 
-              		LET $filtered_users = <array><set> array::flatten([
-             			(SELECT * FROM user WHERE ($filters.department_id = NONE AND $filters.organization_id != NONE AND $filters.status != NONE AND status = $filters.status AND ->assigned->role->is_under->(organization WHERE (created_by = $user AND id = $org))) OR ($filters.department_id = NONE AND $filters.organization_id = NONE AND $filters.status != NONE AND status = $filters.status AND ->assigned->role->is_under->(organization WHERE created_by = $user))),
-             			(SELECT * FROM user WHERE ($filters.department_id != NONE AND $filters.organization_id = NONE AND $filters.status != NONE AND status = $filters.status AND ->assigned->role->is_under->(department WHERE (created_by = $user AND id = $dept))) OR ($filters.department_id != NONE AND $filters.organization_id != NONE AND $filters.status != NONE AND status = $filters.status AND ->assigned->role->is_under->(department WHERE (created_by = $user AND id = $dept))->is_under->(organization WHERE id = $org)) OR ($filters.department_id = NONE AND $filters.organization_id = NONE AND $filters.status != NONE AND status = $filters.status AND ->assigned->role->is_under->(department WHERE created_by = $user))),
-             			(SELECT * FROM user WHERE ($filters.department_id = NONE AND $filters.organization_id != NONE AND $filters.status != NONE AND status = $filters.status AND @.{..}(->assigned->role->is_under->department)->is_under->(organization WHERE (created_by = $user AND id = $org))) OR ($filters.department_id != NONE AND $filters.organization_id != NONE AND $filters.status != NONE AND status = $filters.status AND @.{..}(->assigned->role->is_under->(department WHERE id = $dept))->is_under->(organization WHERE (created_by = $user AND id = $org))) OR ($filters.department_id = NONE AND $filters.organization_id = NONE AND $filters.status != NONE AND status = $filters.status AND @.{..}(->assigned->role->is_under->department)->is_under->(organization WHERE created_by = $user))),
-             			(SELECT * FROM user WHERE ($filters.department_id != NONE AND $filters.organization_id = NONE AND $filters.status != NONE AND status = $filters.status AND @.{..}(->assigned->role->is_under->department)->is_under->(department WHERE (created_by = $user AND id = $dept))) OR ($filters.department_id != NONE AND $filters.organization_id != NONE AND $filters.status != NONE AND status = $filters.status AND @.{..}(->assigned->role->is_under->department)->is_under->(department WHERE (created_by = $user AND id = $dept))->is_under->(organization WHERE id = $org)) OR ($filters.department_id = NONE AND $filters.organization_id = NONE AND $filters.status != NONE AND status = $filters.status AND @.{..}(->assigned->role->is_under->department)->is_under->(department WHERE created_by = $user))),
-             			(SELECT * FROM user WHERE ($filters.department_id = NONE AND $filters.organization_id != NONE AND $filters.status != NONE AND $filters.role_id != NONE AND status = $filters.status AND ->assigned->(role WHERE (created_by = $user AND id = $role))->is_under->(organization WHERE id = $org)) OR ($filters.department_id != NONE AND $filters.organization_id != NONE AND $filters.status != NONE AND $filters.role_id != NONE AND status = $filters.status AND ->assigned->(role WHERE (created_by = $user AND id = $role))->is_under->(department WHERE id = $dept)->is_under->(organization WHERE id = $org)) OR ($filters.department_id = NONE AND $filters.organization_id = NONE AND $filters.status != NONE AND $filters.role_id != NONE AND status = $filters.status AND ->assigned->(role WHERE created_by = $user AND id = $role)))
-              		]);
-
-              		RETURN $filtered_users;
-
-                } ELSE {
-
-              		LET $scoped_users = <array><set> array::flatten([
-             			(SELECT * FROM user WHERE ->assigned->role->is_under->(organization WHERE created_by = $user)),
-             			(SELECT * FROM user WHERE ->assigned->role->is_under->(department WHERE created_by = $user)),
-             			(SELECT * FROM user WHERE @.{..}(->assigned->role->is_under->department)->is_under->(organization WHERE created_by = $user)),
-             			(SELECT * FROM user WHERE @.{..}(->assigned->role->is_under->department)->is_under->(department WHERE created_by = $user)),
-             			(SELECT * FROM user WHERE ->assigned->(role WHERE created_by = $user))
-              		]);
-
-                    RETURN $scoped_users;
-
-                }
-                ;
+                <array> <set> array::flatten(
+                    [
+                        (
+                            SELECT *
+                            FROM user
+                            WHERE ->assigned->role->is_under->(organization WHERE created_by = $user)
+                        ),
+                        (
+                            SELECT *
+                            FROM user
+                            WHERE ->assigned->role->is_under->(department WHERE created_by = $user)
+                        ),
+                        (
+                            SELECT *
+                            FROM user
+                            WHERE @.{..} (->assigned->role->is_under->department)->is_under->(organization WHERE created_by = $user)
+                        ),
+                        (
+                            SELECT *
+                            FROM user
+                            WHERE @.{..} (->assigned->role->is_under->department)->is_under->(department WHERE created_by = $user)
+                        ),
+                        (
+                            SELECT *
+                            FROM user
+                            WHERE ->assigned->(role WHERE created_by = $user)
+                        ),
+                    ]
+                ).filter(
+                    |$u| {
+                        IF $status != NONE {
+                            $u.status == $status;
+                        } ELSE {
+                            true;
+                        };
+                    }
+                ).filter(
+                    |$u| {
+                        IF $org_id != NONE {
+                            SELECT *
+                            FROM ONLY $u
+                            WHERE
+                                ->assigned->role->is_under->(organization WHERE id = $org)
+                                OR @.{..} (->assigned->role->is_under->department)->is_under->(organization WHERE id = $org);
+                        } ELSE {
+                            true;
+                        };
+                    }
+                ).filter(
+                    |$u| {
+                        IF $dept_id != NONE {
+                            SELECT *
+                            FROM ONLY $u
+                            WHERE
+                                ->assigned->role->is_under->(department WHERE id = $dept)
+                                OR @.{..} (->assigned->role->is_under->department)->is_under->(department WHERE id = $dept);
+                        } ELSE {
+                            true;
+                        };
+                    }
+                ).filter(
+                    |$u| {
+                        IF $role_id != NONE {
+                            $u->assigned->(role WHERE id = $role);
+                        } ELSE {
+                            true;
+                        };
+                    }
+                );
                 "#
             )
             .bind(("user_id", authenticated_ref.sub.to_owned()))
@@ -103,7 +144,7 @@ impl Query {
             ExtendedError::new("Error fetching users", StatusCode::BAD_REQUEST.as_str()).build()
         })?;
 
-        let response: Vec<User> = fetch_users_query.take(4).map_err(|e| {
+        let response: Vec<User> = fetch_users_query.take(8).map_err(|e| {
             tracing::error!("Users deserialization error: {}", e);
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
