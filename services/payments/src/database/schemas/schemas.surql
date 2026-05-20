@@ -1,7 +1,8 @@
 -- Enable GraphQL
 -- DEFINE CONFIG GRAPHQL AUTO;
 -- Analyzer
-DEFINE ANALYZER currency_analyzer TOKENIZERS blank,class,camel,punct FILTERS edgengram(2, 10), lowercase;
+-- edgengram splits words into n-grams for full-text search by backtracking through the tokenizer e.g apple -> ['ap','app','appl','apple']
+DEFINE ANALYZER OVERWRITE currency_analyzer TOKENIZERS blank, camel, punct, class FILTERS edgengram(2, 10), lowercase;
 
 -- A schema-full user_id table
 DEFINE TABLE user_id SCHEMAFULL;
@@ -22,4 +23,7 @@ DEFINE FIELD created_at ON TABLE currency TYPE datetime
 DEFINE FIELD updated_at ON TABLE currency TYPE datetime
     VALUE time::now();
 --Full-text search
-DEFINE INDEX currencyNameIndex ON TABLE currency FIELDS name FULLTEXT ANALYZER currency_analyzer BM25(1.2,0.75) HIGHLIGHTS;
+DEFINE INDEX OVERWRITE currencyNameIndex ON TABLE currency FIELDS name FULLTEXT ANALYZER currency_analyzer BM25 HIGHLIGHTS;
+
+/* Migrations */
+REBUILD INDEX currencyNameIndex ON TABLE currency;

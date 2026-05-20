@@ -26,35 +26,36 @@ impl PaymentQuery {
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
 
-        let filter_query = match &filters {
-            Some(_existing_filters) => {
+        let mut fetch_currencies_query = db
+            .query(
                 r#"
-                RETURN IF $filters != NONE {
-              		RETURN IF $filters.currency_id != NONE AND string::len($filters.currency_id) > 0 {
-                        LET $currency_record = type::record('currency', $filters.currency_id);
+                IF $filters != NONE {
+                    LET $currency_id = $filters.currency_id;
+                    LET $currency_code = $filters.code;
+                    LET $currency_numeric = $filters.numeric;
+                    LET $search_term = $filters.search_term;
+                    IF $currency_id != NONE AND string::len($currency_id) > 0 {
+                        LET $currency_record = type::record('currency', $currency_id);
 
                         (SELECT * FROM currency WHERE id = $currency_record)
                     }
-                    ELSE IF $filters.code != NONE AND string::len($filters.code) > 0 {
-                        (SELECT * FROM currency WHERE code = $filters.code)
+                    ELSE IF $currency_code != NONE AND string::len($currency_code) > 0 {
+                        (SELECT * FROM currency WHERE code = $currency_code)
                     }
-                    ELSE IF $filters.numeric != NONE AND string::len($filters.numeric) > 0 {
-                        (SELECT * FROM currency WHERE numeric = $filters.numeric)
+                    ELSE IF $currency_numeric != NONE AND string::len($currency_numeric) > 0 {
+                        (SELECT * FROM currency WHERE numeric = $currency_numeric)
                     }
-                    ELSE IF $filters.search_term != NONE AND string::len($filters.search_term) > 0 {
-                        (SELECT * FROM currency WHERE name @@ $filters.search_term)
+                    ELSE IF $search_term != NONE AND string::len($search_term) > 0 {
+                        (SELECT * FROM currency WHERE name @@ $search_term)
                     }
                     ELSE {
                         []
                     };
+                } ELSE {
+                    (SELECT * FROM currency)
                 };
-                "#
-            }
-            None => "(SELECT * FROM currency)",
-        };
-
-        let mut fetch_currencies_query = db
-            .query(filter_query)
+                "#,
+            )
             .bind(("filters", filters))
             .await
             .map_err(|e| {
