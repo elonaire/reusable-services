@@ -290,17 +290,14 @@ impl<T: Sync + Send + Clone> ApiResponse<T> {
 pub struct ApiResponseRest<T: Serialize + Clone> {
     status: StatusCode,
     data: T,
-    request_id: String,
-    new_access_token: Option<String>,
+    metadata: ApiResponseMetadata,
 }
 
 #[derive(Serialize)]
 struct SuccessBody<T: Serialize> {
     success: bool,
-    request_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    new_access_token: Option<String>,
     data: T,
+    metadata: ApiResponseMetadata,
 }
 
 impl<T: Serialize + Clone> ApiResponseRest<T> {
@@ -313,8 +310,10 @@ impl<T: Serialize + Clone> ApiResponseRest<T> {
         Self {
             status,
             data: data.clone(),
-            request_id,
-            new_access_token,
+            metadata: ApiResponseMetadata {
+                request_id,
+                new_access_token,
+            },
         }
     }
 }
@@ -325,9 +324,8 @@ impl<T: Serialize + Clone> IntoResponse for ApiResponseRest<T> {
             self.status,
             Json(SuccessBody {
                 success: true,
-                request_id: self.request_id,
-                new_access_token: self.new_access_token,
                 data: self.data,
+                metadata: self.metadata,
             }),
         )
             .into_response()
