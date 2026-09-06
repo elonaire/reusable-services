@@ -1,5 +1,7 @@
 use axum::http::HeaderValue;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::Utc;
+use cookie::time::OffsetDateTime;
 use jwt_simple::prelude::*;
 use lib::utils::custom_traits::AuthMetadataContext;
 use lib::utils::models::AuthorizationConstraint;
@@ -26,7 +28,10 @@ use oauth2::{
     EndpointNotSet, EndpointSet,
 };
 use reqwest::{header::HeaderMap as ReqWestHeaderMap, Client as ReqWestClient};
-use rsa::{pkcs8::DecodePrivateKey, Pkcs1v15Encrypt, RsaPrivateKey};
+use rsa::{
+    pkcs8::{DecodePrivateKey, DecodePublicKey},
+    Pkcs1v15Encrypt, RsaPrivateKey, RsaPublicKey,
+};
 
 use oauth2::{
     AuthUrl, Client, ClientId, ClientSecret, CsrfToken, EmptyExtraTokenFields, PkceCodeChallenge,
@@ -37,7 +42,8 @@ use oauth2::{
 use serde::{Deserialize, Serialize};
 
 use crate::graphql::schemas::user::{
-    AccountStatus, ApiKey, GithubUserProfile, OAuthTokenPair, User, UserInput, UserLogins,
+    AccountStatus, ApiKey, ClientPlatform, GithubUserProfile, OAuthTokenPair, User, UserInput,
+    UserLogins,
 };
 use crate::graphql::schemas::user::{GoogleUserInfo, OAuthUser};
 use crate::utils::user::create_user;
@@ -87,6 +93,110 @@ impl OAuthClientName {
             _ => panic!("Invalid OAuthClientName"),
         }
     }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct NativeOAuthState {
+    pub csrf: String,
+    pub pkce_verifier: String,
+    pub oauth_client: OAuthClientName,
+    pub issued_at: i64, // unix seconds
+}
+
+const NATIVE_OAUTH_STATE_TTL_SECS: i64 = 120; // same window the cookies' Max-Age gave
+
+fn load_rsa_public_key() -> Result<RsaPublicKey, Error> {
+    let public_key_path = env::var("RSA_PUBLIC_KEY_PATH").map_err(|e| {
+        tracing::error!("Failed to get RSA_PUBLIC_KEY_PATH env var: {}", e);
+        Error::new(ErrorKind::Other, "Internal Server Error")
+    })?;
+    let public_key_str = std::fs::read_to_string(&public_key_path).map_err(|e| {
+        tracing::error!("Failed to read public key: {}", e);
+        Error::new(ErrorKind::Other, "Internal Server Error")
+    })?;
+    RsaPublicKey::from_public_key_pem(&public_key_str).map_err(|e| {
+        tracing::error!("Failed to parse public key: {}", e);
+        Error::new(ErrorKind::Other, "Internal Server Error")
+    })
+}
+
+fn load_rsa_private_key() -> Result<RsaPrivateKey, Error> {
+    let private_key_path = env::var("RSA_PRIVATE_KEY_PATH").map_err(|e| {
+        tracing::error!("Failed to get RSA_PRIVATE_KEY_PATH env var: {}", e);
+        Error::new(ErrorKind::Other, "Internal Server Error")
+    })?;
+    let private_key_str = std::fs::read_to_string(&private_key_path).map_err(|e| {
+        tracing::error!("Failed to read private key: {}", e);
+        Error::new(ErrorKind::Other, "Internal Server Error")
+    })?;
+    RsaPrivateKey::from_pkcs8_pem(&private_key_str).map_err(|e| {
+        tracing::error!("Failed to parse private key: {}", e);
+        Error::new(ErrorKind::Other, "Internal Server Error")
+    })
+}
+
+fn encrypt_native_state(payload: &NativeOAuthState) -> Result<String, Error> {
+    let public_key = load_rsa_public_key()?;
+
+    let json = serde_json::to_vec(payload).map_err(|e| {
+        tracing::error!("Failed to serialize native oauth state: {}", e);
+        Error::new(ErrorKind::Other, "Internal Server Error")
+    })?;
+
+    let mut rng = rand::rngs::OsRng;
+    let encrypted = public_key
+        .encrypt(&mut rng, Pkcs1v15Encrypt, &json)
+        .map_err(|e| {
+            tracing::error!("Failed to encrypt native oauth state: {}", e);
+            Error::new(ErrorKind::Other, "Internal Server Error")
+        })?;
+
+    Ok(URL_SAFE_NO_PAD.encode(&encrypted[..]))
+}
+
+// Callback-side counterpart — for the /oauth/callback handler when it sees
+// a native request.
+pub fn decrypt_native_state(blob: &str) -> Result<NativeOAuthState, Error> {
+    let private_key = load_rsa_private_key()?;
+
+    let encrypted = URL_SAFE_NO_PAD.decode(blob).map_err(|e| {
+        tracing::error!("Failed to base64-decode native oauth state: {}", e);
+        Error::new(ErrorKind::Other, "Bad Request")
+    })?;
+
+    let plaintext = private_key
+        .decrypt(Pkcs1v15Encrypt, &encrypted)
+        .map_err(|e| {
+            tracing::error!("Failed to decrypt native oauth state: {}", e);
+            Error::new(ErrorKind::Other, "Bad Request")
+        })?;
+
+    let payload: NativeOAuthState = serde_json::from_slice(&plaintext).map_err(|e| {
+        tracing::error!("Failed to deserialize native oauth state: {}", e);
+        Error::new(ErrorKind::Other, "Bad Request")
+    })?;
+
+    let age = OffsetDateTime::now_utc().unix_timestamp() - payload.issued_at;
+    if age > NATIVE_OAUTH_STATE_TTL_SECS {
+        tracing::warn!("Native oauth state expired ({}s old)", age);
+        return Err(Error::new(ErrorKind::Other, "Bad Request"));
+    }
+
+    Ok(payload)
+}
+
+// ── Generalized for reuse outside the GraphQL resolver ──────────────────
+// (REST handlers use ApiError, not ExtendedError — these return
+// anyhow::Result so each call site maps to its own error type.)
+
+pub fn encrypt_for_native(plaintext: &str) -> anyhow::Result<String> {
+    let public_key_path = env::var("RSA_PUBLIC_KEY_PATH")?;
+    let public_key_str = std::fs::read_to_string(&public_key_path)?;
+    let public_key = RsaPublicKey::from_public_key_pem(&public_key_str)?;
+
+    let mut rng = rand::rngs::OsRng;
+    let encrypted = public_key.encrypt(&mut rng, Pkcs1v15Encrypt, plaintext.as_bytes())?;
+    Ok(URL_SAFE_NO_PAD.encode(&encrypted[..]))
 }
 
 /// Creates a desired OAuthClient of choice. For now GitHub and Google
@@ -199,66 +309,64 @@ pub async fn navigate_to_redirect_url(
     oauth_client: OAuthClientInstance,
     ctx: &Context<'_>,
     oauth_client_name: OAuthClientName,
-) -> String {
-    // Generate a PKCE challenge.
+    platform: ClientPlatform,
+) -> Result<(String, Option<String>), Error> {
     let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
-
     let auth_request = match oauth_client_name {
-        OAuthClientName::Google => {
-            oauth_client
-                .authorize_url(CsrfToken::new_random)
-                // Set the desired scopes.
-                .add_scope(Scope::new(
-                    "https://www.googleapis.com/auth/userinfo.email".to_string(),
-                ))
-                .add_scope(Scope::new(
-                    "https://www.googleapis.com/auth/userinfo.profile".to_string(),
-                ))
-        }
-        OAuthClientName::Github => {
-            oauth_client
-                .authorize_url(CsrfToken::new_random)
-                // Set the desired scopes.
-                .add_scope(Scope::new("read:user".to_string()))
-        }
+        OAuthClientName::Google => oauth_client
+            .authorize_url(CsrfToken::new_random)
+            .add_scope(Scope::new(
+                "https://www.googleapis.com/auth/userinfo.email".to_string(),
+            ))
+            .add_scope(Scope::new(
+                "https://www.googleapis.com/auth/userinfo.profile".to_string(),
+            )),
+        OAuthClientName::Github => oauth_client
+            .authorize_url(CsrfToken::new_random)
+            .add_scope(Scope::new("read:user".to_string())),
     };
 
-    let (auth_url, csrf_token) = auth_request
-        // Set the PKCE code challenge.
-        .set_pkce_challenge(pkce_challenge)
-        .url();
+    let (auth_url, csrf_token) = auth_request.set_pkce_challenge(pkce_challenge).url();
 
-    // This is the URL you should redirect the user to, in order to trigger the authorization
-    // process.
-
-    // Insert the csrf_state, oauth_client, pkce_verifier cookies
-    ctx.insert_http_header(
-        SET_COOKIE,
-        format!(
-            "oauth_client={}; HttpOnly; SameSite=Strict; Path=/; Secure",
-            oauth_client_name.fmt()
-        ),
-    );
-
-    let sensitive_cookies_expiry_duration = Duration::from_secs(120); // limit the duration of the sensitive cookies
-    ctx.append_http_header(
-        SET_COOKIE,
-        format!(
-            "j={}; Max-Age={}; HttpOnly; SameSite=Strict; Path=/; Secure",
-            csrf_token.secret(),
-            sensitive_cookies_expiry_duration.as_secs()
-        ),
-    );
-    ctx.append_http_header(
-        SET_COOKIE,
-        format!(
-            "k={}; Max-Age={}; HttpOnly; SameSite=Strict; Path=/; Secure",
-            pkce_verifier.secret(),
-            sensitive_cookies_expiry_duration.as_secs()
-        ),
-    );
-
-    auth_url.to_string()
+    match platform {
+        ClientPlatform::Web => {
+            ctx.insert_http_header(
+                SET_COOKIE,
+                format!(
+                    "oauth_client={}; HttpOnly; SameSite=Strict; Path=/; Secure",
+                    oauth_client_name.fmt()
+                ),
+            );
+            let sensitive_cookies_expiry_duration = Duration::from_secs(120);
+            ctx.append_http_header(
+                SET_COOKIE,
+                format!(
+                    "j={}; Max-Age={}; HttpOnly; SameSite=Strict; Path=/; Secure",
+                    csrf_token.secret(),
+                    sensitive_cookies_expiry_duration.as_secs()
+                ),
+            );
+            ctx.append_http_header(
+                SET_COOKIE,
+                format!(
+                    "k={}; Max-Age={}; HttpOnly; SameSite=Strict; Path=/; Secure",
+                    pkce_verifier.secret(),
+                    sensitive_cookies_expiry_duration.as_secs()
+                ),
+            );
+            Ok((auth_url.to_string(), None))
+        }
+        ClientPlatform::Native => {
+            let payload = NativeOAuthState {
+                csrf: csrf_token.secret().clone(),
+                pkce_verifier: pkce_verifier.secret().clone(),
+                oauth_client: oauth_client_name,
+                issued_at: OffsetDateTime::now_utc().unix_timestamp(),
+            };
+            let state_blob = encrypt_native_state(&payload)?;
+            Ok((auth_url.to_string(), Some(state_blob)))
+        }
+    }
 }
 
 /// A utility function to decode JWT tokens. Returns full claims

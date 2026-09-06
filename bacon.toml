@@ -75,8 +75,8 @@ on_success = "back" # so that we don't open the browser at each change
 
 [jobs.run-acl]
 command = [
-    "cargo", "run", "--package", "acl-service"
-    # put launch parameters for your program behind a `--` separator
+    "sh", "-c",
+    "set -a; . ../../ddd.env; set +a; exec cargo run --package acl-service"
 ]
 need_stdout = true
 allow_warnings = true
@@ -87,8 +87,8 @@ watch = ["services/acl-service", "lib"]
 
 [jobs.run-email]
 command = [
-    "cargo", "run", "--package", "email"
-    # put launch parameters for your program behind a `--` separator
+    "sh", "-c",
+    "set -a; . ../../ddd.env; set +a; exec cargo run --package email"
 ]
 need_stdout = true
 allow_warnings = true
@@ -99,8 +99,8 @@ watch = ["services/email", "lib"]
 
 [jobs.run-files]
 command = [
-    "cargo", "run", "--package", "files"
-    # put launch parameters for your program behind a `--` separator
+    "sh", "-c",
+    "set -a; . ../../ddd.env; set +a; exec cargo run --package files"
 ]
 need_stdout = true
 allow_warnings = true
@@ -111,8 +111,8 @@ watch = ["services/files", "lib"]
 
 [jobs.run-payments]
 command = [
-    "cargo", "run", "--package", "payments"
-    # put launch parameters for your program behind a `--` separator
+    "sh", "-c",
+    "set -a; . ../../ddd.env; set +a; exec cargo run --package payments"
 ]
 need_stdout = true
 allow_warnings = true

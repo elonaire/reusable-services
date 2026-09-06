@@ -1,9 +1,28 @@
 use async_graphql::{ComplexObject, Enum, InputObject, SimpleObject};
 use chrono::{DateTime, Utc};
+use hyper::HeaderMap;
 use serde::{Deserialize, Serialize};
 use surrealdb::types::{RecordId, RecordIdKey, SurrealValue};
 
 use crate::utils::auth::OAuthClientName;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClientPlatform {
+    Web,
+    Native, // iOS / Android / desktop — no cookie jar shared with your backend
+}
+
+impl ClientPlatform {
+    pub fn from_headers(headers: &HeaderMap) -> Self {
+        match headers
+            .get("x-client-platform")
+            .and_then(|v| v.to_str().ok())
+        {
+            Some("native") => ClientPlatform::Native,
+            _ => ClientPlatform::Web,
+        }
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, Enum, Copy, Eq, PartialEq, SurrealValue)]
 pub enum Gender {
@@ -153,8 +172,11 @@ impl UserLogins {
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
 pub struct AuthDetails {
-    pub url: Option<String>,
     pub token: Option<String>,
+    pub url: Option<String>,
+    pub encrypted_state: Option<String>, // native OAuth: csrf/state to echo back on callback
+    pub refresh_token: Option<String>, // native password login: RSA-encrypted, same as the cookie value
+    pub oauth_client: Option<OAuthClientName>, // native same as the cookie value "oauth_client=<this>"
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, SimpleObject)]
