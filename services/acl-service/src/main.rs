@@ -17,7 +17,7 @@ use async_graphql::{EmptySubscription, Schema};
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use axum::{
     extract::Extension,
-    http::{HeaderMap, HeaderValue},
+    http::{HeaderMap, HeaderName, HeaderValue},
     routing::{get, post},
     serve, Router,
 };
@@ -47,6 +47,8 @@ use lib::{
     integration::grpc::clients::acl_service::acl_server::AclServer, utils::mqtt::MqttClient,
 };
 use uuid::Uuid;
+
+use crate::rest::handlers::{exchange_code_for_token_native, oauth_callback_native_handler};
 
 type MySchema = Schema<Query, Mutation, EmptySubscription>;
 
@@ -201,11 +203,17 @@ async fn main() -> Result<(), Error> {
     let shared_state = Arc::new(AppState {
         mqtt_client: client,
     });
+    let x_client_platform: HeaderName = HeaderName::from_static("x-client-platform");
 
     let app = Router::new()
         .route("/", post(graphql_handler))
         .route("/oauth/callback", get(oauth_callback_handler))
+        .route("/oauth/callback/native", get(oauth_callback_native_handler))
         .route("/social-sign-in", post(exchange_code_for_token))
+        .route(
+            "/social-sign-in/native",
+            post(exchange_code_for_token_native),
+        )
         .route("/healthz", get(|| async { StatusCode::OK }))
         .route("/ready", get(|| async { StatusCode::OK }))
         .route("/verify-email", get(verify_email_handler))
@@ -229,6 +237,7 @@ async fn main() -> Result<(), Error> {
                     ACCESS_CONTROL_ALLOW_ORIGIN,
                     ACCESS_CONTROL_ALLOW_METHODS,
                     ACCESS_CONTROL_EXPOSE_HEADERS,
+                    x_client_platform,
                 ])
                 .allow_credentials(true)
                 .allow_methods(vec![Method::GET, Method::POST]),
