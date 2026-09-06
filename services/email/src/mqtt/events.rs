@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use lib::utils::models::{Email, EmailMQTTPayload, EmailUser};
 use rumqttc::v5::{mqttbytes::v5::Packet, Event};
 use surrealdb::{engine::remote::ws::Client, Surreal};
 

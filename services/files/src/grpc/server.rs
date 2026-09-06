@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use lib::integration::grpc::clients::{
-    acl_service::{AuthStatus, ConfirmAuthenticationResponse},
+    acl_service::ConfirmAuthenticationResponse,
     files_service::{
         files_service_server::FilesService, CreateFileFromContentRequest,
         CreateFileFromContentResponse, FetchFileIdRequest, FetchFileIdResponse,

@@ -1,13 +1,11 @@
 /target
-.env
+*.env
 /services/**/db-file
 history.txt
-prod.env
 /services/files/src/uploads
 /services/**/logs
 /services/**/src/database/schemas/users.surql
 /lib/src/integration/grpc/out
-k8s.env
 *.key
 *.pem
 /email-templates

@@ -1,9 +1,7 @@
 use std::{
     env,
-    fs::Metadata,
     io::{Error, ErrorKind},
     path::Path,
-    sync::Arc,
 };
 
 use lib::{
@@ -13,7 +11,7 @@ use lib::{
         models::{CreateFileInfo, ForeignKey, PurchaseFileDetails, UserId},
     },
 };
-use surrealdb::{engine::remote::ws::Client, types::RecordIdKey, Surreal};
+use surrealdb::types::RecordIdKey;
 use tokio::{fs::File, io::AsyncWriteExt};
 use uuid::Uuid;
 

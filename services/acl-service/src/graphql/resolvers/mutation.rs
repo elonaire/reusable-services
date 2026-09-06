@@ -34,15 +34,15 @@ use crate::{
         },
         shared::GraphQLApiResponse,
         user::{
-            ApiKey, ApiKeyInput, ApiKeyInputMetadata, AuthDetails, User, UserInput, UserLogins,
-            UserUpdate,
+            ApiKey, ApiKeyInput, ApiKeyInputMetadata, AuthDetails, ClientPlatform, User, UserInput,
+            UserLogins, UserUpdate,
         },
     },
     utils::{
         auth::{
-            confirm_authentication, confirm_authorization, fetch_user_roles,
+            confirm_authentication, confirm_authorization, encrypt_for_native, fetch_user_roles,
             initiate_auth_code_grant_flow, navigate_to_redirect_url, sign_jwt,
-            verify_login_credentials,
+            verify_login_credentials, OAuthClientName,
         },
         user::create_user,
     },
@@ -89,18 +89,14 @@ impl Mutation {
 
         match response {
             Some(user) => {
-                let shared_state = ctx.data::<Extension<Arc<AppState>>>();
-
                 let api_response =
                     synthesize_graphql_response(ctx, &user, None).ok_or_else(|| {
                         tracing::error!("Failed to synthesize response!");
                         ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
                     })?;
 
-                // There should be a check to prevent any panics, especially because registration was successful
-                if let Err(e) = &shared_state {
-                    tracing::error!("Error extracting Shared State: {:?}", e);
-
+                let Ok(shared_state) = ctx.data::<Extension<Arc<AppState>>>() else {
+                    tracing::error!("Error extracting Shared State");
                     return Ok(api_response.into());
                 };
 
@@ -163,29 +159,35 @@ impl Mutation {
                         }
                     };
 
-                let auth_service = env::var("OAUTH_SERVICE");
-
-                if let Err(e) = &auth_service {
-                    tracing::error!("Failed to get OAUTH_SERVICE env var: {}", e);
+                let Ok(auth_service) = env::var("OAUTH_SERVICE") else {
+                    tracing::error!("Failed to get OAUTH_SERVICE env var");
 
                     return Ok(api_response.into());
-                }
+                };
 
                 let encoded_token = BASE64_URL_SAFE_NO_PAD.encode(&encrypted_token[..]);
 
-                let verification_url = format!(
-                    "{}/verify-email?token={}",
-                    auth_service.unwrap(),
-                    encoded_token
-                );
+                let verification_url =
+                    format!("{}/verify-email?token={}", auth_service, encoded_token);
 
-                let email_verification_template_id = env::var("EMAIL_VERIFICATION_TEMPLATE_ID");
+                let Ok(email_verification_template_id) = env::var("EMAIL_VERIFICATION_TEMPLATE_ID")
+                else {
+                    tracing::error!("Failed to get EMAIL_VERIFICATION_TEMPLATE_ID env var");
 
-                if let Err(e) = &email_verification_template_id {
-                    tracing::error!(
-                        "Failed to get EMAIL_VERIFICATION_TEMPLATE_ID env var: {}",
-                        e
-                    );
+                    return Ok(api_response.into());
+                };
+                let Ok(business_name) = env::var("BUSINESS_NAME") else {
+                    tracing::error!("Failed to get BUSINESS_NAME env var");
+
+                    return Ok(api_response.into());
+                };
+                let Ok(business_address) = env::var("BUSINESS_ADDRESS") else {
+                    tracing::error!("Failed to get BUSINESS_ADDRESS env var");
+
+                    return Ok(api_response.into());
+                };
+                let Ok(smtp_user) = env::var("SMTP_USER") else {
+                    tracing::error!("Failed to get SMTP_USER env var");
 
                     return Ok(api_response.into());
                 };
@@ -199,12 +201,12 @@ impl Mutation {
                 let email_payload = EmailMQTTPayload {
                     recipient: user.email.clone(),
                     subject: "Email Address Verification".to_string(),
-                    template_id: email_verification_template_id.unwrap(),
+                    template_id: email_verification_template_id,
                     variables: serde_json::json!({
                         "verification_url": verification_url,
-                        "business_name": "Techie Tenka",
-                        "business_address": "Kisumu, Kenya",
-                        "business_email": "elon@techietenka.com",
+                        "business_name": business_name,
+                        "business_address": business_address,
+                        "business_email": smtp_user,
                         "current_year": current_year
                     }),
                     attachments: None,
@@ -219,7 +221,6 @@ impl Mutation {
                 };
 
                 if let Err(e) = shared_state
-                    .unwrap()
                     .mqtt_client
                     .publish("email/send", QoS::AtLeastOnce, false, encoded_payload)
                     .await
@@ -353,20 +354,41 @@ impl Mutation {
         raw_user_details: UserLogins,
     ) -> Result<GraphQLApiResponse<AuthDetails>> {
         let user_details = raw_user_details.transformed();
+        let headers = ctx.data::<HeaderMap>().map_err(|e| {
+            tracing::error!("Error HeaderMap: {:?}", e);
+            ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+        })?;
+        let platform = ClientPlatform::from_headers(headers);
 
         let api_response: ApiResponse<AuthDetails>;
 
         match user_details.oauth_client {
             Some(oauth_client) => {
                 let oauth_client_instance = initiate_auth_code_grant_flow(oauth_client).await?;
-                let redirect_url =
-                    navigate_to_redirect_url(oauth_client_instance, ctx, oauth_client).await;
+
+                // navigate_to_redirect_url now takes `platform` too:
+                //   Web    -> sets the csrf/state cookie exactly as before, returns None
+                //   Native -> skips Set-Cookie entirely, returns Some(state) instead
+                // (PKCE code_verifier should ride along with `state` the same way —
+                // bundle both into one opaque signed blob if you'd rather not add a
+                // second field.)
+                let (redirect_url, native_state) =
+                    navigate_to_redirect_url(oauth_client_instance, ctx, oauth_client, platform)
+                        .await
+                        .map_err(|e| {
+                            tracing::error!("Failed to navigate to redirect url: {}", e);
+                            ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str())
+                                .build()
+                        })?;
 
                 api_response = synthesize_graphql_response(
                     ctx,
                     &AuthDetails {
                         url: Some(redirect_url),
                         token: None,
+                        encrypted_state: native_state,
+                        refresh_token: None,
+                        oauth_client: Some(oauth_client),
                     },
                     None,
                 )
@@ -388,15 +410,6 @@ impl Mutation {
 
                 match &verified_credentials {
                     Ok(user) => {
-                        let db = ctx.data::<Extension<Arc<Surreal<Client>>>>().map_err(|e| {
-                            tracing::error!("Error extracting Surreal Client: {:?}", e);
-                            ExtendedError::new(
-                                "Server Error",
-                                StatusCode::INTERNAL_SERVER_ERROR.as_str(),
-                            )
-                            .build()
-                        })?;
-
                         let Some(user_id) = (match &user.id.key {
                             RecordIdKey::String(s) => Some(s.clone()),
                             _ => None,
@@ -408,11 +421,10 @@ impl Mutation {
                             .build());
                         };
 
-                        let refresh_token_expiry_duration = Duration::from_days(30); // from days
-                        let access_token_expiry_duration = Duration::from_mins(5); // from minutes
+                        let refresh_token_expiry_duration = Duration::from_days(30);
+                        let access_token_expiry_duration = Duration::from_mins(5);
 
                         let user_roles = fetch_user_roles(db, &user_id, None).await?;
-
                         let auth_claim = AuthClaim { roles: user_roles };
 
                         let token_str =
@@ -439,90 +451,97 @@ impl Mutation {
                                     .build()
                                 })?;
 
-                        let public_key_path = match env::var("RSA_PUBLIC_KEY_PATH") {
-                            Ok(path) => path,
-                            Err(e) => {
-                                tracing::error!("Failed to get RSA_PUBLIC_KEY_PATH env var: {}", e);
-                                return Err(ExtendedError::new(
-                                    "Internal Server Error",
-                                    StatusCode::INTERNAL_SERVER_ERROR.as_str(),
-                                )
-                                .build());
-                            }
-                        };
+                        let public_key_path = env::var("RSA_PUBLIC_KEY_PATH").map_err(|e| {
+                            tracing::error!("Failed to get RSA_PUBLIC_KEY_PATH env var: {}", e);
+                            ExtendedError::new(
+                                "Internal Server Error",
+                                StatusCode::INTERNAL_SERVER_ERROR.as_str(),
+                            )
+                            .build()
+                        })?;
 
-                        let public_key_str = match fs::read_to_string(&public_key_path).await {
-                            Ok(key) => key,
-                            Err(e) => {
+                        let public_key_str =
+                            fs::read_to_string(&public_key_path).await.map_err(|e| {
                                 tracing::error!("Failed to read public key: {}", e);
-                                return Err(ExtendedError::new(
+                                ExtendedError::new(
                                     "Internal Server Error",
                                     StatusCode::INTERNAL_SERVER_ERROR.as_str(),
                                 )
-                                .build());
-                            }
-                        };
+                                .build()
+                            })?;
 
-                        let public_key = match RsaPublicKey::from_public_key_pem(&public_key_str) {
-                            Ok(key) => key,
-                            Err(e) => {
+                        let public_key = RsaPublicKey::from_public_key_pem(&public_key_str)
+                            .map_err(|e| {
                                 tracing::error!("Failed to parse public key: {}", e);
-                                return Err(ExtendedError::new(
+                                ExtendedError::new(
                                     "Internal Server Error",
                                     StatusCode::INTERNAL_SERVER_ERROR.as_str(),
                                 )
-                                .build());
-                            }
-                        };
+                                .build()
+                            })?;
 
                         let mut rng = rand::rngs::OsRng;
-
-                        let encrypted_token = match public_key.encrypt(
-                            &mut rng,
-                            Pkcs1v15Encrypt,
-                            refresh_token_str.as_bytes(),
-                        ) {
-                            Ok(token) => token,
-                            Err(e) => {
+                        let encrypted_token = public_key
+                            .encrypt(&mut rng, Pkcs1v15Encrypt, refresh_token_str.as_bytes())
+                            .map_err(|e| {
                                 tracing::error!("Failed to encrypt token: {}", e);
-                                return Err(ExtendedError::new(
+                                ExtendedError::new(
                                     "Internal Server Error",
                                     StatusCode::INTERNAL_SERVER_ERROR.as_str(),
                                 )
-                                .build());
-                            }
-                        };
+                                .build()
+                            })?;
 
                         let encoded_encrypted_token =
                             BASE64_URL_SAFE_NO_PAD.encode(&encrypted_token[..]);
 
-                        ctx.insert_http_header(
-                            SET_COOKIE,
-                            format!("oauth_client=; SameSite=Strict; Secure; HttpOnly; Path=/"),
-                        );
+                        let details = match platform {
+                            ClientPlatform::Web => {
+                                ctx.insert_http_header(
+                                    SET_COOKIE,
+                                    "oauth_client=; SameSite=Strict; Secure; HttpOnly; Path=/"
+                                        .to_string(),
+                                );
 
-                        ctx.append_http_header(
-                            SET_COOKIE,
-                            format!(
-                                "t={}; Max-Age={}; SameSite=Strict; Secure; HttpOnly; Path=/",
-                                encoded_encrypted_token,
-                                refresh_token_expiry_duration.as_secs(),
-                            ),
-                        );
+                                ctx.append_http_header(
+                                    SET_COOKIE,
+                                    format!(
+                                        "t={}; Max-Age={}; SameSite=Strict; Secure; HttpOnly; Path=/",
+                                        encoded_encrypted_token,
+                                        refresh_token_expiry_duration.as_secs(),
+                                    ),
+                                );
 
-                        api_response = synthesize_graphql_response(
-                            ctx,
-                            &AuthDetails {
-                                token: Some(token_str),
-                                url: None,
-                            },
-                            None,
-                        )
-                        .ok_or_else(|| {
-                            tracing::error!("Failed to synthesize response!");
-                            ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str())
-                                .build()
-                        })?;
+                                AuthDetails {
+                                    token: Some(token_str),
+                                    url: None,
+                                    encrypted_state: None,
+                                    refresh_token: None, // stays cookie-only for browsers
+                                    oauth_client: None,
+                                }
+                            }
+                            ClientPlatform::Native => {
+                                // No shared cookie jar with the app's HTTP client — hand the
+                                // same RSA-encrypted value back in the body instead. It's the
+                                // exact bytes that would've gone in the cookie, so this isn't
+                                // weaker crypto, just a different transport. The app stores it
+                                // via tauri_plugin_store, same as the access token already is.
+                                AuthDetails {
+                                    token: Some(token_str),
+                                    url: None,
+                                    encrypted_state: None,
+                                    refresh_token: Some(encoded_encrypted_token),
+                                    oauth_client: None,
+                                }
+                            }
+                        };
+
+                        api_response = synthesize_graphql_response(ctx, &details, None)
+                            .ok_or_else(|| {
+                                tracing::error!("Failed to synthesize response!");
+                                ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str())
+                                    .build()
+                            })?;
 
                         Ok(api_response.into())
                     }
@@ -989,6 +1008,10 @@ impl Mutation {
             ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str()).build()
         })?;
         let header_map = ctx.data_opt::<HeaderMap>();
+        let platform = ctx
+            .data::<ClientPlatform>()
+            .copied()
+            .unwrap_or(ClientPlatform::Web);
 
         let authenticated = confirm_authentication(db, ctx).await?;
 
@@ -1071,11 +1094,40 @@ impl Mutation {
                                         ),
                                     );
 
+                                    let refresh_token_for_native = match platform {
+                                                    ClientPlatform::Web => {
+                                                        ctx.append_http_header(
+                                                            SET_COOKIE,
+                                                            format!(
+                                                                "t={}; Max-Age={}; SameSite=Strict; Secure; HttpOnly; Path=/",
+                                                                refresh_token_str,
+                                                                refresh_token_expiry_duration.as_secs(),
+                                                            ),
+                                                        );
+                                                        None
+                                                    }
+                                                    ClientPlatform::Native => Some(encrypt_for_native(&refresh_token_str).map_err(|e| {
+                                                        tracing::error!("Failed to encrypt refresh token for native: {}", e);
+                                                        ExtendedError::new(
+                                                            "Internal Server Error",
+                                                            StatusCode::INTERNAL_SERVER_ERROR.as_str(),
+                                                        )
+                                                        .build()
+                                                    })?),
+                                                };
+
                                     api_response = synthesize_graphql_response(
                                         ctx,
                                         &AuthDetails {
                                             token: Some(access_token_str),
                                             url: None,
+                                            encrypted_state: None,
+                                            refresh_token: refresh_token_for_native,
+                                            oauth_client: matches!(
+                                                platform,
+                                                ClientPlatform::Native
+                                            )
+                                            .then(|| OAuthClientName::from_str(oauth_client)),
                                         },
                                         Some(authenticated_ref),
                                     )
@@ -1105,6 +1157,9 @@ impl Mutation {
                                         &AuthDetails {
                                             token: None,
                                             url: None,
+                                            encrypted_state: None,
+                                            refresh_token: None,
+                                            oauth_client: None,
                                         },
                                         Some(authenticated_ref),
                                     )
