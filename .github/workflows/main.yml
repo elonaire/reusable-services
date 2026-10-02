@@ -27,19 +27,7 @@ env:
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
   check_service_changes:
-    runs-on: ${{ matrix.platform }}
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: blacksmith-4vcpu-ubuntu-2404
-            rust_targets: x86_64-unknown-linux-gnu
-            args: --target x86_64-unknown-linux-gnu
-
-          - runner: blacksmith-4vcpu-ubuntu-2404
-            rust_targets: aarch64-unknown-linux-gnu
-            args: --target aarch64-unknown-linux-gnu
+    runs-on: ubuntu-latest
     # needs: [build]
     outputs:
       acl_service_should_deploy: ${{ steps.confirm_changes.outputs.ACL_SHOULD_DEPLOY }}
@@ -122,13 +110,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: blacksmith-4vcpu-ubuntu-2404
-            rust_targets: x86_64-unknown-linux-gnu
-            args: --target x86_64-unknown-linux-gnu
-
-          - runner: blacksmith-4vcpu-ubuntu-2404
-            rust_targets: aarch64-unknown-linux-gnu
-            args: --target aarch64-unknown-linux-gnu
+          - platform: blacksmith-4vcpu-ubuntu-2404
+            rust_targets: ""
+            args: ""
+          - platform: blacksmith-4vcpu-ubuntu-2404-arm
+            rust_targets: ""
+            args: ""
     needs: [check_service_changes]
     if: ${{ needs.check_service_changes.outputs.acl_service_should_deploy == 'true' }}
 
@@ -229,13 +216,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: blacksmith-4vcpu-ubuntu-2404
-            rust_targets: x86_64-unknown-linux-gnu
-            args: --target x86_64-unknown-linux-gnu
-
-          - runner: blacksmith-4vcpu-ubuntu-2404
-            rust_targets: aarch64-unknown-linux-gnu
-            args: --target aarch64-unknown-linux-gnu
+          - platform: blacksmith-4vcpu-ubuntu-2404
+            rust_targets: ""
+            args: ""
+          - platform: blacksmith-4vcpu-ubuntu-2404-arm
+            rust_targets: ""
+            args: ""
     needs: [check_service_changes]
     if: ${{ needs.check_service_changes.outputs.email_service_should_deploy == 'true' }}
 
@@ -336,13 +322,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: blacksmith-4vcpu-ubuntu-2404
-            rust_targets: x86_64-unknown-linux-gnu
-            args: --target x86_64-unknown-linux-gnu
-
-          - runner: blacksmith-4vcpu-ubuntu-2404
-            rust_targets: aarch64-unknown-linux-gnu
-            args: --target aarch64-unknown-linux-gnu
+          - platform: blacksmith-4vcpu-ubuntu-2404
+            rust_targets: ""
+            args: ""
+          - platform: blacksmith-4vcpu-ubuntu-2404-arm
+            rust_targets: ""
+            args: ""
     needs: [check_service_changes]
     if: ${{ needs.check_service_changes.outputs.files_service_should_deploy == 'true' }}
 
@@ -443,13 +428,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: blacksmith-4vcpu-ubuntu-2404
-            rust_targets: x86_64-unknown-linux-gnu
-            args: --target x86_64-unknown-linux-gnu
-
-          - runner: blacksmith-4vcpu-ubuntu-2404
-            rust_targets: aarch64-unknown-linux-gnu
-            args: --target aarch64-unknown-linux-gnu
+          - platform: blacksmith-4vcpu-ubuntu-2404
+            rust_targets: ""
+            args: ""
+          - platform: blacksmith-4vcpu-ubuntu-2404-arm
+            rust_targets: ""
+            args: ""
     needs: [check_service_changes]
     if: ${{ needs.check_service_changes.outputs.payments_service_should_deploy == 'true' }}
 
