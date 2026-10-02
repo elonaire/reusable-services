@@ -33,11 +33,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: blacksmith-4vcpu-ubuntu-2404
+          - platform: blacksmith-4vcpu-ubuntu-2404 # Hope this works
             rust_targets: "x86_64-unknown-linux-gnu"
             args: "--target x86_64-unknown-linux-gnu"
 
-          - runner: blacksmith-4vcpu-ubuntu-2404
+          - platform: blacksmith-4vcpu-ubuntu-2404
             rust_targets: "aarch64-unknown-linux-gnu"
             args: "--target aarch64-unknown-linux-gnu"
     # needs: [build]
@@ -122,11 +122,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: blacksmith-4vcpu-ubuntu-2404
+          - platform: blacksmith-4vcpu-ubuntu-2404 # Hope this works
             rust_targets: "x86_64-unknown-linux-gnu"
             args: "--target x86_64-unknown-linux-gnu"
 
-          - runner: blacksmith-4vcpu-ubuntu-2404
+          - platform: blacksmith-4vcpu-ubuntu-2404
             rust_targets: "aarch64-unknown-linux-gnu"
             args: "--target aarch64-unknown-linux-gnu"
     needs: [check_service_changes]
@@ -229,11 +229,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: blacksmith-4vcpu-ubuntu-2404
+          - platform: blacksmith-4vcpu-ubuntu-2404 # Hope this works
             rust_targets: "x86_64-unknown-linux-gnu"
             args: "--target x86_64-unknown-linux-gnu"
 
-          - runner: blacksmith-4vcpu-ubuntu-2404
+          - platform: blacksmith-4vcpu-ubuntu-2404
             rust_targets: "aarch64-unknown-linux-gnu"
             args: "--target aarch64-unknown-linux-gnu"
     needs: [check_service_changes]
@@ -336,11 +336,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: blacksmith-4vcpu-ubuntu-2404
+          - platform: blacksmith-4vcpu-ubuntu-2404 # Hope this works
             rust_targets: "x86_64-unknown-linux-gnu"
             args: "--target x86_64-unknown-linux-gnu"
 
-          - runner: blacksmith-4vcpu-ubuntu-2404
+          - platform: blacksmith-4vcpu-ubuntu-2404
             rust_targets: "aarch64-unknown-linux-gnu"
             args: "--target aarch64-unknown-linux-gnu"
     needs: [check_service_changes]
@@ -443,11 +443,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: blacksmith-4vcpu-ubuntu-2404
+          - platform: blacksmith-4vcpu-ubuntu-2404 # Hope this works
             rust_targets: "x86_64-unknown-linux-gnu"
             args: "--target x86_64-unknown-linux-gnu"
 
-          - runner: blacksmith-4vcpu-ubuntu-2404
+          - platform: blacksmith-4vcpu-ubuntu-2404
             rust_targets: "aarch64-unknown-linux-gnu"
             args: "--target aarch64-unknown-linux-gnu"
     needs: [check_service_changes]
