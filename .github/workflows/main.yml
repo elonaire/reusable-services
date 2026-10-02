@@ -34,6 +34,7 @@ jobs:
       matrix:
         include:
           - platform: blacksmith-4vcpu-ubuntu-2404
+            build_platform: linux/amd64
             rust_targets: ""
             args: ""
     # needs: [build]
@@ -119,6 +120,7 @@ jobs:
       matrix:
         include:
           - platform: blacksmith-4vcpu-ubuntu-2404
+            build_platform: linux/amd64
             rust_targets: ""
             args: ""
     needs: [check_service_changes]
@@ -222,6 +224,7 @@ jobs:
       matrix:
         include:
           - platform: blacksmith-4vcpu-ubuntu-2404
+            build_platform: linux/amd64
             rust_targets: ""
             args: ""
     needs: [check_service_changes]
@@ -325,6 +328,7 @@ jobs:
       matrix:
         include:
           - platform: blacksmith-4vcpu-ubuntu-2404
+            build_platform: linux/amd64
             rust_targets: ""
             args: ""
     needs: [check_service_changes]
@@ -428,6 +432,7 @@ jobs:
       matrix:
         include:
           - platform: blacksmith-4vcpu-ubuntu-2404
+            build_platform: linux/amd64
             rust_targets: ""
             args: ""
     needs: [check_service_changes]
