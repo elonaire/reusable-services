@@ -27,7 +27,7 @@ env:
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
   check_service_changes:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     # needs: [build]
     outputs:
       acl_service_should_deploy: ${{ steps.confirm_changes.outputs.ACL_SHOULD_DEPLOY }}
@@ -40,7 +40,7 @@ jobs:
       contents: read # required to checkout the code from the repo
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: useblacksmith/checkout@v1
         with:
           fetch-depth: 0
 
@@ -104,7 +104,7 @@ jobs:
           exit 0
 
   build_and_deploy_acl:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     strategy:
       fail-fast: false
       matrix:
@@ -131,7 +131,7 @@ jobs:
         with:
           images: ${{ env.ACL_REGISTRY_IMAGE }}
 
-      - uses: actions/checkout@v4
+      - uses: useblacksmith/checkout@v1
 
       - name: Log in to Docker Registry
         uses: docker/login-action@v3
@@ -145,16 +145,12 @@ jobs:
         with:
           platforms: ${{ matrix.platform }}
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        # with:
-        #   version: "lab:latest"
-        #   driver: cloud
-        #   endpoint: "elonaire/elonaire-builder"
+      - name: Setup Blacksmith Builder
+        uses: useblacksmith/setup-docker-builder@v1
 
       - name: Build and push Docker image
         id: build
-        uses: docker/build-push-action@v6
+        uses: useblacksmith/build-push-action@v2
         with:
           # context: .
           # push: true
@@ -205,7 +201,7 @@ jobs:
             $(printf '${{ env.ACL_REGISTRY_IMAGE }}@sha256:%s ' *)
 
   build_and_deploy_email_service:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     strategy:
       fail-fast: false
       matrix:
@@ -232,7 +228,7 @@ jobs:
         with:
           images: ${{ env.EMAIL_REGISTRY_IMAGE }}
 
-      - uses: actions/checkout@v4
+      - uses: useblacksmith/checkout@v1
 
       - name: Log in to Docker Registry
         uses: docker/login-action@v3
@@ -246,16 +242,12 @@ jobs:
         with:
           platforms: ${{ matrix.platform }}
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        # with:
-        #   version: "lab:latest"
-        #   driver: cloud
-        #   endpoint: "elonaire/elonaire-builder"
+      - name: Setup Blacksmith Builder
+        uses: useblacksmith/setup-docker-builder@v1
 
       - name: Build and push Docker image
         id: build
-        uses: docker/build-push-action@v6
+        uses: useblacksmith/build-push-action@v2
         with:
           # context: .
           # push: true
@@ -306,7 +298,7 @@ jobs:
             $(printf '${{ env.EMAIL_REGISTRY_IMAGE }}@sha256:%s ' *)
 
   build_and_deploy_files:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     strategy:
       fail-fast: false
       matrix:
@@ -333,7 +325,7 @@ jobs:
         with:
           images: ${{ env.FILES_REGISTRY_IMAGE }}
 
-      - uses: actions/checkout@v4
+      - uses: useblacksmith/checkout@v1
 
       - name: Log in to Docker Registry
         uses: docker/login-action@v3
@@ -347,16 +339,12 @@ jobs:
         with:
           platforms: ${{ matrix.platform }}
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        # with:
-        #   version: "lab:latest"
-        #   driver: cloud
-        #   endpoint: "elonaire/elonaire-builder"
+      - name: Setup Blacksmith Builder
+        uses: useblacksmith/setup-docker-builder@v1
 
       - name: Build and push Docker image
         id: build
-        uses: docker/build-push-action@v6
+        uses: useblacksmith/build-push-action@v2
         with:
           # context: .
           # push: true
@@ -407,7 +395,7 @@ jobs:
             $(printf '${{ env.FILES_REGISTRY_IMAGE }}@sha256:%s ' *)
 
   build_and_deploy_payments_service:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     strategy:
       fail-fast: false
       matrix:
@@ -434,7 +422,7 @@ jobs:
         with:
           images: ${{ env.PAYMENTS_REGISTRY_IMAGE }}
 
-      - uses: actions/checkout@v4
+      - uses: useblacksmith/checkout@v1
 
       - name: Log in to Docker Registry
         uses: docker/login-action@v3
@@ -448,16 +436,12 @@ jobs:
         with:
           platforms: ${{ matrix.platform }}
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        # with:
-        #   version: "lab:latest"
-        #   driver: cloud
-        #   endpoint: "elonaire/elonaire-builder"
+      - name: Setup Blacksmith Builder
+        uses: useblacksmith/setup-docker-builder@v1
 
       - name: Build and push Docker image
         id: build
-        uses: docker/build-push-action@v6
+        uses: useblacksmith/build-push-action@v2
         with:
           # context: .
           # push: true
@@ -508,7 +492,7 @@ jobs:
             $(printf '${{ env.PAYMENTS_REGISTRY_IMAGE }}@sha256:%s ' *)
 
   automerge:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
 
     permissions:
       contents: write
