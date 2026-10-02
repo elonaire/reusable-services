@@ -33,10 +33,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: blacksmith-4vcpu-ubuntu-2404
-            build_platform: linux/amd64
-            rust_targets: ""
-            args: ""
+          - runner: blacksmith-4vcpu-ubuntu-2404
+            rust_targets: "x86_64-unknown-linux-gnu"
+            args: "--target x86_64-unknown-linux-gnu"
+
+          - runner: blacksmith-4vcpu-ubuntu-2404
+            rust_targets: "aarch64-unknown-linux-gnu"
+            args: "--target aarch64-unknown-linux-gnu"
     # needs: [build]
     outputs:
       acl_service_should_deploy: ${{ steps.confirm_changes.outputs.ACL_SHOULD_DEPLOY }}
@@ -119,10 +122,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: blacksmith-4vcpu-ubuntu-2404
-            build_platform: linux/amd64
-            rust_targets: ""
-            args: ""
+          - runner: blacksmith-4vcpu-ubuntu-2404
+            rust_targets: "x86_64-unknown-linux-gnu"
+            args: "--target x86_64-unknown-linux-gnu"
+
+          - runner: blacksmith-4vcpu-ubuntu-2404
+            rust_targets: "aarch64-unknown-linux-gnu"
+            args: "--target aarch64-unknown-linux-gnu"
     needs: [check_service_changes]
     if: ${{ needs.check_service_changes.outputs.acl_service_should_deploy == 'true' }}
 
@@ -223,10 +229,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: blacksmith-4vcpu-ubuntu-2404
-            build_platform: linux/amd64
-            rust_targets: ""
-            args: ""
+          - runner: blacksmith-4vcpu-ubuntu-2404
+            rust_targets: "x86_64-unknown-linux-gnu"
+            args: "--target x86_64-unknown-linux-gnu"
+
+          - runner: blacksmith-4vcpu-ubuntu-2404
+            rust_targets: "aarch64-unknown-linux-gnu"
+            args: "--target aarch64-unknown-linux-gnu"
     needs: [check_service_changes]
     if: ${{ needs.check_service_changes.outputs.email_service_should_deploy == 'true' }}
 
@@ -327,10 +336,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: blacksmith-4vcpu-ubuntu-2404
-            build_platform: linux/amd64
-            rust_targets: ""
-            args: ""
+          - runner: blacksmith-4vcpu-ubuntu-2404
+            rust_targets: "x86_64-unknown-linux-gnu"
+            args: "--target x86_64-unknown-linux-gnu"
+
+          - runner: blacksmith-4vcpu-ubuntu-2404
+            rust_targets: "aarch64-unknown-linux-gnu"
+            args: "--target aarch64-unknown-linux-gnu"
     needs: [check_service_changes]
     if: ${{ needs.check_service_changes.outputs.files_service_should_deploy == 'true' }}
 
@@ -431,10 +443,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: blacksmith-4vcpu-ubuntu-2404
-            build_platform: linux/amd64
-            rust_targets: ""
-            args: ""
+          - runner: blacksmith-4vcpu-ubuntu-2404
+            rust_targets: "x86_64-unknown-linux-gnu"
+            args: "--target x86_64-unknown-linux-gnu"
+
+          - runner: blacksmith-4vcpu-ubuntu-2404
+            rust_targets: "aarch64-unknown-linux-gnu"
+            args: "--target aarch64-unknown-linux-gnu"
     needs: [check_service_changes]
     if: ${{ needs.check_service_changes.outputs.payments_service_should_deploy == 'true' }}
 
