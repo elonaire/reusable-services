@@ -104,18 +104,13 @@ jobs:
           exit 0
 
   build_and_deploy_acl:
-    runs-on: ${{ matrix.platform }}
-    timeout-minutes: 60
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - platform: blacksmith-4vcpu-ubuntu-2404
-            rust_targets: ""
-            args: ""
-          - platform: blacksmith-4vcpu-ubuntu-2404-arm
-            rust_targets: ""
-            args: ""
+        platform:
+          - linux/amd64
+          # - linux/arm64
     needs: [check_service_changes]
     if: ${{ needs.check_service_changes.outputs.acl_service_should_deploy == 'true' }}
 
@@ -210,18 +205,13 @@ jobs:
             $(printf '${{ env.ACL_REGISTRY_IMAGE }}@sha256:%s ' *)
 
   build_and_deploy_email_service:
-    runs-on: ${{ matrix.platform }}
-    timeout-minutes: 60
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - platform: blacksmith-4vcpu-ubuntu-2404
-            rust_targets: ""
-            args: ""
-          - platform: blacksmith-4vcpu-ubuntu-2404-arm
-            rust_targets: ""
-            args: ""
+        platform:
+          - linux/amd64
+          # - linux/arm64
     needs: [check_service_changes]
     if: ${{ needs.check_service_changes.outputs.email_service_should_deploy == 'true' }}
 
@@ -316,18 +306,13 @@ jobs:
             $(printf '${{ env.EMAIL_REGISTRY_IMAGE }}@sha256:%s ' *)
 
   build_and_deploy_files:
-    runs-on: ${{ matrix.platform }}
-    timeout-minutes: 60
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - platform: blacksmith-4vcpu-ubuntu-2404
-            rust_targets: ""
-            args: ""
-          - platform: blacksmith-4vcpu-ubuntu-2404-arm
-            rust_targets: ""
-            args: ""
+        platform:
+          - linux/amd64
+          # - linux/arm64
     needs: [check_service_changes]
     if: ${{ needs.check_service_changes.outputs.files_service_should_deploy == 'true' }}
 
@@ -422,18 +407,13 @@ jobs:
             $(printf '${{ env.FILES_REGISTRY_IMAGE }}@sha256:%s ' *)
 
   build_and_deploy_payments_service:
-    runs-on: ${{ matrix.platform }}
-    timeout-minutes: 60
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - platform: blacksmith-4vcpu-ubuntu-2404
-            rust_targets: ""
-            args: ""
-          - platform: blacksmith-4vcpu-ubuntu-2404-arm
-            rust_targets: ""
-            args: ""
+        platform:
+          - linux/amd64
+          # - linux/arm64
     needs: [check_service_changes]
     if: ${{ needs.check_service_changes.outputs.payments_service_should_deploy == 'true' }}
 
