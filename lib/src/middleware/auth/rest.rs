@@ -48,7 +48,7 @@ pub async fn handle_auth_with_refresh(mut req: Request, next: Next) -> Result<Re
         .await
         .map_err(|e| {
             tracing::error!("Failed to connect to ACL service: {}", e);
-            ApiError::Internal(anyhow::anyhow!("Internal Server Error"))
+            ApiError::Unauthorized("Unauthorized".into())
         })?;
 
     let result = acl_grpc_client

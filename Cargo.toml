@@ -13,15 +13,15 @@ members = [
 [workspace.dependencies]
 # Web / HTTP
 axum = "0.8.9"
-hyper = "1.11.0"
+hyper = "1.11.1"
 tower-http = { version = "0.6.11", features = ["cors"] }
 tower_governor = "0.8.0"
 reqwest = { version = "0.12.28", features = ["json"] }
 
 # Async runtime
 tokio = { version = "1.53.1", features = ["full"] }
-async-trait = "0.1.91"
-futures = "0.3.33"
+async-trait = "0.1.92"
+futures = "0.3.34"
 
 # GraphQL
 async-graphql = { version = "7.2.1", features = ["chrono"] }
@@ -52,15 +52,15 @@ rumqttc = "0.24.0"
 # Utilities
 chrono = { version = "0.4.45", features = ["serde"] }
 dotenvy = "0.15.7"
-cookie = "0.18.1"
-uuid = { version = "1.24.0", features = [
+cookie = "0.18.2"
+uuid = { version = "1.26.0", features = [
     "v4",
     "fast-rng",
     "macro-diagnostics",
 ] }
 base64 = "0.22.1"
 anyhow = "1.0.104"
-handlebars = "6.4.3"
+handlebars = "6.4.4"
 ammonia = "4.1.4"
 
 # Crypto / Auth
