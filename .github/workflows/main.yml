@@ -34,12 +34,10 @@ jobs:
       matrix:
         include:
           - runner: blacksmith-4vcpu-ubuntu-2404
-            platform: linux/amd64
             rust_targets: x86_64-unknown-linux-gnu
             args: --target x86_64-unknown-linux-gnu
 
           - runner: blacksmith-4vcpu-ubuntu-2404
-            platform: linux/arm64
             rust_targets: aarch64-unknown-linux-gnu
             args: --target aarch64-unknown-linux-gnu
     # needs: [build]
@@ -125,12 +123,10 @@ jobs:
       matrix:
         include:
           - runner: blacksmith-4vcpu-ubuntu-2404
-            platform: linux/amd64
             rust_targets: x86_64-unknown-linux-gnu
             args: --target x86_64-unknown-linux-gnu
 
           - runner: blacksmith-4vcpu-ubuntu-2404
-            platform: linux/arm64
             rust_targets: aarch64-unknown-linux-gnu
             args: --target aarch64-unknown-linux-gnu
     needs: [check_service_changes]
@@ -234,12 +230,10 @@ jobs:
       matrix:
         include:
           - runner: blacksmith-4vcpu-ubuntu-2404
-            platform: linux/amd64
             rust_targets: x86_64-unknown-linux-gnu
             args: --target x86_64-unknown-linux-gnu
 
           - runner: blacksmith-4vcpu-ubuntu-2404
-            platform: linux/arm64
             rust_targets: aarch64-unknown-linux-gnu
             args: --target aarch64-unknown-linux-gnu
     needs: [check_service_changes]
@@ -343,12 +337,10 @@ jobs:
       matrix:
         include:
           - runner: blacksmith-4vcpu-ubuntu-2404
-            platform: linux/amd64
             rust_targets: x86_64-unknown-linux-gnu
             args: --target x86_64-unknown-linux-gnu
 
           - runner: blacksmith-4vcpu-ubuntu-2404
-            platform: linux/arm64
             rust_targets: aarch64-unknown-linux-gnu
             args: --target aarch64-unknown-linux-gnu
     needs: [check_service_changes]
@@ -452,12 +444,10 @@ jobs:
       matrix:
         include:
           - runner: blacksmith-4vcpu-ubuntu-2404
-            platform: linux/amd64
             rust_targets: x86_64-unknown-linux-gnu
             args: --target x86_64-unknown-linux-gnu
 
           - runner: blacksmith-4vcpu-ubuntu-2404
-            platform: linux/arm64
             rust_targets: aarch64-unknown-linux-gnu
             args: --target aarch64-unknown-linux-gnu
     needs: [check_service_changes]
