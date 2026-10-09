@@ -98,7 +98,9 @@ pub async fn purchase_file<T: Clone + AsSurrealClient>(
         foreign_key: purchase_details.buyer_id.into(),
     };
 
-    let buyer_result: Option<UserId> = add_foreign_key_if_not_exists(db, user_fk).await;
+    let Some(buyer_result) = add_foreign_key_if_not_exists::<_, UserId>(db, user_fk).await else {
+        return Ok(false);
+    };
 
     let mut purchase_file_query = db
         .as_client()
@@ -117,7 +119,7 @@ pub async fn purchase_file<T: Clone + AsSurrealClient>(
             "file_id",
             format!("file:{}", purchase_details.file_id.clone()),
         ))
-        .bind(("user_id", buyer_result.unwrap().user_id))
+        .bind(("user_id", buyer_result.user_id))
         .await
         .map_err(|e| {
             tracing::error!("purchase_file_query Error: {}", e);

@@ -387,7 +387,6 @@ impl Query {
         })?;
 
         let authenticated = confirm_authentication(db, ctx).await?;
-
         let authenticated_ref = &authenticated;
 
         let authorization_constraint = AuthorizationConstraint {
@@ -395,88 +394,97 @@ impl Query {
         };
 
         let authorized =
-            confirm_authorization(db, &authenticated, &authorization_constraint).await?;
+            confirm_authorization(db, authenticated_ref, &authorization_constraint).await?;
 
-        let api_response: ApiResponse<Vec<SystemRole>>;
+        match user_id {
+            // No explicit user_id: return the roles owned by the caller.
+            None => {
+                if !authorized {
+                    return Err(
+                        ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build(),
+                    );
+                }
 
-        if user_id.is_none() {
-            if !authorized {
-                return Err(
-                    ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build(),
-                );
-            }
+                let mut query = db
+                    .query(
+                        "
+                        LET $user = type::record('user', $user_id);
 
-            let mut fetch_user_roles_query = db
-                .query(
-                    "
-                    LET $user = type::record('user', $user_id);
+                        LET $roles = <array><set>array::flatten([
+                           (SELECT * FROM role WHERE ->is_under->(organization WHERE created_by = $user)),
+                           (SELECT * FROM role WHERE ->is_under->(department WHERE created_by = $user)),
+                           (SELECT * FROM role WHERE @.{..}(->is_under->department)->is_under->(organization WHERE created_by = $user)),
+                           (SELECT * FROM role WHERE @.{..}(->is_under->department)->is_under->(department WHERE created_by = $user))
+                        ]);
+                        RETURN $roles;
+                        ",
+                    )
+                    .bind(("user_id", authenticated_ref.sub.to_owned()))
+                    .await
+                    .map_err(|e| {
+                        tracing::error!("Error fetching roles: {}", e);
+                        ExtendedError::new("Error fetching roles", StatusCode::BAD_REQUEST.as_str())
+                            .build()
+                    })?;
 
-                    LET $roles = <array><set>array::flatten([
-                   	(SELECT * FROM role WHERE ->is_under->(organization WHERE created_by = $user)),
-                   	(SELECT * FROM role WHERE ->is_under->(department WHERE created_by = $user)),
-                   	(SELECT * FROM role WHERE @.{..}(->is_under->department)->is_under->(organization WHERE created_by = $user)),
-                   	(SELECT * FROM role WHERE @.{..}(->is_under->department)->is_under->(department WHERE created_by = $user))
-                    ]);
-                    RETURN $roles;
-                    "
-                )
-                .bind(("user_id", authenticated_ref.sub.to_owned()))
-                .await.map_err(|e| {
-                tracing::error!("Error fetching roles: {}", e);
-                ExtendedError::new("Error fetching roles", StatusCode::BAD_REQUEST.as_str()).build()
-            })?;
-
-            let response: Vec<SystemRole> = fetch_user_roles_query.take(2).map_err(|e| {
-                tracing::error!("SystemRole deserialization error: {}", e);
-                ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str())
-                    .build()
-            })?;
-
-            api_response = synthesize_graphql_response(ctx, &response, Some(authenticated_ref))
-                .ok_or_else(|| {
-                    tracing::error!("Failed to synthesize response!");
-                    ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
-                })?;
-
-            Ok(api_response.into())
-        } else {
-            let user_id = user_id.unwrap();
-            if user_id != authenticated.sub && !authorized {
-                return Err(
-                    ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build(),
-                );
-            }
-
-            let mut fetch_user_roles_query = db
-                .query(
-                    "
-                LET $user = type::record('user', $user_id);
-
-                LET $roles = (SELECT ->assigned->role.* AS roles FROM ONLY $user)['roles'];
-                RETURN $roles;
-                ",
-                )
-                .bind(("user_id", user_id))
-                .await
-                .map_err(|e| {
-                    tracing::error!("Error fetching roles: {}", e);
-                    ExtendedError::new("Error fetching roles", StatusCode::BAD_REQUEST.as_str())
+                let response: Vec<SystemRole> = query.take(2).map_err(|e| {
+                    tracing::error!("SystemRole deserialization error: {}", e);
+                    ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str())
                         .build()
                 })?;
 
-            let response: Vec<SystemRole> = fetch_user_roles_query.take(2).map_err(|e| {
-                tracing::error!("SystemRole deserialization error: {}", e);
-                ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str())
-                    .build()
-            })?;
+                let api_response =
+                    synthesize_graphql_response(ctx, &response, Some(authenticated_ref))
+                        .ok_or_else(|| {
+                            tracing::error!("Failed to synthesize response!");
+                            ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str())
+                                .build()
+                        })?;
 
-            api_response = synthesize_graphql_response(ctx, &response, Some(authenticated_ref))
-                .ok_or_else(|| {
-                    tracing::error!("Failed to synthesize response!");
-                    ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build()
+                Ok(api_response.into())
+            }
+
+            // Explicit user_id: admin, or the user themselves, can read.
+            Some(user_id) => {
+                if user_id != authenticated.sub && !authorized {
+                    return Err(
+                        ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build(),
+                    );
+                }
+
+                let mut query = db
+                    .query(
+                        "
+                        LET $user = type::record('user', $user_id);
+
+                        LET $roles = (SELECT ->assigned->role.* AS roles FROM ONLY $user)['roles'];
+                        RETURN $roles;
+                        ",
+                    )
+                    .bind(("user_id", user_id))
+                    .await
+                    .map_err(|e| {
+                        tracing::error!("Error fetching roles: {}", e);
+                        ExtendedError::new("Error fetching roles", StatusCode::BAD_REQUEST.as_str())
+                            .build()
+                    })?;
+
+                let response: Vec<SystemRole> = query.take(2).map_err(|e| {
+                    tracing::error!("SystemRole deserialization error: {}", e);
+                    ExtendedError::new("Server Error", StatusCode::INTERNAL_SERVER_ERROR.as_str())
+                        .build()
                 })?;
 
-            Ok(api_response.into())
+                let api_response =
+                    synthesize_graphql_response(ctx, &response, Some(authenticated_ref))
+                        .ok_or_else(|| {
+                            tracing::error!("Failed to synthesize response!");
+                            ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str())
+                                .build()
+                        })?;
+
+                Ok(api_response.into())
+            }
         }
     }
 

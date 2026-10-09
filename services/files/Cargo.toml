@@ -1,7 +1,9 @@
 [package]
 name = "files"
-version = "0.2.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish = false
 
 [dependencies]
 axum = { version = "0.8.9", features = ["multipart"] }
@@ -28,6 +30,12 @@ tower_governor = { workspace = true }
 image = { workspace = true }
 kamadak-exif = { workspace = true }
 anyhow = { workspace = true }
+tokio-util = { workspace = true }
+hex = { workspace = true }
+futures-util = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+subtle = { workspace = true }
 
 [lints.rust]
 unsafe_code = "forbid"

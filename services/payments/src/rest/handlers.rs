@@ -4,7 +4,7 @@ use axum::{
     response::IntoResponse,
 };
 use hex;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 
 use lib::utils::models::PaymentDetailsMetadata;
 use rumqttc::v5::mqttbytes::QoS;
@@ -31,13 +31,13 @@ pub async fn handle_paystack_webhook(
         .unwrap_or("");
 
     // Get the secret key
-    let secret = env::var("PAYSTACK_SECRET");
-
-    if let Err(e) = secret {
-        tracing::error!("Missing the PAYSTACK_SECRET environment variable.: {}", e);
-        return (StatusCode::INTERNAL_SERVER_ERROR, "Server Error").into_response();
-    }
-    let secret = secret.unwrap();
+    let secret = match env::var("PAYSTACK_SECRET") {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!("Missing the PAYSTACK_SECRET environment variable.: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Server Error").into_response();
+        }
+    };
 
     let deployment_env = env::var("ENVIRONMENT").unwrap_or_else(|_| "prod".to_string()); // default to production because it's the most secure
 

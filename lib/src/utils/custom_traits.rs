@@ -29,13 +29,30 @@ impl AsSurrealClient for Extension<Arc<Surreal<SurrealClient>>> {
     }
 }
 
+#[derive(Debug)]
+pub enum MetadataError {
+    InvalidKey { key: String, source: String },
+    InvalidValue { key: String, source: String },
+}
+
+impl std::fmt::Display for MetadataError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidKey { key, source } => write!(f, "invalid metadata key `{key}`: {source}"),
+            Self::InvalidValue { key, source } => {
+                write!(f, "invalid metadata value for `{key}`: {source}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for MetadataError {}
+
 #[async_trait::async_trait]
 pub trait AuthMetadataContext: Send + Sync {
-    /// Read request metadata (HTTP headers / gRPC metadata)
     fn request_metadata(&self) -> MetadataView<'_>;
-    /// Mutate outgoing metadata
-    async fn set_response_metadata(&self, key: &str, value: &str);
-    async fn append_response_metadata(&self, key: &str, value: &str);
+    async fn set_response_metadata(&self, key: &str, value: &str) -> Result<(), MetadataError>;
+    async fn append_response_metadata(&self, key: &str, value: &str) -> Result<(), MetadataError>;
 }
 
 #[async_trait::async_trait]
@@ -44,16 +61,32 @@ impl AuthMetadataContext for Context<'_> {
         MetadataView::Http(self.data_opt::<HeaderMap>())
     }
 
-    async fn set_response_metadata(&self, key: &str, value: &str) {
-        let name = HeaderName::from_bytes(key.as_bytes()).unwrap();
-        let val = HeaderValue::from_str(value).unwrap();
+    async fn set_response_metadata(&self, key: &str, value: &str) -> Result<(), MetadataError> {
+        let name =
+            HeaderName::from_bytes(key.as_bytes()).map_err(|e| MetadataError::InvalidKey {
+                key: key.into(),
+                source: e.to_string(),
+            })?;
+        let val = HeaderValue::from_str(value).map_err(|e| MetadataError::InvalidValue {
+            key: key.into(),
+            source: e.to_string(),
+        })?;
         self.insert_http_header(name, val);
+        Ok(())
     }
 
-    async fn append_response_metadata(&self, key: &str, value: &str) {
-        let name = HeaderName::from_bytes(key.as_bytes()).unwrap();
-        let val = HeaderValue::from_str(value).unwrap();
+    async fn append_response_metadata(&self, key: &str, value: &str) -> Result<(), MetadataError> {
+        let name =
+            HeaderName::from_bytes(key.as_bytes()).map_err(|e| MetadataError::InvalidKey {
+                key: key.into(),
+                source: e.to_string(),
+            })?;
+        let val = HeaderValue::from_str(value).map_err(|e| MetadataError::InvalidValue {
+            key: key.into(),
+            source: e.to_string(),
+        })?;
         self.append_http_header(name, val);
+        Ok(())
     }
 }
 
@@ -63,18 +96,34 @@ impl AuthMetadataContext for AxumAuthContext {
         MetadataView::Http(Some(&self.request_headers))
     }
 
-    async fn set_response_metadata(&self, key: &str, value: &str) {
-        let name = HeaderName::from_bytes(key.as_bytes()).unwrap();
-        let val = HeaderValue::from_str(value).unwrap();
+    async fn set_response_metadata(&self, key: &str, value: &str) -> Result<(), MetadataError> {
+        let name =
+            HeaderName::from_bytes(key.as_bytes()).map_err(|e| MetadataError::InvalidKey {
+                key: key.into(),
+                source: e.to_string(),
+            })?;
+        let val = HeaderValue::from_str(value).map_err(|e| MetadataError::InvalidValue {
+            key: key.into(),
+            source: e.to_string(),
+        })?;
         let mut headers = self.response_headers.lock().await;
         headers.insert(name, val);
+        Ok(())
     }
 
-    async fn append_response_metadata(&self, key: &str, value: &str) {
-        let name = HeaderName::from_bytes(key.as_bytes()).unwrap();
-        let val = HeaderValue::from_str(value).unwrap();
+    async fn append_response_metadata(&self, key: &str, value: &str) -> Result<(), MetadataError> {
+        let name =
+            HeaderName::from_bytes(key.as_bytes()).map_err(|e| MetadataError::InvalidKey {
+                key: key.into(),
+                source: e.to_string(),
+            })?;
+        let val = HeaderValue::from_str(value).map_err(|e| MetadataError::InvalidValue {
+            key: key.into(),
+            source: e.to_string(),
+        })?;
         let mut headers = self.response_headers.lock().await;
         headers.append(name, val);
+        Ok(())
     }
 }
 
@@ -84,17 +133,45 @@ impl AuthMetadataContext for GrpcAuthContext {
         MetadataView::Grpc(Some(&self.request_metadata))
     }
 
-    async fn set_response_metadata(&self, key: &str, value: &str) {
+    async fn set_response_metadata(&self, key: &str, value: &str) -> Result<(), MetadataError> {
         use tonic::metadata::MetadataKey;
-        let key = MetadataKey::from_bytes(key.as_bytes()).unwrap();
+
+        let key_parsed =
+            MetadataKey::from_bytes(key.as_bytes()).map_err(|e| MetadataError::InvalidKey {
+                key: key.into(),
+                source: e.to_string(),
+            })?;
+        let val = value
+            .parse()
+            .map_err(|e: tonic::metadata::errors::InvalidMetadataValue| {
+                MetadataError::InvalidValue {
+                    key: key.into(),
+                    source: e.to_string(),
+                }
+            })?;
         let mut md = self.response_metadata.lock().await;
-        md.insert(key, value.parse().unwrap());
+        md.insert(key_parsed, val);
+        Ok(())
     }
 
-    async fn append_response_metadata(&self, key: &str, value: &str) {
+    async fn append_response_metadata(&self, key: &str, value: &str) -> Result<(), MetadataError> {
         use tonic::metadata::MetadataKey;
-        let key = MetadataKey::from_bytes(key.as_bytes()).unwrap();
+
+        let key_parsed =
+            MetadataKey::from_bytes(key.as_bytes()).map_err(|e| MetadataError::InvalidKey {
+                key: key.into(),
+                source: e.to_string(),
+            })?;
+        let val = value
+            .parse()
+            .map_err(|e: tonic::metadata::errors::InvalidMetadataValue| {
+                MetadataError::InvalidValue {
+                    key: key.into(),
+                    source: e.to_string(),
+                }
+            })?;
         let mut md = self.response_metadata.lock().await;
-        md.append(key, value.parse().unwrap());
+        md.append(key_parsed, val);
+        Ok(())
     }
 }

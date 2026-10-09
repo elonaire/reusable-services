@@ -48,7 +48,7 @@ impl FileMutation {
         let authenticated = confirm_authentication(ctx).await?;
 
         let authorization_constraint = AuthorizationConstraint {
-            permissions: vec!["write:bucket".into()],
+            permissions: vec!["write:file_bucket".into()],
         };
 
         let authenticated_ref = &authenticated;
@@ -170,7 +170,7 @@ impl FileMutation {
         let authenticated = confirm_authentication(ctx).await?;
 
         let authorization_constraint = AuthorizationConstraint {
-            permissions: vec!["write:key".into()],
+            permissions: vec!["write:file_key".into()],
         };
 
         let authenticated_ref = &authenticated;

@@ -8,7 +8,8 @@ mod utils;
 use dotenvy::dotenv;
 use lib::{
     integration::grpc::clients::email_service::email_service_server::EmailServiceServer,
-    middleware::auth::grpc::AuthMiddleware, utils::mqtt::MqttClient,
+    middleware::auth::grpc::{AuthMiddleware, AuthResponseMiddleware},
+    utils::mqtt::MqttClient,
 };
 use mqtt::{events::handle_events, subscriptions::register_subscriptions};
 use rumqttc::v5::AsyncClient;
@@ -20,7 +21,7 @@ use std::{
     time::Duration,
 };
 use tonic::transport::Server;
-use tonic_middleware::MiddlewareLayer;
+use tonic_middleware::{MiddlewareLayer, RequestInterceptorLayer};
 use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 
@@ -142,10 +143,19 @@ async fn main() -> Result<(), Error> {
         tracing::error!("Config Error: {}", e);
         Error::new(ErrorKind::Other, "MQTT_HOST not set")
     })?;
-    let mqtt_port = env::var("MQTT_PORT").map_err(|e| {
-        tracing::error!("Config Error: {}", e);
-        Error::new(ErrorKind::Other, "MQTT_PORT not set")
-    })?;
+    let mqtt_port: u16 = env::var("MQTT_PORT")
+        .map_err(|e| {
+            tracing::error!("Config Error: {}", e);
+            Error::new(ErrorKind::NotFound, "MQTT_PORT not set")
+        })?
+        .parse()
+        .map_err(|e| {
+            tracing::error!("Config Error: {}", e);
+            Error::new(
+                ErrorKind::InvalidInput,
+                "MQTT_PORT must be a valid port number",
+            )
+        })?;
     let governor_burst_size = env::var("EMAIL_RATE_LIMIT_BURST_SIZE")
         .unwrap_or_else(|_| "5".to_string())
         .parse::<u32>()
@@ -175,8 +185,7 @@ async fn main() -> Result<(), Error> {
         .filter_map(|endpoint| endpoint.trim().parse::<HeaderValue>().ok())
         .collect();
 
-    let (client, mut eventloop) =
-        MqttClient::new("email-service", &mqtt_host, mqtt_port.parse().unwrap()).await?;
+    let (client, mut eventloop) = MqttClient::new("email-service", &mqtt_host, mqtt_port).await?;
 
     register_subscriptions(&client).await;
 
@@ -186,7 +195,10 @@ async fn main() -> Result<(), Error> {
         .per_second(2)
         .burst_size(governor_burst_size)
         .finish()
-        .unwrap();
+        .ok_or_else(|| {
+            tracing::error!("Config Error: invalid governor configuration");
+            Error::new(ErrorKind::InvalidInput, "Invalid governor configuration")
+        })?;
 
     let governor_limiter = governor_conf.limiter().clone();
     let interval = Duration::from_secs(60);
@@ -238,12 +250,12 @@ async fn main() -> Result<(), Error> {
             tracing::error!("Config Error: {}", e);
             Error::new(ErrorKind::Other, "gRPC address not set")
         })?;
-    let tonic_auth_middleware = AuthMiddleware::default();
 
     tokio::spawn(async move {
         // let the thread panic if gRPC server fails to start
         Server::builder()
-            .layer(MiddlewareLayer::new(tonic_auth_middleware))
+            .layer(RequestInterceptorLayer::new(AuthMiddleware::default()))
+            .layer(MiddlewareLayer::new(AuthResponseMiddleware::default()))
             .add_service(EmailServiceServer::new(email_grpc))
             .serve(grpc_address)
             .await

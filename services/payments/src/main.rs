@@ -34,7 +34,8 @@ use hyper::{
 use grpc::server::PaymentsServiceImplementation;
 use lib::{
     integration::grpc::clients::payments_service::payments_service_server::PaymentsServiceServer,
-    middleware::auth::grpc::AuthMiddleware, utils::mqtt::MqttClient,
+    middleware::auth::grpc::{AuthMiddleware, AuthResponseMiddleware},
+    utils::mqtt::MqttClient,
 };
 use rest::handlers::handle_paystack_webhook;
 // use serde::Deserialize;
@@ -42,7 +43,7 @@ use rest::handlers::handle_paystack_webhook;
 use rumqttc::v5::AsyncClient;
 use surrealdb::{engine::remote::ws::Client, Surreal};
 use tonic::transport::Server;
-use tonic_middleware::MiddlewareLayer;
+use tonic_middleware::{MiddlewareLayer, RequestInterceptorLayer};
 use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
 use tower_http::cors::CorsLayer;
 
@@ -138,10 +139,19 @@ async fn main() -> Result<(), Error> {
         tracing::error!("Config Error: {}", e);
         Error::new(ErrorKind::Other, "MQTT_HOST not set")
     })?;
-    let mqtt_port = env::var("MQTT_PORT").map_err(|e| {
-        tracing::error!("Config Error: {}", e);
-        Error::new(ErrorKind::Other, "MQTT_PORT not set")
-    })?;
+    let mqtt_port: u16 = env::var("MQTT_PORT")
+        .map_err(|e| {
+            tracing::error!("Config Error: {}", e);
+            Error::new(ErrorKind::NotFound, "MQTT_PORT not set")
+        })?
+        .parse()
+        .map_err(|e| {
+            tracing::error!("Config Error: {}", e);
+            Error::new(
+                ErrorKind::InvalidInput,
+                "MQTT_PORT must be a valid port number",
+            )
+        })?;
     let governor_burst_size = env::var("PAYMENTS_RATE_LIMIT_BURST_SIZE")
         .unwrap_or_else(|_| "1".to_string())
         .parse::<u32>()
@@ -171,7 +181,7 @@ async fn main() -> Result<(), Error> {
         .collect();
 
     let (client, mut eventloop) =
-        MqttClient::new("payments-service", &mqtt_host, mqtt_port.parse().unwrap()).await?;
+        MqttClient::new("payments-service", &mqtt_host, mqtt_port).await?;
 
     // Allow bursts with up to five requests per IP address
     // and replenishes one element every two seconds
@@ -179,7 +189,10 @@ async fn main() -> Result<(), Error> {
         .per_second(2)
         .burst_size(governor_burst_size)
         .finish()
-        .unwrap();
+        .ok_or_else(|| {
+            tracing::error!("Config Error: invalid governor configuration");
+            Error::new(ErrorKind::InvalidInput, "Invalid governor configuration")
+        })?;
 
     let governor_limiter = governor_conf.limiter().clone();
     let interval = Duration::from_secs(60);
@@ -229,12 +242,12 @@ async fn main() -> Result<(), Error> {
         .as_str()
         .parse()
         .expect("The gRPC address must be set");
-    let tonic_auth_middleware = AuthMiddleware::default();
 
     tokio::spawn(async move {
         // let the thread panic if gRPC server fails to start
         Server::builder()
-            .layer(MiddlewareLayer::new(tonic_auth_middleware))
+            .layer(RequestInterceptorLayer::new(AuthMiddleware::default()))
+            .layer(MiddlewareLayer::new(AuthResponseMiddleware::default()))
             .add_service(PaymentsServiceServer::new(payments_grpc))
             .serve(grpc_address)
             .await

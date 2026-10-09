@@ -9,6 +9,8 @@ use lib::utils::{
     auth::AuthClaim, cookie_parser::parse_cookies, custom_traits::AsSurrealClient,
     models::AuthStatus,
 };
+use oauth2_reqwest::ReqwestClient;
+use rsa::rand_core::OsRng;
 use std::env;
 use std::{
     collections::HashMap,
@@ -143,7 +145,7 @@ fn encrypt_native_state(payload: &NativeOAuthState) -> Result<String, Error> {
         Error::new(ErrorKind::Other, "Internal Server Error")
     })?;
 
-    let mut rng = rand::rngs::OsRng;
+    let mut rng = OsRng;
     let encrypted = public_key
         .encrypt(&mut rng, Pkcs1v15Encrypt, &json)
         .map_err(|e| {
@@ -194,7 +196,7 @@ pub fn encrypt_for_native(plaintext: &str) -> anyhow::Result<String> {
     let public_key_str = std::fs::read_to_string(&public_key_path)?;
     let public_key = RsaPublicKey::from_public_key_pem(&public_key_str)?;
 
-    let mut rng = rand::rngs::OsRng;
+    let mut rng = OsRng;
     let encrypted = public_key.encrypt(&mut rng, Pkcs1v15Encrypt, plaintext.as_bytes())?;
     Ok(URL_SAFE_NO_PAD.encode(&encrypted[..]))
 }
@@ -790,10 +792,18 @@ where
                                 "set-cookie",
                                 "oauth_client=; HttpOnly; SameSite=Strict; Path=/; Secure",
                             )
-                            .await;
+                            .await
+                            .map_err(|e| {
+                                tracing::error!("Error: {}", e);
+                                Error::new(ErrorKind::PermissionDenied, "Unauthorized")
+                            })?;
 
                             ctx.append_response_metadata("new-access-token", &token)
-                                .await;
+                                .await
+                                .map_err(|e| {
+                                    tracing::error!("Error: {}", e);
+                                    Error::new(ErrorKind::PermissionDenied, "Unauthorized")
+                                })?;
 
                             let current_role_permissions =
                                 fetch_current_role_permissions(db, sub_ref, &current_roles[0])
@@ -844,12 +854,19 @@ pub async fn verify_login_credentials<T: Clone + AsSurrealClient>(
 ) -> Result<User, Error> {
     let user_details = raw_user_details.transformed();
 
-    if user_details.user_name.is_none() || user_details.password.is_none() {
+    // Fail closed: a missing login id or password is indistinguishable from a wrong one.
+    let Some(login_id) = user_details.user_name.as_ref() else {
         return Err(Error::new(
             ErrorKind::PermissionDenied,
             "Invalid username or password",
         ));
-    }
+    };
+    let Some(password) = user_details.password.as_ref() else {
+        return Err(Error::new(
+            ErrorKind::PermissionDenied,
+            "Invalid username or password",
+        ));
+    };
 
     let mut result = db
         .as_client()
@@ -859,45 +876,43 @@ pub async fn verify_login_credentials<T: Clone + AsSurrealClient>(
         ",
         )
         .bind(("table", "user"))
-        .bind(("login_id", user_details.user_name.clone().unwrap()))
+        .bind(("login_id", login_id.clone()))
         .await
         .map_err(|e| {
             tracing::error!("{}", e);
-            Error::new(ErrorKind::Other, "Database query failed")
+            Error::other("Database query failed")
         })?;
 
     // Get the first result from the first query
     let response: Option<User> = result.take(0).map_err(|e| {
         tracing::error!("{}", e);
-        Error::new(ErrorKind::Other, "Database query deserialization failed")
+        Error::other("Database query deserialization failed")
     })?;
 
-    match response {
-        Some(user) => {
-            let existing_password = user.password.clone();
-            if existing_password.is_none() {
-                tracing::error!("Cannot update password for user with no password");
-                return Err(Error::new(ErrorKind::Other, "Invalid user details!"));
-            }
-            let existing_password = existing_password.unwrap();
-
-            if bcrypt::verify(&user_details.password.unwrap(), &existing_password).map_err(|e| {
-                tracing::error!("Failed to verify user credentials: {}", e);
-                Error::new(ErrorKind::PermissionDenied, "Invalid username or password")
-            })? && user.status == Some(AccountStatus::Active)
-            {
-                Ok(user)
-            } else {
-                Err(Error::new(
-                    ErrorKind::PermissionDenied,
-                    "Invalid username or password",
-                ))
-            }
-        }
-        None => Err(Error::new(
+    let Some(user) = response else {
+        return Err(Error::new(
             ErrorKind::PermissionDenied,
             "Invalid username or password",
-        )),
+        ));
+    };
+
+    let Some(existing_password) = user.password.as_ref() else {
+        tracing::error!("Cannot verify password for user with no password");
+        return Err(Error::new(ErrorKind::Other, "Invalid user details!"));
+    };
+
+    let matches = bcrypt::verify(password, existing_password).map_err(|e| {
+        tracing::error!("Failed to verify user credentials: {}", e);
+        Error::new(ErrorKind::PermissionDenied, "Invalid username or password")
+    })?;
+
+    if matches && user.status == Some(AccountStatus::Active) {
+        Ok(user)
+    } else {
+        Err(Error::new(
+            ErrorKind::PermissionDenied,
+            "Invalid username or password",
+        ))
     }
 }
 
@@ -1005,20 +1020,15 @@ pub async fn verify_oauth_token<T: for<'de> Deserialize<'de> + std::fmt::Debug>(
             req_headers.insert("Authorization", token.to_owned());
 
             // make a request to google oauth server to verify the token
-            let response =
-                // reqwest::get(format!("https://oauth2.googleapis.com/people/me?access_token={}", token.to_str().unwrap().strip_prefix("Bearer ").unwrap()).as_str())
-                client
-                    .request(
-                        Method::GET,
-                        "https://www.googleapis.com/oauth2/v3/userinfo"
-                    )
-                    .headers(req_headers)
-                    .send()
-                    .await
-                    .map_err(|e| {
-                        tracing::error!("OAuth request to Google failed: {:?}", e);
-                        Error::new(ErrorKind::Other, "OAuth request to Google failed")
-                    })?;
+            let response = client
+                .request(Method::GET, "https://www.googleapis.com/oauth2/v3/userinfo")
+                .headers(req_headers)
+                .send()
+                .await
+                .map_err(|e| {
+                    tracing::error!("OAuth request to Google failed: {:?}", e);
+                    Error::new(ErrorKind::Other, "OAuth request to Google failed")
+                })?;
 
             // Log the raw JSON response
             // let response_text = response.text().await.map_err(|e| {
@@ -1190,12 +1200,10 @@ pub async fn create_oauth_user_if_not_exists<T: Clone + AsSurrealClient>(
                 match existing_user {
                     Some(existing_user) => Ok(existing_user),
                     None => {
-                        let email = github_user.email.as_ref();
-
-                        if email.is_none() {
+                        let Some(email) = github_user.email.as_ref() else {
                             tracing::error!("No primary email found");
                             return Err(Error::new(ErrorKind::Other, "No primary email found on your GitHub account. Please go to GitHub Settings → Emails and set a primary email, then try again."));
-                        }
+                        };
 
                         let mut name_parts =
                             github_user.name.as_deref().unwrap_or("").splitn(2, ' ');
@@ -1210,7 +1218,7 @@ pub async fn create_oauth_user_if_not_exists<T: Clone + AsSurrealClient>(
                             .map(str::to_owned);
 
                         let user = UserInput {
-                            email: email.unwrap().to_owned(),
+                            email: email.to_owned(),
                             oauth_client: Some(OAuthClientName::Github),
                             oauth_user_id: Some(github_user.id.to_string()),
                             status: AccountStatus::Active,
@@ -1284,13 +1292,15 @@ async fn refresh_oauth_access_token(
     oauth_client_name: OAuthClientName,
     refresh_token: &str,
 ) -> Result<OAuthTokenPair, Error> {
-    let http_client = reqwest::ClientBuilder::new()
+    let reqwest_client = reqwest::ClientBuilder::new()
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|e| {
             tracing::error!("Failed to build HTTP client: {}", e);
             Error::new(ErrorKind::Other, "Internal error")
         })?;
+
+    let http_client = ReqwestClient::from(reqwest_client);
 
     let oauth_client = initiate_auth_code_grant_flow(oauth_client_name)
         .await
@@ -1361,7 +1371,11 @@ where
                 new_refresh_token
             ),
         )
-        .await;
+        .await
+        .map_err(|e| {
+            tracing::error!("Error: {}", e);
+            Error::new(ErrorKind::PermissionDenied, "Unauthorized")
+        })?;
     }
 
     let token_header = HeaderValue::from_str(&format!("Bearer {}", token_pair.access_token))
@@ -1387,7 +1401,11 @@ where
 
     // Send the new access token back to the client
     ctx.append_response_metadata("new-access-token", &token_pair.access_token)
-        .await;
+        .await
+        .map_err(|e| {
+            tracing::error!("Error: {}", e);
+            Error::new(ErrorKind::PermissionDenied, "Unauthorized")
+        })?;
     let current_role_id = role_claims.custom.roles[0].clone();
 
     let current_role_permissions =
