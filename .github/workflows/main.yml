@@ -29,74 +29,76 @@ jobs:
   release_plz:
     name: Release-plz version bump & tag
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    # Only run on push to main (not PRs)
     # if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: write
       pull-requests: read
     outputs:
-      acl_version: ${{ steps.acl_version.outputs.version }}
-      files_version: ${{ steps.files_version.outputs.version }}
-      email_version: ${{ steps.email_version.outputs.version }}
-      payments_version: ${{ steps.payments_version.outputs.version }}
+      workspace_version: ${{ steps.read_version.outputs.version }}
+      version_bumped: ${{ steps.commit.outputs.bumped }}
     steps:
       - name: Checkout repository
         uses: useblacksmith/checkout@v1
         with:
           fetch-depth: 0
-          persist-credentials: false
+          # Use a PAT so the pushed commit re-triggers workflows if needed.
+          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Run release-plz update (bump versions)
-        run: |
-          cargo install release-plz --locked
-          release-plz update
+      - name: Install release-plz
+        run: cargo install release-plz --locked
 
-      - name: Run release-plz release (tag & create releases)
+      - name: Run release-plz update (bump versions locally)
+        run: release-plz update
+
+      - name: Commit and push the version bump
+        id: commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "bumped=false" >> "$GITHUB_OUTPUT"
+            echo "No version changes to commit."
+          else
+            git commit -m "chore: release"
+            git push
+            echo "bumped=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run release-plz release (tag)
+        if: steps.commit.outputs.bumped == 'true'
         uses: release-plz/action@v0.5
         with:
           command: release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
 
-      - name: Read new versions from Cargo.toml files
-        id: acl_version
+      - name: Read workspace version
+        id: read_version
+        shell: bash
         run: |
-          VERSION=$(grep '^version' services/acl-service/Cargo.toml | head -1 | cut -d'"' -f2)
+          set -euo pipefail
+          VERSION=$(awk '/^\[workspace.package\]/{f=1;next} f&&/^version/{gsub(/.*"|".*/,"");print;exit}' Cargo.toml)
+          if [ -z "$VERSION" ]; then
+            echo "::error::Could not read [workspace.package].version from Cargo.toml"
+            exit 1
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      # Repeat for files, email, payments...
-      - name: Read new versions from Cargo.toml files
-        id: files_version
-        run: |
-          VERSION=$(grep '^version' services/files/Cargo.toml | head -1 | cut -d'"' -f2)
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Read new versions from Cargo.toml files
-        id: email_version
-        run: |
-          VERSION=$(grep '^version' services/email/Cargo.toml | head -1 | cut -d'"' -f2)
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Read new versions from Cargo.toml files
-        id: payments_version
-        run: |
-          VERSION=$(grep '^version' services/payments/Cargo.toml | head -1 | cut -d'"' -f2)
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Workspace version: $VERSION"
   check_service_changes:
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    # needs: [build]
+    needs: [release_plz]
     outputs:
+      workspace_version: ${{ steps.resolve_version.outputs.version }}
       acl_service_should_deploy: ${{ steps.confirm_changes.outputs.ACL_SHOULD_DEPLOY }}
-      acl_version: ${{ needs.release_plz.outputs.acl_version }}
       files_service_should_deploy: ${{ steps.confirm_changes.outputs.FILES_SHOULD_DEPLOY }}
-      files_version: ${{ needs.release_plz.outputs.files_version }}
       email_service_should_deploy: ${{ steps.confirm_changes.outputs.EMAIL_SERVICE_SHOULD_DEPLOY }}
-      email_version: ${{ needs.release_plz.outputs.email_version }}
       payments_service_should_deploy: ${{ steps.confirm_changes.outputs.PAYMENTS_SERVICE_SHOULD_DEPLOY }}
-      payments_version: ${{ needs.release_plz.outputs.payments_version }}
 
     permissions:
       id-token: write # required to use OIDC authentication
@@ -256,7 +258,7 @@ jobs:
           images: ${{ env.ACL_REGISTRY_IMAGE }}
           tags: |
             type=raw,value=latest
-            type=raw,value=${{ needs.check_service_changes.outputs.acl_version }}
+            type=raw,value=${{ needs.check_service_changes.outputs.workspace_version }}
 
       - name: Create manifest list and push
         working-directory: ${{ runner.temp }}/digests
@@ -354,7 +356,7 @@ jobs:
           images: ${{ env.EMAIL_REGISTRY_IMAGE }}
           tags: |
             type=raw,value=latest
-            type=raw,value=${{ needs.check_service_changes.outputs.email_version }}
+            type=raw,value=${{ needs.check_service_changes.outputs.workspace_version }}
 
       - name: Create manifest list and push
         working-directory: ${{ runner.temp }}/digests
@@ -452,7 +454,7 @@ jobs:
           images: ${{ env.FILES_REGISTRY_IMAGE }}
           tags: |
             type=raw,value=latest
-            type=raw,value=${{ needs.check_service_changes.outputs.files_version }}
+            type=raw,value=${{ needs.check_service_changes.outputs.workspace_version }}
 
       - name: Create manifest list and push
         working-directory: ${{ runner.temp }}/digests
@@ -550,7 +552,7 @@ jobs:
           images: ${{ env.PAYMENTS_REGISTRY_IMAGE }}
           tags: |
             type=raw,value=latest
-            type=raw,value=${{ needs.check_service_changes.outputs.payments_version }}
+            type=raw,value=${{ needs.check_service_changes.outputs.workspace_version }}
 
       - name: Create manifest list and push
         working-directory: ${{ runner.temp }}/digests
