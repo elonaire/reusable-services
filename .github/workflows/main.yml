@@ -30,7 +30,7 @@ jobs:
     name: Release-plz version bump & tag
     runs-on: blacksmith-4vcpu-ubuntu-2404
     # Only run on push to main (not PRs)
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: write
       pull-requests: read
