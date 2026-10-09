@@ -2,10 +2,10 @@ use std::{env, sync::Arc, time::SystemTime};
 
 use async_graphql::{Context, Object, Result};
 use axum::Extension;
-use base64::{prelude::BASE64_URL_SAFE_NO_PAD, Engine as _engine};
+use base64::{Engine as _engine, prelude::BASE64_URL_SAFE_NO_PAD};
 use hyper::{
-    header::{COOKIE, SET_COOKIE},
     HeaderMap, StatusCode,
+    header::{COOKIE, SET_COOKIE},
 };
 use jwt_simple::prelude::*;
 use lib::utils::{
@@ -15,17 +15,21 @@ use lib::utils::{
     custom_error::ExtendedError,
     models::{AdminPrivilege, ApiResponse, AuthorizationConstraint, EmailMQTTPayload},
 };
-use rand::{rngs::OsRng, RngCore};
-use rsa::{pkcs8::DecodePublicKey, Pkcs1v15Encrypt, RsaPublicKey};
+use rsa::{
+    Pkcs1v15Encrypt, RsaPublicKey,
+    pkcs8::DecodePublicKey,
+    rand_core::{OsRng, RngCore},
+};
 use rumqttc::v5::mqttbytes::QoS;
 use surrealdb::{
+    Surreal,
     engine::remote::ws::Client,
     types::{RecordId, RecordIdKey},
-    Surreal,
 };
 use tokio::fs;
 
 use crate::{
+    AppState,
     graphql::schemas::{
         role::{
             Department, DepartmentInput, DepartmentMetadata, Organization, OrganizationInput,
@@ -40,13 +44,12 @@ use crate::{
     },
     utils::{
         auth::{
-            confirm_authentication, confirm_authorization, encrypt_for_native, fetch_user_roles,
-            initiate_auth_code_grant_flow, navigate_to_redirect_url, sign_jwt,
-            verify_login_credentials, OAuthClientName,
+            OAuthClientName, confirm_authentication, confirm_authorization, encrypt_for_native,
+            fetch_user_roles, initiate_auth_code_grant_flow, navigate_to_redirect_url, sign_jwt,
+            verify_login_credentials,
         },
         user::create_user,
     },
-    AppState,
 };
 
 pub struct Mutation;
@@ -65,7 +68,7 @@ impl Mutation {
         })?;
 
         user.dob = match &user.dob {
-            Some(ref date_str) => Some(
+            Some(date_str) => Some(
                 (chrono::DateTime::parse_from_rfc3339(date_str).map_err(|e| {
                     tracing::error!("Parse from rfc3339 error: {}", e);
                     ExtendedError::new("Failed to sign up", StatusCode::BAD_REQUEST.as_str())
@@ -148,7 +151,7 @@ impl Mutation {
                     }
                 };
 
-                let mut rng = rand::rngs::OsRng;
+                let mut rng = OsRng;
 
                 let encrypted_token =
                     match public_key.encrypt(&mut rng, Pkcs1v15Encrypt, signed_jwt.as_bytes()) {
@@ -480,7 +483,7 @@ impl Mutation {
                                 .build()
                             })?;
 
-                        let mut rng = rand::rngs::OsRng;
+                        let mut rng = OsRng;
                         let encrypted_token = public_key
                             .encrypt(&mut rng, Pkcs1v15Encrypt, refresh_token_str.as_bytes())
                             .map_err(|e| {
@@ -589,54 +592,48 @@ impl Mutation {
         })?;
 
         let authenticated = confirm_authentication(db, ctx).await?;
-
         let authenticated_ref = &authenticated;
 
-        // Evaluate admin permissions here to restrict the Admin from giving Superadmin privileges. Constraint is already effected in the database.
+        // Evaluate admin permissions here to restrict the Admin from giving Superadmin
+        // privileges. Constraint is already effected in the database.
         let authorization_constraint = AuthorizationConstraint {
             permissions: vec!["write:user".into()],
         };
 
         let authorized =
             confirm_authorization(db, authenticated_ref, &authorization_constraint).await?;
-        let user_ref = &mut user;
 
-        if user_ref.id.is_none() {
+        // Take the id out of the update payload — it's used for routing, not for the merge.
+        let Some(user_id) = user.id.take() else {
             tracing::error!("User ID was not provided in request body!");
             return Err(
                 ExtendedError::new("Bad Request", StatusCode::BAD_REQUEST.as_str()).build(),
             );
-        }
-
-        let user_id = user_ref.id.as_ref().unwrap().to_owned();
-        user_ref.id = None;
+        };
 
         if authenticated_ref.sub != user_id && !authorized {
             tracing::error!("User is neither admin nor resource owner!");
             return Err(ExtendedError::new("Forbidden", StatusCode::FORBIDDEN.as_str()).build());
         }
 
-        if user_ref.password.is_some() {
-            user_ref.password = Some(
-                bcrypt::hash(user_ref.password.as_ref().unwrap(), bcrypt::DEFAULT_COST).map_err(
-                    |e| {
-                        tracing::error!("Bcrypt Error: {}", e);
-                        ExtendedError::new("Failed to sign up", StatusCode::BAD_REQUEST.as_str())
-                            .build()
-                    },
-                )?,
-            );
+        // Hash the password if present; leave it otherwise.
+        if let Some(password) = user.password.take() {
+            let hashed = bcrypt::hash(password, bcrypt::DEFAULT_COST).map_err(|e| {
+                tracing::error!("Bcrypt Error: {}", e);
+                ExtendedError::new("Failed to sign up", StatusCode::BAD_REQUEST.as_str()).build()
+            })?;
+            user.password = Some(hashed);
         }
 
-        let response: Option<User> = db
-            .update(("user", user_id.clone()))
-            .merge(user)
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to update user: {}", e);
-                ExtendedError::new("Failed to update user", StatusCode::BAD_REQUEST.as_str())
-                    .build()
-            })?;
+        let response: Option<User> =
+            db.update(("user", user_id))
+                .merge(user)
+                .await
+                .map_err(|e| {
+                    tracing::error!("Failed to update user: {}", e);
+                    ExtendedError::new("Failed to update user", StatusCode::BAD_REQUEST.as_str())
+                        .build()
+                })?;
 
         match response {
             Some(user) => {

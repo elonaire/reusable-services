@@ -18,10 +18,11 @@ use axum::{
     extract::{DefaultBodyLimit, Extension},
     http::{HeaderMap, HeaderValue},
     middleware,
-    routing::{get, post},
+    routing::{get, post, put},
     serve, Router,
 };
 
+use chrono::Duration as ChronoDuration;
 use graphql::resolvers::query::Query;
 use hyper::{
     header::{
@@ -34,19 +35,28 @@ use hyper::{
 
 use grpc::server::FilesServiceImplementation;
 use lib::{
+    configs::uploads::UploadConfig,
     integration::grpc::clients::files_service::files_service_server::FilesServiceServer,
-    middleware::auth::{grpc::AuthMiddleware, rest::handle_auth_with_refresh},
+    middleware::{
+        auth::{
+            grpc::{AuthMiddleware, AuthResponseMiddleware},
+            rest::{handle_auth_with_refresh, handle_optional_auth},
+        },
+        headers::content::limit_by_content_length,
+    },
 };
 use rest::handlers::{download_file, get_image, upload};
 use surrealdb::{engine::remote::ws::Client, Surreal};
 use tonic::transport::Server;
-use tonic_middleware::MiddlewareLayer;
+use tonic_middleware::{MiddlewareLayer, RequestInterceptorLayer};
 use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
 use tower_http::cors::CorsLayer;
 
 use graphql::resolvers::mutation::Mutation;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 use uuid::Uuid;
+
+use crate::rest::multipart::{self, abort, complete, initiate, list_parts, part_url, upload_part};
 
 type MySchema = Schema<Query, Mutation, EmptySubscription>;
 
@@ -118,6 +128,10 @@ async fn main() -> Result<(), Error> {
             )
         })?;
     let db = Arc::new(connection_pool);
+    let config = Arc::new(UploadConfig::from_env().map_err(|e| {
+        tracing::error!("configuration error: {e:#}");
+        e
+    })?);
 
     // Bring in some needed env vars
     let deployment_env = env::var("ENVIRONMENT").unwrap_or_else(|_| "prod".to_string()); // default to production because it's the most secure
@@ -168,7 +182,10 @@ async fn main() -> Result<(), Error> {
         .per_second(2)
         .burst_size(governor_burst_size)
         .finish()
-        .unwrap();
+        .ok_or_else(|| {
+            tracing::error!("Config Error: invalid governor configuration");
+            Error::new(ErrorKind::InvalidInput, "Invalid governor configuration")
+        })?;
 
     let governor_limiter = governor_conf.limiter().clone();
     let interval = Duration::from_secs(60);
@@ -179,18 +196,42 @@ async fn main() -> Result<(), Error> {
         governor_limiter.retain_recent();
     });
 
-    let app = Router::new()
+    let auth_required = Router::new()
         .route("/upload/{*path}", post(upload))
-        .route("/download/{*key}", get(download_file))
         .route_layer(middleware::from_fn(handle_auth_with_refresh))
-        .route("/", post(graphql_handler))
+        .route_layer(middleware::from_fn(limit_by_content_length))
+        .layer(DefaultBodyLimit::disable());
+
+    let auth_optional = Router::new()
+        .route("/download/{*key}", get(download_file))
         .route("/view/{*key}", get(get_image))
+        .route_layer(middleware::from_fn(handle_optional_auth));
+
+    let multipart_control = Router::new()
+        .route("/initiate", post(initiate))
+        .route("/{upload_id}/parts/{part_number}/url", get(part_url))
+        .route("/{upload_id}/parts", get(list_parts))
+        .route("/{upload_id}/complete", post(complete))
+        .route("/{upload_id}/abort", post(abort))
+        .route_layer(middleware::from_fn(handle_auth_with_refresh));
+
+    // Signed-URL receiver — no auth middleware, no body limit.
+    let part_receiver = Router::new()
+        .route("/multipart-upload/parts", put(upload_part))
+        .layer(DefaultBodyLimit::disable());
+
+    let app = Router::new()
+        .nest("/multipart-upload", multipart_control)
+        .merge(part_receiver)
+        .merge(auth_required)
+        .merge(auth_optional)
+        .route("/", post(graphql_handler))
         .route("/healthz", get(|| async { StatusCode::OK }))
         .route("/ready", get(|| async { StatusCode::OK }))
+        .layer(Extension(config.clone()))
         .layer(GovernorLayer::new(governor_conf))
         .layer(Extension(schema))
         .layer(Extension(db.clone()))
-        .layer(DefaultBodyLimit::max(100 * 1024 * 1024))
         .layer(
             CorsLayer::new()
                 .allow_origin(origins)
@@ -211,6 +252,8 @@ async fn main() -> Result<(), Error> {
                 .allow_methods(vec![Method::GET, Method::POST]),
         );
 
+    multipart::spawn_session_sweeper(db.clone(), config.clone(), ChronoDuration::hours(24));
+
     // Set up the gRPC server
     let files_grpc = FilesServiceImplementation::new(db.clone());
     let grpc_address: SocketAddr = format!("0.0.0.0:{}", files_grpc_port)
@@ -220,18 +263,15 @@ async fn main() -> Result<(), Error> {
             tracing::error!("Config Error: {}", e);
             Error::new(ErrorKind::Other, "gRPC address not set")
         })?;
-    let tonic_auth_middleware = AuthMiddleware::default();
 
     tokio::spawn(async move {
         // let the thread panic if gRPC server fails to start
         Server::builder()
-            .layer(MiddlewareLayer::new(tonic_auth_middleware))
+            .layer(RequestInterceptorLayer::new(AuthMiddleware::default()))
+            .layer(MiddlewareLayer::new(AuthResponseMiddleware::default()))
             .add_service(FilesServiceServer::new(files_grpc))
             .serve(grpc_address)
             .await
-            .map_err(|e| {
-                tracing::error!("Failed to start gRPC server: {}", e);
-            })
             .ok();
     });
 

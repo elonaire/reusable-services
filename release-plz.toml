@@ -1,0 +1,48 @@
+[workspace]
+# These are internal services — never publish to crates.io.
+publish = false
+
+# Use git tags as the version baseline (essential for publish=false).
+git_only = true
+
+# Disable GitHub Releases created by release-plz (your CI handles Docker).
+git_release_enable = false
+
+# Enable git tags.
+git_tag_enable = true
+# Emit a single tag for the whole workspace: v1.2.3
+git_tag_name = "v{{ version }}"
+
+# Update changelogs.
+changelog_update = true
+
+# Keep internal path-dependency version pins in sync when the shared version bumps.
+dependencies_update = true
+
+# Only trigger a release when meaningful commits exist.
+# This prevents release-plz's own release commits from re-triggering.
+release_commits = "^(feat|fix|perf|refactor|doc|revert)"
+
+# IMPORTANT: Do NOT use version_group here.
+# version_group can drift when publish=false; workspace inheritance is structural.
+# The single [workspace.package].version is the only version source.
+
+[[package]]
+name = "lib"
+# Inherits workspace version. A change here bumps ALL services.
+
+[[package]]
+name = "acl-service"
+# Inherits workspace version.
+
+[[package]]
+name = "email"
+# Inherits workspace version.
+
+[[package]]
+name = "files"
+# Inherits workspace version.
+
+[[package]]
+name = "payments"
+# Inherits workspace version.

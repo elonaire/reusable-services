@@ -167,8 +167,22 @@ impl From<acl_service::ConfirmAuthenticationResponse> for utils::models::AuthSta
 /// For easy conversion to protobuf
 impl From<files_service::CreateFileFromContentRequest> for utils::models::CreateFileInfo {
     fn from(file_info: files_service::CreateFileFromContentRequest) -> Self {
+        use files_service::AllowedCreateFileExtension as Proto;
+
+        let extension = match Proto::try_from(file_info.extension) {
+            Ok(Proto::Markdown) => utils::models::AllowedCreateFileExtension::Markdown,
+            Ok(Proto::Txt) => utils::models::AllowedCreateFileExtension::Txt,
+            Err(_) => {
+                tracing::warn!(
+                    value = file_info.extension,
+                    "unknown protobuf extension, defaulting to Txt"
+                );
+                utils::models::AllowedCreateFileExtension::Txt
+            }
+        };
+
         Self {
-            extension: file_info.extension.try_into().unwrap(),
+            extension,
             content: file_info.content,
             file_name: file_info.file_name,
             is_free: file_info.is_free,

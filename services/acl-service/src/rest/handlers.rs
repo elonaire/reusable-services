@@ -15,6 +15,7 @@ use lib::utils::{
     custom_error::ApiError, models::ApiResponseRest,
 };
 use oauth2::{AuthorizationCode, PkceCodeVerifier, TokenResponse};
+use oauth2_reqwest::ReqwestClient;
 use rsa::{pkcs8::DecodePrivateKey, Pkcs1v15Encrypt, RsaPrivateKey};
 use serde::{Deserialize, Serialize};
 use surrealdb::{engine::remote::ws::Client, types::RecordIdKey, Surreal};
@@ -293,13 +294,15 @@ pub async fn exchange_code_for_token(
     let pkce_verifier = PkceCodeVerifier::new(pkce_verifier_secret.to_owned());
     let auth_code = AuthorizationCode::new(auth_code);
 
-    let http_client = reqwest::Client::builder()
+    let reqwest_client = reqwest::ClientBuilder::new()
         .danger_accept_invalid_certs(true)
         .build()
         .map_err(|e| {
             tracing::error!("Failed to build Reqwest client: {}", e);
             ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
         })?;
+
+    let http_client = ReqwestClient::from(reqwest_client);
 
     let token_result = oauth_client
         .exchange_code(auth_code)
@@ -374,13 +377,15 @@ pub async fn exchange_code_for_token_native(
     let pkce_verifier = PkceCodeVerifier::new(native_state.pkce_verifier);
     let auth_code = AuthorizationCode::new(payload.auth_code);
 
-    let http_client = reqwest::Client::builder()
+    let reqwest_client = reqwest::ClientBuilder::new()
         .danger_accept_invalid_certs(true)
         .build()
         .map_err(|e| {
             tracing::error!("Failed to build Reqwest client: {}", e);
             ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
         })?;
+
+    let http_client = ReqwestClient::from(reqwest_client);
 
     let token_result = oauth_client
         .exchange_code(auth_code)
