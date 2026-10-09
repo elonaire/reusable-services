@@ -1,7 +1,9 @@
 [package]
 name = "acl-service"
-version = "0.2.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish = false
 
 [dependencies]
 axum = { workspace = true }
@@ -36,6 +38,7 @@ base64 = { workspace = true }
 uuid = { workspace = true }
 tower_governor = { workspace = true }
 anyhow = { workspace = true }
+oauth2-reqwest = { workspace = true }
 
 [lints.rust]
 unsafe_code = "forbid"

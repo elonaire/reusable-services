@@ -2,12 +2,11 @@ use std::env;
 use std::time::Instant;
 
 use axum::http::HeaderValue;
-use hyper::header::{AUTHORIZATION, COOKIE, SET_COOKIE};
-use tonic::body::BoxBody;
+use tonic::body::Body;
 use tonic::codegen::http::{Request, Response};
 use tonic::transport::Channel;
 use tonic::Status;
-use tonic_middleware::{Middleware, ServiceBound};
+use tonic_middleware::{Middleware, RequestInterceptor, ServiceBound};
 
 use crate::integration::grpc::clients::acl_service::{
     acl_client::AclClient, ConfirmAuthenticationRequest,
@@ -17,22 +16,17 @@ use crate::utils::grpc::{create_grpc_client, AuthMetaData};
 #[derive(Default, Clone)]
 pub struct AuthMiddleware;
 
+#[derive(Clone)]
+struct AuthResponseHeaders {
+    set_cookie: Option<HeaderValue>,
+    new_access_token: Option<HeaderValue>,
+}
+
 #[async_trait::async_trait]
-impl<S> Middleware<S> for AuthMiddleware
-where
-    S: ServiceBound,
-    S::Future: Send,
-    S::Error: From<tonic::Status> + Send + 'static, // Add Error constraint
-{
-    async fn call(
-        &self,
-        mut req: Request<BoxBody>,
-        mut service: S,
-    ) -> Result<Response<BoxBody>, S::Error> {
-        let start_time = Instant::now();
-        // Call the service. You can also intercept request from middleware.
-        let auth_header = req.headers().get(AUTHORIZATION);
-        let cookie_header = req.headers().get(COOKIE);
+impl RequestInterceptor for AuthMiddleware {
+    async fn intercept(&self, mut req: Request<Body>) -> Result<Request<Body>, Status> {
+        let auth_header = req.headers().get("authorization");
+        let cookie_header = req.headers().get("cookie");
 
         let mut request = tonic::Request::new(ConfirmAuthenticationRequest {});
 
@@ -43,10 +37,8 @@ where
         };
 
         let acl_service_grpc = env::var("OAUTH_SERVICE_GRPC").map_err(|e| {
-            tracing::error!(
-                "Missing the OAUTH_SERVICE_GRPC environment variable.: {}",
-                e
-            );
+            tracing::error!("Missing the OAUTH_SERVICE_GRPC environment variable: {}", e);
+
             Status::internal("Server Error")
         })?;
 
@@ -57,34 +49,93 @@ where
         .await
         .map_err(|e| {
             tracing::error!("Failed to connect to ACL service: {}", e);
+
             Status::unavailable("Failed to connect to ACL service")
         })?;
 
         let result = acl_grpc_client.confirm_authentication(request).await?;
-        let result_metadata = result.metadata().clone();
 
+        /*
+         * Capture the ACL response metadata before consuming the response.
+         */
+        let response_headers = AuthResponseHeaders {
+            set_cookie: result
+                .metadata()
+                .get("set-cookie")
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| HeaderValue::from_str(value).ok()),
+
+            new_access_token: result
+                .metadata()
+                .get("new-access-token")
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| HeaderValue::from_str(value).ok()),
+        };
+
+        /*
+         * Authentication information returned by ACL.
+         */
         let auth_status = result.into_inner();
-        // Insert auth_status into the req extensions
-        req.extensions_mut().insert(auth_status);
-        let mut response = service.call(req).await?;
-        let mut response_headers = response.headers_mut().clone();
 
-        if let Some(cookie_str) = result_metadata.get("set-cookie") {
-            let value = cookie_str.to_str().unwrap_or("");
-            response_headers.insert(
-                SET_COOKIE,
-                HeaderValue::from_str(value).unwrap_or(HeaderValue::from_static("")),
-            );
-        };
-        if let Some(new_access_token) = result_metadata.get("new-access-token") {
-            let value = new_access_token.to_str().unwrap_or("");
-            response_headers.insert(
-                "new-access-token",
-                HeaderValue::from_str(value).unwrap_or(HeaderValue::from_static("")),
-            );
-        };
+        /*
+         * Make the authenticated user/session information available
+         * to the actual gRPC service.
+         */
+        req.extensions_mut().insert(auth_status);
+
+        /*
+         * The response headers cannot be added yet because an interceptor
+         * only has access to the incoming request.
+         *
+         * Store them in request extensions so AuthResponseMiddleware can
+         * copy them onto the outgoing response.
+         */
+        req.extensions_mut().insert(response_headers);
+
+        Ok(req)
+    }
+}
+
+#[derive(Default, Clone)]
+pub struct AuthResponseMiddleware;
+
+#[async_trait::async_trait]
+impl<S> Middleware<S> for AuthResponseMiddleware
+where
+    S: ServiceBound,
+    S::Future: Send,
+{
+    async fn call(&self, req: Request<Body>, mut service: S) -> Result<Response<Body>, S::Error> {
+        let start_time = Instant::now();
+
+        /*
+         * Grab the authentication response headers before the request
+         * is passed to the actual service.
+         */
+        let response_headers = req.extensions().get::<AuthResponseHeaders>().cloned();
+
+        /*
+         * Call the actual gRPC service.
+         */
+        let mut response = service.call(req).await?;
+
+        /*
+         * Propagate ACL response metadata to the final gRPC response.
+         */
+        if let Some(headers) = response_headers {
+            if let Some(set_cookie) = headers.set_cookie {
+                response.headers_mut().insert("set-cookie", set_cookie);
+            }
+
+            if let Some(new_access_token) = headers.new_access_token {
+                response
+                    .headers_mut()
+                    .insert("new-access-token", new_access_token);
+            }
+        }
 
         let elapsed_time = start_time.elapsed();
+
         tracing::info!("gRPC request processed in {:?}", elapsed_time);
 
         Ok(response)

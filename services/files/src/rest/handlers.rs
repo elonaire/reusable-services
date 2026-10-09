@@ -1,7 +1,7 @@
 use axum::{
     extract::{Extension, Multipart, Path as AxumUrlParams, Query},
     http::StatusCode,
-    response::{IntoResponse, Response},
+    response::Response,
 };
 use exif::{In, Tag};
 use hyper::HeaderMap;
@@ -23,18 +23,27 @@ use uuid::Uuid;
 use std::{
     env,
     io::{BufReader, Cursor},
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
-use surrealdb::{engine::remote::ws::Client, types::RecordIdKey, Surreal};
+use surrealdb::{
+    engine::remote::ws::Client,
+    types::{RecordId, RecordIdKey},
+    Surreal,
+};
 
-use crate::graphql::schemas::general::{UploadedFile, UploadedFileResponse};
+use crate::graphql::schemas::general::{
+    Bucket, FileMeta, Key, ResolvedContainer, UploadedFile, UploadedFileResponse,
+};
 
 #[derive(serde::Deserialize)]
 pub struct ImageResizeParams {
     pub width: Option<u32>,
     pub height: Option<u32>,
 }
+
+pub const SMALL_UPLOAD_LIMIT: u64 = 5 * 1024 * 1024; // 5 MiB
 
 pub async fn upload(
     AxumUrlParams(path): AxumUrlParams<String>,
@@ -48,290 +57,105 @@ pub async fn upload(
         ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
     })?;
 
+    // --- Resolve the authenticated user to a RecordId<user_id> ---
     let user_fk_body = ForeignKey {
         table: "user_id".into(),
         column: "user_id".into(),
         foreign_key: auth_status.sub,
     };
-
     let user_fk = add_foreign_key_if_not_exists::<Arc<Surreal<Client>>, UserId>(&db, user_fk_body)
         .await
         .ok_or(ApiError::Unauthorized("Unauthorized".into()))?;
 
-    let Some(user_id_raw) = (match &user_fk.id.key {
-        RecordIdKey::String(s) => Some(s.clone()),
-        _ => None,
-    }) else {
-        tracing::error!("Invalid user");
-        return Err(ApiError::BadRequest("Bad Request".into()));
+    let owner: RecordId = user_fk.id.clone();
+
+    // --- Resolve and validate the path once, up front ---
+    // This replaces the entire validation query and gives us `is_free` from the bucket.
+    let resolved = match resolve_container(&db, &path, Some(&owner)).await {
+        Ok(r) => r,
+        Err(e) => {
+            drain_multipart(&mut multipart).await;
+            return Err(e);
+        }
     };
+
+    let is_premium = resolved.bucket_is_premium;
 
     create_dir_all(&upload_dir).await.map_err(|e| {
         tracing::error!("Failed to create upload directory: {}", e);
         ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
     })?;
 
-    let (bucket, key) = path
-        .split_once('/')
-        .map(|(b, k)| (b.to_owned(), Some(k.to_owned())))
-        .unwrap_or_else(|| (path.clone(), None));
+    // --- Process fields, tracking everything we touch for rollback ---
+    let mut responses: Vec<UploadedFileResponse> = Vec::new();
+    let mut written_paths: Vec<PathBuf> = Vec::new();
+    let mut created_ids: Vec<RecordId> = Vec::new();
 
-    let bucket_ref = &bucket;
-
-    let split_keys = key
-        .map(|provided_key| {
-            provided_key
-                .split('/')
-                .map(|s| s.to_owned())
-                .collect::<Vec<String>>()
-        })
-        .unwrap_or_default();
-
-    let split_keys_ref = split_keys.as_slice();
-
-    let validation_result = db
-        .query(
-            r#"
-            LET $bucket = (
-                SELECT VALUE id
-                FROM ONLY bucket
-                WHERE name = $bucket_name
-                LIMIT 1
-            );
-            IF $bucket = NONE {
-                THROW 'Invalid Input';
-            };
-
-            IF array::len($split_keys) = 0 {
-                RETURN true;
-            } ELSE {
-                LET $immediate_key = array::first($split_keys);
-                LET $rest_keys = array::remove($split_keys, 0);
-
-                LET $key_found_in_bucket = (
-                    SELECT VALUE id
-                    FROM ONLY key
-                    WHERE
-                        name = $immediate_key
-                        AND ->(belongs_to WHERE out = $bucket)
-                    LIMIT 1
-                );
-
-                IF $key_found_in_bucket = NONE {
-                    THROW 'Invalid Input';
-                };
-
-                IF array::len($rest_keys) = 0 {
-                    RETURN true;
-                } ELSE {
-                    LET $rest_keys_validity = $rest_keys.map(
-                        |$key,$index| {
-                            LET $parent_key = IF $index = 0 {
-                                (
-                                    SELECT VALUE id
-                                    FROM ONLY key
-                                    WHERE name = $immediate_key
-                                    LIMIT 1
-                                );
-                            } ELSE {
-                                LET $prev_index = $index - 1;
-
-                                LET $prev_key = $split_keys.at($prev_index);
-
-                                (
-                                    SELECT VALUE id
-                                    FROM ONLY key
-                                    WHERE name = $prev_key
-                                    LIMIT 1
-                                );
-                            };
-
-                            LET $key_found = (
-                                SELECT VALUE id
-                                FROM ONLY key
-                                WHERE
-                                    name = $key
-                                    AND ->(belongs_to WHERE out = $parent_key)
-                                LIMIT 1
-                            );
-
-                            IF $key_found = NONE {
-                                false;
-                            } ELSE {
-                                true;
-                            };
-                        }
-                    );
-
-                    RETURN $rest_keys_validity.reduce(|$key_one,$key_two| $key_one && $key_two);
-                };
-            };
-            "#,
-        )
-        .bind(("bucket_name", bucket_ref.clone()))
-        .bind(("split_keys", split_keys_ref.to_vec()))
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to validate bucket and key: {}", e);
-            ApiError::BadRequest("Invalid bucket or key".into())
-        })
-        .and_then(|mut res| {
-            res.take(2).map_err(|e| {
-                tracing::error!("Failed to deserialize: {}", e);
-                ApiError::BadRequest("Invalid bucket or key".into())
-            })
-        });
-
-    let bucket_key_are_valid: Option<bool> = match validation_result {
-        Ok(val) => val,
-        Err(e) => {
-            while let Ok(Some(_)) = multipart.next_field().await {} // drain body to prevent ECONNRESET errors
-            return Err(e);
-        }
-    };
-
-    if bucket_key_are_valid != Some(true) {
-        while let Ok(Some(_)) = multipart.next_field().await {} // drain body to prevent ECONNRESET errors
-        return Err(ApiError::BadRequest("Invalid bucket or key".into()));
-    };
-
-    let mut all_uploaded_files_response: Vec<UploadedFileResponse> = Vec::new();
-
-    while let Some(field) = multipart.next_field().await.map_err(|e| {
-        tracing::error!("Multipart error: {}", e);
-        ApiError::BadRequest("Invalid multipart payload".into())
-    })? {
-        let mut total_size: u64 = 0;
-        let system_filename = Uuid::new_v4();
-        let filepath = Path::new(&upload_dir).join(system_filename.to_string());
-        let mut field = field;
-
-        let filename = field
-            .file_name()
-            .map(|n| n.to_string())
-            .unwrap_or_else(|| "unknown".to_string());
-
-        let mime_type = field
-            .content_type()
-            .map(|m| m.to_string())
-            .unwrap_or_else(|| "application/octet-stream".to_string());
-
-        let field_name = field
-            .name()
-            .map(|n| n.to_string())
-            .unwrap_or_else(|| "unknown".to_string());
-
-        let is_free = !field_name.contains("premium");
-
-        let mut file = File::create(&filepath).await.map_err(|e| {
-            tracing::error!("Failed to create file: {}", e);
-            ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
-        })?;
-
-        while let Some(chunk) = field.chunk().await.map_err(|e| {
-            tracing::error!("Failed to read chunk: {}", e);
-            ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
+    let loop_result: Result<(), ApiError> = async {
+        while let Some(mut field) = multipart.next_field().await.map_err(|e| {
+            tracing::error!("Multipart error: {}", e);
+            ApiError::BadRequest("Invalid multipart payload".into())
         })? {
-            total_size += chunk.len() as u64;
-            file.write_all(&chunk).await.map_err(|e| {
-                tracing::error!("Failed to write chunk: {}", e);
-                ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
-            })?;
+            let system_filename = Uuid::new_v4().to_string();
+            let filepath = Path::new(&upload_dir).join(&system_filename);
+
+            let field_name = field
+                .name()
+                .map(str::to_string)
+                .unwrap_or_else(|| "unknown".into());
+            let filename = field
+                .file_name()
+                .map(str::to_string)
+                .unwrap_or_else(|| "unknown".into());
+            let mime_type = field
+                .content_type()
+                .map(str::to_string)
+                .unwrap_or_else(|| "application/octet-stream".into());
+
+            // 1. Stream to disk, enforcing the cap.
+            let total_size = write_field_to_disk(&mut field, &filepath).await?;
+            written_paths.push(filepath.clone());
+
+            // 2. Single transaction: file row + belongs_to edge.
+            let meta = FileMeta {
+                name: filename,
+                size: total_size,
+                mime_type,
+                system_filename: system_filename.clone(),
+                is_premium,
+                is_public: resolved.bucket_is_public,
+            };
+
+            let stored_file =
+                create_file_record(&db, &owner, &meta, &resolved.bucket, resolved.key.as_ref())
+                    .await?;
+
+            let Some(file_id) = record_key_string(&stored_file.id) else {
+                tracing::error!(id = ?stored_file.id, "file id is not a string record key");
+                return Err(ApiError::Internal(anyhow::anyhow!("Invalid file id")));
+            };
+
+            created_ids.push(stored_file.id.clone());
+            responses.push(UploadedFileResponse {
+                field_name,
+                file_name: stored_file.system_filename,
+                file_id,
+                original_filename: stored_file.name,
+            });
         }
+        Ok(())
+    }
+    .await;
 
-        file.flush().await.map_err(|e| {
-            tracing::error!("Failed to flush file: {}", e);
-            ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
-        })?;
-
-        let stored_file: Option<UploadedFile> = db
-            .query(
-                "
-                BEGIN TRANSACTION;
-                LET $user = type::record('user_id', $user_id);
-
-                LET $new_file = (CREATE file CONTENT {
-                    owner: $user,
-                    name: $name,
-                    size: $size,
-                    mime_type: $mime_type,
-                    system_filename: $system_filename,
-                    is_free: $is_free
-                })[0];
-                LET $file_record = (SELECT VALUE id FROM ONLY $new_file);
-
-                IF array::len($split_keys) = 0 {
-                    LET $bucket = (
-                        SELECT VALUE id
-                        FROM ONLY bucket
-                        WHERE name = $bucket_name
-                        LIMIT 1
-                    );
-
-                    RELATE $file_record->belongs_to->$bucket;
-                } ELSE {
-                    LET $last_key = array::at($split_keys, -1);
-
-                    LET $key_id = (
-                        SELECT VALUE id
-                        FROM ONLY key
-                        WHERE name = $last_key
-                        LIMIT 1
-                    );
-
-                    RELATE $file_record->belongs_to->$key_id;
-                };
-                RETURN $new_file;
-                COMMIT TRANSACTION;
-                ",
-            )
-            .bind(("user_id", user_id_raw.clone()))
-            .bind(("name", filename))
-            .bind(("size", total_size))
-            .bind(("mime_type", mime_type))
-            .bind(("is_free", is_free))
-            .bind(("system_filename", system_filename.to_string()))
-            .bind(("bucket_name", bucket_ref.clone()))
-            .bind(("split_keys", split_keys_ref.to_vec()))
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to insert file into database: {}", e);
-                let filepath = filepath.clone();
-                tokio::spawn(async move { remove_file(&filepath).await });
-                ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
-            })?
-            .take(5)
-            .map_err(|e| {
-                tracing::error!("Failed to retrieve file from database: {}", e);
-                let filepath = filepath.clone();
-                tokio::spawn(async move { remove_file(&filepath).await });
-                ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
-            })?;
-
-        let stored_file = stored_file.ok_or_else(|| {
-            tracing::error!("Database returned no file after insert");
-            ApiError::Internal(anyhow::anyhow!("Failed to upload file"))
-        })?;
-
-        let Some(file_id) = (match &stored_file.id.key {
-            RecordIdKey::String(s) => Some(s.clone()),
-            _ => None,
-        }) else {
-            tracing::error!("Invalid user");
-            return Err(ApiError::BadRequest("Bad Request".into()));
-        };
-
-        all_uploaded_files_response.push(UploadedFileResponse {
-            field_name,
-            file_name: stored_file.system_filename,
-            file_id,
-            original_filename: stored_file.name,
-        });
+    if let Err(e) = loop_result {
+        rollback(&db, &written_paths, &created_ids).await;
+        drain_multipart(&mut multipart).await;
+        return Err(e);
     }
 
     Ok(synthesize_rest_response(
         &headers,
-        &all_uploaded_files_response,
+        &responses,
         StatusCode::CREATED,
     ))
 }
@@ -339,451 +163,115 @@ pub async fn upload(
 pub async fn download_file(
     AxumUrlParams(key): AxumUrlParams<String>,
     Extension(db): Extension<Arc<Surreal<Client>>>,
-    Extension(auth_status): Extension<AuthStatus>,
-) -> Result<Response, StatusCode> {
-    let upload_dir = env::var("FILE_UPLOADS_DIR");
-
-    if let Err(e) = upload_dir {
-        tracing::error!("Missing the FILE_UPLOADS_DIR environment variable.: {}", e);
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
-    }
-    let upload_dir = upload_dir.unwrap();
-
-    let (bucket, key) = key
-        .split_once('/')
-        .map(|(b, k)| (b.to_owned(), Some(k.to_owned())))
-        .unwrap_or_else(|| (key.clone(), None));
-
-    let bucket_ref = &bucket;
-
-    let mut split_keys = key
-        .map(|provided_key| {
-            provided_key
-                .split('/')
-                .map(|s| s.to_owned())
-                .collect::<Vec<String>>()
-        })
-        .unwrap_or_default();
-
-    let original_file_name = split_keys.pop();
-    let split_keys_ref = split_keys.as_slice();
-
-    let mut file_details_query = db
-        .query(
-            "
-            LET $bucket = (
-                SELECT VALUE id
-                FROM ONLY bucket
-                WHERE name = $bucket_name
-                LIMIT 1
-            );
-            IF $bucket = NONE {
-                THROW 'Invalid Input';
-            };
-
-            LET $bucket_and_key_are_valid = IF array::len($split_keys) = 0 {
-                LET $file_found_in_bucket = (
-                    SELECT <-belongs_to<-(file WHERE name = $file_name) AS files
-                    FROM ONLY $bucket
-                )['files'];
-
-                IF array::len($file_found_in_bucket) = 0 {
-                    THROW 'Invalid Input';
-                };
-                true
-            } ELSE {
-                LET $immediate_key = array::first($split_keys);
-                LET $last_key = array::last($split_keys);
-                LET $rest_keys = array::remove($split_keys, 0);
-
-                LET $key_found_in_bucket = (
-                    SELECT VALUE id
-                    FROM ONLY key
-                    WHERE
-                        name = $immediate_key
-                        AND ->(belongs_to WHERE out = $bucket)
-                    LIMIT 1
-                );
-
-                IF $key_found_in_bucket = NONE {
-                    THROW 'Invalid Input';
-                };
-
-                LET $key_is_valid = IF array::len($rest_keys) = 0 {
-                    true
-                } ELSE {
-                    LET $rest_keys_validity = $rest_keys.map(
-                        |$key,$index| {
-                            LET $parent_key = IF $index = 0 {
-                                (
-                                    SELECT VALUE id
-                                    FROM ONLY key
-                                    WHERE name = $immediate_key
-                                    LIMIT 1
-                                );
-                            } ELSE {
-                                LET $prev_index = $index - 1;
-
-                                LET $prev_key = $split_keys.at($prev_index);
-
-                                (
-                                    SELECT VALUE id
-                                    FROM ONLY key
-                                    WHERE name = $prev_key
-                                    LIMIT 1
-                                );
-                            };
-
-                            LET $key_found = (
-                                SELECT VALUE id
-                                FROM ONLY key
-                                WHERE
-                                    name = $key
-                                    AND ->(belongs_to WHERE out = $parent_key)
-                                LIMIT 1
-                            );
-
-                            IF $key_found = NONE {
-                                false;
-                            } ELSE {
-                                true;
-                            };
-                        }
-                    );
-
-                    LET $file_found_in_last_key = (
-                        SELECT <-belongs_to<-(file WHERE name = $file_name) AS files
-                        FROM ONLY key
-                        WHERE name = $last_key
-                        LIMIT 1
-                    )['files'];
-
-                    LET $file_path_is_valid = array::len($file_found_in_last_key) > 0;
-
-                    $rest_keys_validity.reduce(|$key_one,$key_two| $key_one && $key_two) && $file_path_is_valid
-                };
-
-                $key_is_valid
-            };
-
-            RETURN IF $bucket_and_key_are_valid {
-                (SELECT * FROM ONLY file WHERE name=$file_name LIMIT 1)
-            } ELSE {
-                NONE
-            };
-            ",
-        )
-        .bind(("file_name", original_file_name.clone()))
-        .bind(("bucket_name", bucket_ref.clone()))
-        .bind(("split_keys", split_keys_ref.to_vec()))
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed database query: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-
-    let file_details: Option<UploadedFile> = file_details_query.take(3).map_err(|e| {
-        tracing::error!("Failed deserialization: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
+    Extension(auth_status): Extension<Option<AuthStatus>>,
+) -> Result<Response, ApiError> {
+    let upload_dir = env::var("FILE_UPLOADS_DIR").map_err(|e| {
+        tracing::error!("Missing FILE_UPLOADS_DIR: {}", e);
+        ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
     })?;
 
-    let Some(file_details) = file_details else {
-        tracing::error!("File does not exist!");
-        return Err(StatusCode::NOT_FOUND);
-    };
+    // Resolve path without ownership enforcement (auth is applied at the file level).
+    let (container, file_name) = resolve_file_path(&db, &key, None).await?;
+    let file_details = find_file_in_container(&db, &container, &file_name).await?;
 
-    let file_details_ref = &file_details;
-
-    let path = Path::new(&upload_dir).join(file_details_ref.system_filename.clone());
-
-    if path.exists() {
-        let mut file = File::open(&path).await.map_err(|_| StatusCode::NOT_FOUND)?;
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer)
-            .await
-            .map_err(|_| StatusCode::NOT_FOUND)?;
-
-        if !file_details_ref.is_free {
-            // verify that they actually bought the file
-            let mut bought_file_query = db
-                .query(
-                    "
-                    LET $internal_user = (SELECT VALUE id FROM ONLY user_id WHERE user_id = $user_id LIMIT 1);
-                    LET $bought_file = (SELECT * FROM (SELECT VALUE ->bought.out[*] FROM ONLY $internal_user LIMIT 1) WHERE system_filename = $file_name)[0];
-
-                    RETURN $bought_file;
-                    "
-                )
-                    .bind(("user_id", auth_status.sub.clone()))
-                    .bind(("file_name", file_details_ref.system_filename.clone()))
-                    .await
-                    .map_err(|e| {
-                        tracing::error!("Failed database transaction: {}", e);
-                        StatusCode::INTERNAL_SERVER_ERROR
-                    })?;
-
-            let bought_file: Option<UploadedFile> = bought_file_query.take(2).map_err(|e| {
-                tracing::error!("Failed deserialization: {}", e);
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?;
-
-            match bought_file {
-                Some(_) => {
-                    // Continue to generate the response
-                }
-                None => {
-                    // verify that they own the file
-                    let mut owned_file_query = db
-                        .query(
-                            "
-                            LET $internal_user = (SELECT VALUE id FROM ONLY user_id WHERE user_id=$user_id LIMIT 1);
-
-                            LET $owned_file = (SELECT * FROM ONLY file WHERE owner=$internal_user AND system_filename=$file_name LIMIT 1);
-
-                            RETURN $owned_file;
-                            "
-                        )
-                            .bind(("user_id", auth_status.sub))
-                            .bind(("file_name", file_details_ref.system_filename.clone()))
-                            .await
-                            .map_err(|e| {
-                                tracing::error!("Failed database transaction: {}", e);
-                                StatusCode::INTERNAL_SERVER_ERROR})?;
-
-                    let file_info: Option<UploadedFile> =
-                        owned_file_query.take(2).map_err(|e| {
-                            tracing::error!("Failed deserialization: {}", e);
-                            StatusCode::INTERNAL_SERVER_ERROR
-                        })?;
-
-                    match file_info {
-                        Some(_) => {
-                            // Continue to generate the response
-                        }
-                        None => {
-                            return Ok(
-                                (StatusCode::FORBIDDEN, format!("Not Allowed!")).into_response()
-                            );
-                        }
-                    }
+    // Authorization gate for premium files.
+    if file_details.is_premium || !file_details.is_public {
+        match auth_status.as_ref() {
+            Some(auth_status) => {
+                let user = user_record_id(&db, auth_status).await?;
+                if !user_has_access(&db, &user, &file_details).await? {
+                    return Err(ApiError::Forbidden("Not Allowed!".into()));
                 }
             }
+            None => {
+                return Err(ApiError::Forbidden("Not Allowed!".into()));
+            }
         }
-
-        let content_type = file_details_ref.mime_type.clone();
-
-        let response = Response::builder()
-            .header(
-                "Content-Disposition",
-                format!("attachment; filename=\"{}\"", file_details_ref.name),
-            )
-            .header("Content-Type", content_type.to_string())
-            .body(buffer.into())
-            .map_err(|err| {
-                tracing::error!("Failed to build response: {}", err);
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?;
-        Ok(response)
-    } else {
-        Err(StatusCode::NOT_FOUND)
     }
+
+    let path = Path::new(&upload_dir).join(&file_details.system_filename);
+    let file = File::open(&path).await.map_err(|e| {
+        tracing::error!(error = %e, path = %path.display(), "failed to open file");
+        ApiError::NotFound("File not found".into())
+    })?;
+
+    let stream = tokio_util::io::ReaderStream::new(file);
+    let body = axum::body::Body::from_stream(stream);
+
+    Response::builder()
+        .header(
+            "Content-Disposition",
+            format!("attachment; filename=\"{}\"", file_details.name),
+        )
+        .header("Content-Type", file_details.mime_type)
+        .body(body)
+        .map_err(|e| {
+            tracing::error!(error = %e, "failed to build response");
+            ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
+        })
 }
 
 pub async fn get_image(
     Extension(db): Extension<Arc<Surreal<Client>>>,
     AxumUrlParams(key): AxumUrlParams<String>,
     Query(resize_params): Query<ImageResizeParams>,
-) -> Result<Response, StatusCode> {
-    let upload_dir = env::var("FILE_UPLOADS_DIR");
-
-    if let Err(e) = upload_dir {
-        tracing::error!("Missing the FILE_UPLOADS_DIR environment variable.: {}", e);
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
-    }
-    let upload_dir = upload_dir.unwrap();
-
-    let (bucket, key) = key
-        .split_once('/')
-        .map(|(b, k)| (b.to_owned(), Some(k.to_owned())))
-        .unwrap_or_else(|| (key.clone(), None));
-
-    let bucket_ref = &bucket;
-
-    let mut split_keys = key
-        .map(|provided_key| {
-            provided_key
-                .split('/')
-                .map(|s| s.to_owned())
-                .collect::<Vec<String>>()
-        })
-        .unwrap_or_default();
-
-    let original_file_name = split_keys.pop();
-    let split_keys_ref = split_keys.as_slice();
-
-    let mut file_details_query = db
-        .query(
-            "
-            LET $bucket = (
-                SELECT VALUE id
-                FROM ONLY bucket
-                WHERE name = $bucket_name
-                LIMIT 1
-            );
-            IF $bucket = NONE {
-                THROW 'Invalid Input';
-            };
-
-            LET $bucket_and_key_are_valid = IF array::len($split_keys) = 0 {
-                LET $file_found_in_bucket = (
-                    SELECT <-belongs_to<-(file WHERE name = $file_name) AS files
-                    FROM ONLY $bucket
-                )['files'];
-
-                IF array::len($file_found_in_bucket) = 0 {
-                    THROW 'Invalid Input';
-                };
-                true
-            } ELSE {
-                LET $immediate_key = array::first($split_keys);
-                LET $last_key = array::last($split_keys);
-                LET $rest_keys = array::remove($split_keys, 0);
-
-                LET $key_found_in_bucket = (
-                    SELECT VALUE id
-                    FROM ONLY key
-                    WHERE
-                        name = $immediate_key
-                        AND ->(belongs_to WHERE out = $bucket)
-                    LIMIT 1
-                );
-
-                IF $key_found_in_bucket = NONE {
-                    THROW 'Invalid Input';
-                };
-
-                LET $key_is_valid = IF array::len($rest_keys) = 0 {
-                    true
-                } ELSE {
-                    LET $rest_keys_validity = $rest_keys.map(
-                        |$key,$index| {
-                            LET $parent_key = IF $index = 0 {
-                                (
-                                    SELECT VALUE id
-                                    FROM ONLY key
-                                    WHERE name = $immediate_key
-                                    LIMIT 1
-                                );
-                            } ELSE {
-                                LET $prev_index = $index - 1;
-
-                                LET $prev_key = $split_keys.at($prev_index);
-
-                                (
-                                    SELECT VALUE id
-                                    FROM ONLY key
-                                    WHERE name = $prev_key
-                                    LIMIT 1
-                                );
-                            };
-
-                            LET $key_found = (
-                                SELECT VALUE id
-                                FROM ONLY key
-                                WHERE
-                                    name = $key
-                                    AND ->(belongs_to WHERE out = $parent_key)
-                                LIMIT 1
-                            );
-
-                            IF $key_found = NONE {
-                                false;
-                            } ELSE {
-                                true;
-                            };
-                        }
-                    );
-
-                    LET $file_found_in_last_key = (
-                        SELECT <-belongs_to<-(file WHERE name = $file_name) AS files
-                        FROM ONLY key
-                        WHERE name = $last_key
-                        LIMIT 1
-                    )['files'];
-
-                    LET $file_path_is_valid = array::len($file_found_in_last_key) > 0;
-
-                    $rest_keys_validity.reduce(|$key_one,$key_two| $key_one && $key_two) && $file_path_is_valid
-                };
-
-                $key_is_valid
-            };
-
-            RETURN IF $bucket_and_key_are_valid {
-                (SELECT * FROM ONLY file WHERE name=$file_name LIMIT 1)
-            } ELSE {
-                NONE
-            };
-            ",
-        )
-        .bind(("file_name", original_file_name))
-        .bind(("bucket_name", bucket_ref.clone()))
-        .bind(("split_keys", split_keys_ref.to_vec()))
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed database query: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-
-    let file_details: Option<UploadedFile> = file_details_query.take(3).map_err(|e| {
-        tracing::error!("Failed deserialization: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
+    Extension(auth_status): Extension<Option<AuthStatus>>,
+) -> Result<Response, ApiError> {
+    let upload_dir = env::var("FILE_UPLOADS_DIR").map_err(|e| {
+        tracing::error!("Missing FILE_UPLOADS_DIR: {}", e);
+        ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
     })?;
 
-    let Some(file_details) = file_details else {
-        tracing::error!("File does not exist!");
-        return Err(StatusCode::NOT_FOUND);
-    };
+    let (container, file_name) = resolve_file_path(&db, &key, None).await?;
+    let file_details = find_file_in_container(&db, &container, &file_name).await?;
 
-    let file_details_ref = &file_details;
-
-    let path = Path::new(&upload_dir).join(file_details_ref.system_filename.clone());
-
-    if path.exists() {
-        let mut file = File::open(&path).await.map_err(|_| StatusCode::NOT_FOUND)?;
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer)
-            .await
-            .map_err(|_| StatusCode::NOT_FOUND)?;
-
-        let content_type = file_details_ref.mime_type.clone();
-
-        // Resize only if query params are provided and the file is an image we can process
-        let final_buffer = match (resize_params.width, resize_params.height) {
-            (None, None) => buffer,
-            (width, height) => {
-                match resize_image(&buffer, &content_type, width, height) {
-                    Ok(resized) => resized,
-                    Err(e) => {
-                        // Non-fatal: log and fall back to the original
-                        tracing::warn!("Could not resize image, serving original: {}", e);
-                        buffer
-                    }
+    if file_details.is_premium || !file_details.is_public {
+        match auth_status.as_ref() {
+            Some(auth_status) => {
+                let user = user_record_id(&db, auth_status).await?;
+                if !user_has_access(&db, &user, &file_details).await? {
+                    return Err(ApiError::Forbidden("Not Allowed!".into()));
                 }
             }
-        };
-
-        let response = Response::builder()
-            .header("Content-Type", &content_type)
-            .body(final_buffer.into())
-            .map_err(|e| {
-                tracing::error!("Failed to build response: {}", e);
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?;
-        Ok(response)
-    } else {
-        Err(StatusCode::NOT_FOUND)
+            None => {
+                return Err(ApiError::Forbidden("Not Allowed!".into()));
+            }
+        }
     }
+
+    let path = Path::new(&upload_dir).join(&file_details.system_filename);
+    let mut file = File::open(&path).await.map_err(|e| {
+        tracing::error!(error = %e, path = %path.display(), "failed to open image");
+        ApiError::NotFound("Image not found".into())
+    })?;
+
+    let mut buffer = Vec::with_capacity(file_details.size.max(0) as usize);
+    file.read_to_end(&mut buffer).await.map_err(|e| {
+        tracing::error!(error = %e, "failed to read image");
+        ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
+    })?;
+
+    let content_type = file_details.mime_type.clone();
+
+    let final_buffer = match (resize_params.width, resize_params.height) {
+        (None, None) => buffer,
+        (width, height) => match resize_image(&buffer, &content_type, width, height) {
+            Ok(resized) => resized,
+            Err(e) => {
+                tracing::warn!(error = ?e, "resize failed, serving original");
+                buffer
+            }
+        },
+    };
+
+    Response::builder()
+        .header("Content-Type", content_type)
+        .header("Cache-Control", "public, max-age=86400, immutable")
+        .body(final_buffer.into())
+        .map_err(|e| {
+            tracing::error!(error = %e, "failed to build response");
+            ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
+        })
 }
 
 fn resize_image(
@@ -848,4 +336,325 @@ fn apply_exif_orientation(img: image::DynamicImage, buffer: &[u8]) -> image::Dyn
         Some(8) => img.rotate270(),
         _ => img, // 1 or unknown — no transform needed
     }
+}
+
+/// Resolve `bucket[/key[/subkey...]]` to DB records, validating ownership.
+/// No filename — the container alone.
+pub async fn resolve_container(
+    db: &Surreal<Client>,
+    path: &str,
+    user: Option<&RecordId>, // Some(user) enforces ownership; None for public reads
+) -> Result<ResolvedContainer, ApiError> {
+    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+
+    if segments.is_empty() {
+        return Err(ApiError::BadRequest("path must include a bucket".into()));
+    }
+
+    let bucket_name = segments[0];
+    let key_segments = &segments[1..];
+
+    let bucket: Option<Bucket> = db
+        .query("SELECT * FROM bucket WHERE name = $name LIMIT 1 FETCH owner")
+        .bind(("name", bucket_name.to_string()))
+        .await
+        .map_err(ApiError::db)?
+        .take(0)
+        .map_err(ApiError::db)?;
+
+    let bucket = bucket.ok_or_else(|| {
+        tracing::warn!(bucket = %bucket_name, "bucket not found");
+        ApiError::NotFound(format!("bucket `{bucket_name}` not found"))
+    })?;
+
+    if let Some(user) = user {
+        if bucket.owner.id != *user {
+            tracing::warn!(bucket = %bucket_name, "user does not own bucket");
+            return Err(ApiError::NotFound(format!(
+                "bucket `{bucket_name}` not found"
+            )));
+        }
+    };
+
+    let mut parent: Option<RecordId> = None;
+
+    for segment in key_segments {
+        let key = find_key_under(db, segment, &bucket.id, parent.as_ref())
+            .await?
+            .ok_or_else(|| {
+                tracing::warn!(key = %segment, "key not found under parent");
+                ApiError::NotFound(format!("key `{segment}` not found"))
+            })?;
+
+        if let Some(user) = user {
+            if key.owner.id != *user {
+                tracing::warn!(key = %segment, "user does not own key");
+                return Err(ApiError::NotFound(format!("key `{segment}` not found")));
+            }
+        }
+
+        parent = Some(key.id);
+    }
+
+    Ok(ResolvedContainer {
+        bucket: bucket.id,
+        key: parent,
+        bucket_is_premium: bucket.is_premium,
+        bucket_is_public: bucket.is_public,
+    })
+}
+
+/// For read endpoints: `bucket[/key...]/filename` → (container, filename).
+pub async fn resolve_file_path(
+    db: &Surreal<Client>,
+    path: &str,
+    user: Option<&RecordId>,
+) -> Result<(ResolvedContainer, String), ApiError> {
+    let (container_path, file_name) = path
+        .rsplit_once('/')
+        .ok_or_else(|| ApiError::BadRequest("path must be at least bucket/filename".into()))?;
+
+    if file_name.is_empty() {
+        return Err(ApiError::BadRequest("path must end with a filename".into()));
+    }
+
+    let container = resolve_container(db, container_path, user).await?;
+    Ok((container, file_name.to_string()))
+}
+
+async fn find_key_under(
+    db: &Surreal<Client>,
+    name: &str,
+    bucket: &RecordId,
+    parent: Option<&RecordId>,
+) -> Result<Option<Key>, ApiError> {
+    let target = parent.unwrap_or(bucket);
+
+    db.query(
+        r#"
+        SELECT *
+        FROM ONLY (
+            $parent
+        )<-belongs_to<-(key WHERE name = $name)
+        LIMIT 1
+        FETCH owner;
+        "#,
+    )
+    .bind(("name", name.to_string()))
+    .bind(("parent", target.clone()))
+    .await
+    .map_err(ApiError::db)?
+    .take(0)
+    .map_err(ApiError::db)
+}
+
+pub async fn create_file_record(
+    db: &Surreal<Client>,
+    owner: &RecordId,
+    meta: &FileMeta,
+    bucket: &RecordId,
+    key: Option<&RecordId>,
+) -> Result<UploadedFile, ApiError> {
+    let parent = key.cloned().unwrap_or_else(|| bucket.clone());
+
+    let file: Option<UploadedFile> = db
+        .query(
+            r#"
+            BEGIN TRANSACTION;
+
+            LET $file = (SELECT VALUE id FROM (CREATE ONLY file CONTENT {
+                owner:           $owner,
+                name:            $name,
+                size:            $size,
+                mime_type:       $mime_type,
+                system_filename: $system_filename,
+                is_premium:         $is_premium,
+                is_public:       $is_public,
+            } RETURN AFTER));
+
+            RELATE $file->belongs_to->$parent;
+
+            RETURN (SELECT * FROM ONLY $file FETCH owner);
+
+            COMMIT TRANSACTION;
+            "#,
+        )
+        .bind(("owner", owner.clone()))
+        .bind(("name", meta.name.clone()))
+        .bind(("size", meta.size))
+        .bind(("mime_type", meta.mime_type.clone()))
+        .bind(("system_filename", meta.system_filename.clone()))
+        .bind(("is_premium", meta.is_premium))
+        .bind(("is_public", meta.is_public))
+        .bind(("parent", parent))
+        .await
+        .map_err(ApiError::db)?
+        .take(3)
+        .map_err(ApiError::db)?;
+
+    file.ok_or_else(|| {
+        tracing::error!(system_filename = %meta.system_filename, "file create returned no row");
+        ApiError::Internal(anyhow::anyhow!("Failed to create file record"))
+    })
+}
+
+/// Stream a multipart field to disk, enforcing the small-upload cap.
+/// Returns bytes written. On any error, the caller is responsible for
+/// removing the partial file at `filepath`.
+async fn write_field_to_disk(
+    field: &mut axum::extract::multipart::Field<'_>,
+    filepath: &Path,
+) -> Result<u64, ApiError> {
+    let mut file = File::create(filepath).await.map_err(|e| {
+        tracing::error!(error = %e, path = %filepath.display(), "failed to create file");
+        ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
+    })?;
+
+    let mut total: u64 = 0;
+
+    while let Some(chunk) = field.chunk().await.map_err(|e| {
+        tracing::error!(error = %e, "failed to read chunk");
+        ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
+    })? {
+        total += chunk.len() as u64;
+        if total > SMALL_UPLOAD_LIMIT {
+            tracing::warn!(
+                limit = SMALL_UPLOAD_LIMIT,
+                "field exceeds small upload limit; client should use /uploads/initiate"
+            );
+            return Err(ApiError::PayloadTooLarge(format!(
+                "file exceeds {} byte limit; use multipart upload for larger files",
+                SMALL_UPLOAD_LIMIT
+            )));
+        }
+        file.write_all(&chunk).await.map_err(|e| {
+            tracing::error!(error = %e, "failed to write chunk");
+            ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
+        })?;
+    }
+
+    file.flush().await.map_err(|e| {
+        tracing::error!(error = %e, "failed to flush file");
+        ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
+    })?;
+
+    Ok(total)
+}
+
+/// Drain remaining multipart fields so the client doesn't see ECONNRESET
+/// when we bail out early. Time-bounded so a stalled client can't hang us.
+async fn drain_multipart(multipart: &mut Multipart) {
+    let _ = tokio::time::timeout(Duration::from_secs(5), async {
+        while let Ok(Some(_)) = multipart.next_field().await {}
+    })
+    .await;
+}
+
+/// Undo everything this request wrote: delete the blobs, then the DB rows.
+/// Failures during rollback are logged but not surfaced — the caller is
+/// already returning an error, and a partial rollback is a monitoring problem,
+/// not a client-facing one.
+async fn rollback(db: &Surreal<Client>, paths: &[PathBuf], ids: &[RecordId]) {
+    for path in paths {
+        if let Err(e) = remove_file(path).await {
+            tracing::error!(error = %e, path = %path.display(), "rollback: failed to remove file");
+        }
+    }
+
+    if ids.is_empty() {
+        return;
+    }
+
+    if let Err(e) = db.query("DELETE $ids").bind(("ids", ids.to_vec())).await {
+        tracing::error!(error = %e, count = ids.len(), "rollback: failed to delete file records");
+    }
+}
+
+fn record_key_string(id: &RecordId) -> Option<String> {
+    match &id.key {
+        RecordIdKey::String(s) => Some(s.clone()),
+        _ => None,
+    }
+}
+
+pub async fn user_record_id(
+    db: &Arc<Surreal<Client>>,
+    auth_status: &AuthStatus,
+) -> Result<RecordId, ApiError> {
+    let body = ForeignKey {
+        table: "user_id".into(),
+        column: "user_id".into(),
+        foreign_key: auth_status.sub.clone(),
+    };
+    add_foreign_key_if_not_exists::<Arc<Surreal<Client>>, UserId>(db, body)
+        .await
+        .ok_or(ApiError::Unauthorized("Unauthorized".into()))
+        .map(|fk| fk.id)
+}
+
+/// True if `user` bought the file or owns it.
+async fn user_has_access(
+    db: &Surreal<Client>,
+    user: &RecordId,
+    file: &UploadedFile,
+) -> Result<bool, ApiError> {
+    // Ownership check is cheap and local — do it first.
+    if file.owner.id == *user {
+        return Ok(true);
+    }
+
+    let bought: Option<UploadedFile> = db
+        .query(
+            r#"
+            SELECT *
+            FROM ONLY (
+                $user
+            )->bought->(file WHERE id = $file)
+            LIMIT 1
+            FETCH owner
+            "#,
+        )
+        .bind(("user", user.clone()))
+        .bind(("file", file.id.clone()))
+        .await
+        .map_err(ApiError::db)?
+        .take(0)
+        .map_err(ApiError::db)?;
+
+    Ok(bought.is_some())
+}
+
+pub async fn find_file_in_container(
+    db: &Surreal<Client>,
+    container: &ResolvedContainer,
+    name: &str,
+) -> Result<UploadedFile, ApiError> {
+    let parent = container
+        .key
+        .clone()
+        .unwrap_or_else(|| container.bucket.clone());
+    tracing::debug!("parent: {:?}, name: {}", parent, name);
+
+    let file: Option<UploadedFile> = db
+        .query(
+            r#"
+            SELECT *
+            FROM ONLY (
+                $parent
+            )<-belongs_to<-(file WHERE name = $name)
+            LIMIT 1
+            FETCH owner;
+            "#,
+        )
+        .bind(("name", name.to_string()))
+        .bind(("parent", parent))
+        .await
+        .map_err(ApiError::db)?
+        .take(0)
+        .map_err(ApiError::db)?;
+
+    file.ok_or_else(|| {
+        tracing::warn!(name, "file not found in container");
+        ApiError::NotFound(format!("file `{name}` not found"))
+    })
 }

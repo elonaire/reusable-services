@@ -144,22 +144,16 @@ impl Acl for AclServiceImplementation {
         request: Request<ConfirmAuthorizationRequest>,
     ) -> Result<Response<ConfirmAuthorizationResponse>, Status> {
         let request_body = request.into_inner();
-        let auth_status = request_body.auth_status;
-        let authorization_constraint = request_body.authorization_constraint;
 
-        if auth_status.is_none() {
-            return Err(Status::unauthenticated("Unauthenticated!"));
-        }
+        let auth_status: AuthStatus = request_body
+            .auth_status
+            .ok_or_else(|| Status::unauthenticated("Unauthenticated!"))?
+            .into();
 
-        if authorization_constraint.is_none() {
-            return Err(Status::invalid_argument(
-                "Authorization constraint not supported!",
-            ));
-        }
-
-        let auth_status: AuthStatus = auth_status.unwrap().into();
-        let authorization_constraint: AuthorizationConstraint =
-            authorization_constraint.unwrap().into();
+        let authorization_constraint: AuthorizationConstraint = request_body
+            .authorization_constraint
+            .ok_or_else(|| Status::invalid_argument("Authorization constraint not supported!"))?
+            .into();
 
         match confirm_authorization(&self.db, &auth_status, &authorization_constraint).await {
             Ok(res) => Ok(Response::new(ConfirmAuthorizationResponse { is_auth: res })),

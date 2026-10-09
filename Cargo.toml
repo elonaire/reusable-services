@@ -1,5 +1,5 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = [
     # Libs
     "lib",
@@ -10,16 +10,22 @@ members = [
     "services/payments",
 ]
 
+[workspace.package]
+version = "0.2.0"
+edition = "2024"
+authors = ["Elon Aseneka Idiong'o"]
+license-file = "./LICENSE"
+
 [workspace.dependencies]
 # Web / HTTP
 axum = "0.8.9"
-hyper = "1.11.1"
-tower-http = { version = "0.6.11", features = ["cors"] }
+hyper = "1.12.0"
+tower-http = { version = "0.7.1", features = ["cors"] }
 tower_governor = "0.8.0"
-reqwest = { version = "0.12.28", features = ["json"] }
+reqwest = { version = "0.13.5", features = ["json"] }
 
 # Async runtime
-tokio = { version = "1.53.1", features = ["full"] }
+tokio = { version = "1.53.2", features = ["full"] }
 async-trait = "0.1.92"
 futures = "0.3.34"
 
@@ -28,18 +34,19 @@ async-graphql = { version = "7.2.1", features = ["chrono"] }
 async-graphql-axum = "7.2.1"
 
 # gRPC / Protobuf
-tonic = "0.12.3"
-tonic-build = "0.12.3"
-tonic-middleware = "0.2.3"
-prost = "0.13.5"
+tonic = "0.14.6"
+tonic-middleware = "0.4.1"
+prost = "0.14.4"
+tonic-prost-build = "0.14.6"
+tonic-prost = "0.14.6"
 
 # Database
-surrealdb = "3.2.4"
+surrealdb = "3.3.1"
 
 # Serialization
 serde = "1.0.229"
 serde_json = "1.0.151"
-prost-types = "0.13.5"
+prost-types = "0.14.4"
 
 # Tracing / Logging
 tracing = "0.1.44"
@@ -47,34 +54,39 @@ tracing-subscriber = "0.3.23"
 tracing-appender = "0.2.5"
 
 # Messaging
-rumqttc = "0.24.0"
+rumqttc = "0.25.1"
 
 # Utilities
 chrono = { version = "0.4.45", features = ["serde"] }
 dotenvy = "0.15.7"
 cookie = "0.18.2"
-uuid = { version = "1.26.0", features = [
+uuid = { version = "1.27.0", features = [
     "v4",
     "fast-rng",
     "macro-diagnostics",
+    "v5",
 ] }
-base64 = "0.22.1"
+base64 = "0.23.1"
 anyhow = "1.0.104"
 handlebars = "6.4.4"
-ammonia = "4.1.4"
+ammonia = "4.2.1"
+futures-util = "0.3.34"
+subtle = "2.6.1"
+tokio-util = "0.7.19"
 
 # Crypto / Auth
-bcrypt = "0.17.1"
+bcrypt = "0.19.3"
 jwt-simple = "=0.11.9"
-oauth2 = "5.0.0"
+oauth2 = { version = "5.0.0", default-features = false }
+oauth2-reqwest = "0.1.0-alpha.3"
 rsa = "0.9.10"
-rand = "0.8"
-hmac = "0.12.1"
-sha2 = "0.10.9"
+rand = "0.10"
+hmac = "0.13.0"
+sha2 = "0.11.0"
 hex = "0.4.3"
 
 # Misc
-axum-cookie = "0.2.4"
+axum-cookie = "0.3.0"
 markdown = "1.0.0"
 lettre = { version = "0.11.23", features = ["builder", "serde", "rustls-tls"] }
 image = "0.25.10"

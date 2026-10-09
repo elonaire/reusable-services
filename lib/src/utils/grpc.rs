@@ -114,65 +114,72 @@ pub async fn create_grpc_client<'a, R, T: GrpcClient>(
     is_authenticated: bool,
     auth_metadata: Option<AuthMetaData<'_, R>>,
 ) -> Result<T, StdError> {
-    if is_authenticated && auth_metadata.is_some() {
-        add_auth_headers_to_request::<R>(auth_metadata.unwrap()).await?;
+    if is_authenticated {
+        if let Some(metadata) = auth_metadata {
+            add_auth_headers_to_request::<R>(metadata).await?;
+        }
     }
-    T::connect(endpoint)
-        .await
-        .map_err(|_e| StdError::new(ErrorKind::InvalidData, "Invalid header"))
+    T::connect(endpoint).await.map_err(|e| {
+        tracing::error!(error = %e, "failed to connect to gRPC endpoint");
+        StdError::other("Failed to connect to gRPC service")
+    })
 }
 
 async fn add_auth_headers_to_request<R>(
-    mut auth_metadata: AuthMetaData<'_, R>,
+    auth_metadata: AuthMetaData<'_, R>,
 ) -> Result<(), StdError> {
-    if auth_metadata.auth_header.is_none()
-        || auth_metadata.cookie_header.is_none()
-        || auth_metadata.constructed_grpc_request.is_none()
-    {
-        return Err(StdError::new(ErrorKind::InvalidData, "Invalid request"));
-    }
+    let AuthMetaData {
+        auth_header,
+        cookie_header,
+        constructed_grpc_request,
+    } = auth_metadata;
 
-    let token: MetadataValue<_> = auth_metadata
-        .auth_header
-        .unwrap()
+    let Some(auth_header) = auth_header else {
+        return Err(StdError::new(
+            ErrorKind::InvalidData,
+            "missing authorization header",
+        ));
+    };
+    let Some(cookie_header) = cookie_header else {
+        return Err(StdError::new(
+            ErrorKind::InvalidData,
+            "missing cookie header",
+        ));
+    };
+    let Some(request) = constructed_grpc_request else {
+        return Err(StdError::new(
+            ErrorKind::InvalidData,
+            "missing gRPC request",
+        ));
+    };
+
+    let token: MetadataValue<_> = auth_header
         .to_str()
         .map_err(|e| {
-            tracing::error!("Failed to convert auth header to str: {}", e);
-            StdError::new(ErrorKind::InvalidData, "Invalid header")
+            tracing::error!(error = %e, "authorization header is not valid UTF-8");
+            StdError::new(ErrorKind::InvalidData, "invalid authorization header")
         })?
         .parse()
         .map_err(|e| {
-            tracing::error!("Failed to parse auth header: {}", e);
-            StdError::new(ErrorKind::InvalidData, "Invalid header")
+            tracing::error!(error = %e, "authorization header is not a valid metadata value");
+            StdError::new(ErrorKind::InvalidData, "invalid authorization header")
         })?;
 
-    auth_metadata
-        .constructed_grpc_request
-        .as_mut()
-        .unwrap()
-        .metadata_mut()
-        .insert("authorization", token);
-
-    let cookie: MetadataValue<_> = auth_metadata
-        .cookie_header
-        .unwrap()
+    let cookie: MetadataValue<_> = cookie_header
         .to_str()
         .map_err(|e| {
-            tracing::error!("Failed to convert auth header to str: {}", e);
-            StdError::new(ErrorKind::InvalidData, "Invalid header")
+            tracing::error!(error = %e, "cookie header is not valid UTF-8");
+            StdError::new(ErrorKind::InvalidData, "invalid cookie header")
         })?
         .parse()
         .map_err(|e| {
-            tracing::error!("Failed to parse cookie header: {}", e);
-            StdError::new(ErrorKind::InvalidData, "Invalid header")
+            tracing::error!(error = %e, "cookie header is not a valid metadata value");
+            StdError::new(ErrorKind::InvalidData, "invalid cookie header")
         })?;
 
-    auth_metadata
-        .constructed_grpc_request
-        .as_mut()
-        .unwrap()
-        .metadata_mut()
-        .insert("cookie", cookie);
+    let metadata = request.metadata_mut();
+    metadata.insert("authorization", token);
+    metadata.insert("cookie", cookie);
 
     Ok(())
 }

@@ -146,10 +146,19 @@ async fn main() -> Result<(), Error> {
         tracing::error!("Config Error: {}", e);
         Error::new(ErrorKind::Other, "MQTT_HOST not set")
     })?;
-    let mqtt_port = env::var("MQTT_PORT").map_err(|e| {
-        tracing::error!("Config Error: {}", e);
-        Error::new(ErrorKind::Other, "MQTT_PORT not set")
-    })?;
+    let mqtt_port: u16 = env::var("MQTT_PORT")
+        .map_err(|e| {
+            tracing::error!("Config Error: {}", e);
+            Error::new(ErrorKind::NotFound, "MQTT_PORT not set")
+        })?
+        .parse()
+        .map_err(|e| {
+            tracing::error!("Config Error: {}", e);
+            Error::new(
+                ErrorKind::InvalidInput,
+                "MQTT_PORT must be a valid port number",
+            )
+        })?;
     let governor_burst_size = env::var("ACL_RATE_LIMIT_BURST_SIZE")
         .unwrap_or_else(|_| "20".to_string())
         .parse::<u32>()
@@ -178,8 +187,7 @@ async fn main() -> Result<(), Error> {
         .filter_map(|endpoint| endpoint.trim().parse::<HeaderValue>().ok())
         .collect();
 
-    let (client, mut eventloop) =
-        MqttClient::new("acl-service", &mqtt_host, mqtt_port.parse().unwrap()).await?;
+    let (client, mut eventloop) = MqttClient::new("acl-service", &mqtt_host, mqtt_port).await?;
 
     tokio::spawn(async move { while let Ok(_event) = eventloop.poll().await {} });
 
@@ -189,7 +197,10 @@ async fn main() -> Result<(), Error> {
         .per_second(2)
         .burst_size(governor_burst_size)
         .finish()
-        .unwrap();
+        .ok_or_else(|| {
+            tracing::error!("Config Error: invalid governor configuration");
+            Error::new(ErrorKind::InvalidInput, "Invalid governor configuration")
+        })?;
 
     let governor_limiter = governor_conf.limiter().clone();
     let interval = Duration::from_secs(60);
@@ -254,15 +265,14 @@ async fn main() -> Result<(), Error> {
         })?;
 
     tokio::spawn(async move {
-        // let the thread panic if gRPC server fails to start
-        Server::builder()
+        if let Err(e) = Server::builder()
             .add_service(AclServer::new(acl_grpc))
             .serve(grpc_address)
             .await
-            .map_err(|e| {
-                tracing::error!("Failed to start gRPC server: {}", e);
-            })
-            .ok();
+        {
+            tracing::error!("Failed to start gRPC server: {}", e);
+            std::process::exit(1);
+        }
     });
 
     match tokio::net::TcpListener::bind(format!("0.0.0.0:{}", acl_http_port)).await {

@@ -13,7 +13,9 @@ pub struct UploadedFile {
     pub size: u64,
     pub mime_type: String,
     pub system_filename: String,
-    pub is_free: bool,
+    pub is_premium: bool,
+    pub is_public: bool,
+    pub owner: UserId,
     pub created_at: DateTime<Utc>,
 }
 
@@ -45,6 +47,7 @@ pub struct Bucket {
     pub is_public: bool,
     pub storage_class: StorageClass,
     pub created_at: DateTime<Utc>,
+    pub is_premium: bool,
 }
 
 #[ComplexObject]
@@ -102,6 +105,7 @@ pub struct BucketInput {
     #[graphql(skip)]
     pub owner: Option<RecordId>,
     pub is_public: Option<bool>,
+    pub is_premium: Option<bool>,
     pub storage_class: Option<StorageClass>,
 }
 
@@ -117,4 +121,46 @@ pub struct KeyInput {
 pub struct KeyInputMetadata {
     pub key_id: Option<String>,
     pub bucket_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResolvedContainer {
+    pub bucket: RecordId,
+    pub key: Option<RecordId>, // innermost key, None if attached directly to bucket
+    pub bucket_is_premium: bool,
+    pub bucket_is_public: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct FileMeta {
+    pub name: String,
+    pub size: u64,
+    pub mime_type: String,
+    pub system_filename: String,
+    pub is_premium: bool,
+    pub is_public: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum UploadStatus {
+    InProgress,
+    Completed,
+    Aborted,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UploadSession {
+    pub id: RecordId,
+    pub user: RecordId,
+    pub upload_id: String,
+    pub file_name: String,
+    pub total_size: i64,
+    pub mime_type: String,
+    pub bucket: RecordId,
+    pub key: Option<RecordId>,
+    pub part_size: i64,
+    pub total_parts: i64,
+    pub status: UploadStatus,
+    pub created_at: DateTime<Utc>,
+    pub completed_at: Option<DateTime<Utc>>,
 }

@@ -49,8 +49,29 @@ pub enum ApiError {
     BadRequest(String),
     Unauthorized(String),
     Forbidden(String),
+    PayloadTooLarge(String), // 413
     UnprocessableEntity(String),
     Internal(anyhow::Error),
+}
+
+impl ApiError {
+    /// Map any Display error into an Internal, logging the real cause.
+    /// Use this everywhere you currently write
+    /// `.map_err(|e| ApiError::Internal(anyhow::anyhow!("...")))`.
+    pub fn internal_from<E: std::fmt::Display>(
+        context: &'static str,
+    ) -> impl FnOnce(E) -> ApiError {
+        move |e| {
+            tracing::error!(error = %e, context, "internal error");
+            ApiError::Internal(anyhow::anyhow!(context))
+        }
+    }
+
+    /// Shorthand for the common `.map_err(ApiError::db)?` pattern.
+    pub fn db<E: std::fmt::Display>(e: E) -> Self {
+        tracing::error!(error = %e, "database error");
+        ApiError::Internal(anyhow::anyhow!("Something went wrong!"))
+    }
 }
 
 #[derive(Serialize)]
@@ -72,6 +93,7 @@ impl IntoResponse for ApiError {
             ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
             ApiError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg),
             ApiError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg),
+            ApiError::PayloadTooLarge(msg) => (StatusCode::PAYLOAD_TOO_LARGE, msg),
             ApiError::UnprocessableEntity(msg) => (StatusCode::UNPROCESSABLE_ENTITY, msg),
             ApiError::Internal(err) => {
                 tracing::error!("internal error: {err:?}");
