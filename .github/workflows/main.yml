@@ -58,7 +58,7 @@ jobs:
         - name: Tag released versions
           env:
             GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
-          run: release-plz release --git-only --git-token "$GITHUB_TOKEN"
+          run: release-plz release --git-token "$GITHUB_TOKEN"
 
         - name: Update release metadata
           run: release-plz update
