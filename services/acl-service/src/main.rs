@@ -16,28 +16,29 @@ use std::{
 use async_graphql::{EmptySubscription, Schema};
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use axum::{
+    Router,
     extract::Extension,
     http::{HeaderMap, HeaderName, HeaderValue},
     routing::{get, post},
-    serve, Router,
+    serve,
 };
 
 use axum_cookie::CookieLayer;
 use graphql::resolvers::query::Query;
 use grpc::server::AclServiceImplementation;
 use hyper::{
+    Method, StatusCode,
     header::{
         ACCEPT, ACCESS_CONTROL_ALLOW_CREDENTIALS, ACCESS_CONTROL_ALLOW_HEADERS,
         ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS,
         AUTHORIZATION, CONTENT_TYPE, COOKIE, SET_COOKIE,
     },
-    Method, StatusCode,
 };
 use rest::handlers::{exchange_code_for_token, oauth_callback_handler, verify_email_handler};
 use rumqttc::v5::AsyncClient;
-use surrealdb::{engine::remote::ws::Client, Surreal};
+use surrealdb::{Surreal, engine::remote::ws::Client};
 use tonic::transport::Server;
-use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
+use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use tower_http::cors::CorsLayer;
 
 use graphql::resolvers::mutation::Mutation;
@@ -56,6 +57,7 @@ pub struct AppState {
     pub mqtt_client: AsyncClient,
 }
 
+// TODO: I might extract this into own module to make main.rs leaner
 async fn graphql_handler(
     schema: Extension<MySchema>,
     db: Extension<Arc<Surreal<Client>>>,
@@ -205,10 +207,12 @@ async fn main() -> Result<(), Error> {
     let governor_limiter = governor_conf.limiter().clone();
     let interval = Duration::from_secs(60);
     // a separate background task to clean up
-    std::thread::spawn(move || loop {
-        std::thread::sleep(interval);
-        tracing::info!("rate limiting storage size: {}", governor_limiter.len());
-        governor_limiter.retain_recent();
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(interval);
+            tracing::info!("rate limiting storage size: {}", governor_limiter.len());
+            governor_limiter.retain_recent();
+        }
     });
 
     let shared_state = Arc::new(AppState {

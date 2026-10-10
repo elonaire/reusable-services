@@ -1,13 +1,16 @@
-   [workspace]
-   publish = false
-   git_only = true
-   git_release_enable = false
-   git_tag_enable = false          # off by default
-   git_tag_name = "v{{ version }}"
-   changelog_update = true
-   dependencies_update = true
-   release_commits = "^(feat|fix|perf|refactor|doc|revert)"
+[workspace]
+publish = false
+git_only = true
+git_release_enable = false        # off by default
+git_tag_enable = false            # off by default
+git_tag_name = "v{{ version }}"
+changelog_update = true
+dependencies_update = true
+release_commits = "^(feat|fix|perf|refactor|doc|revert)"
 
-   [[package]]
-   name = "lib"
-   git_tag_enable = true           # the only package that emits the shared tag
+[[package]]
+name = "lib"
+git_tag_enable = true
+git_release_enable = true
+git_release_latest = true
+git_release_name = "v{{ version }}"
