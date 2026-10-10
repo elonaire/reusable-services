@@ -522,6 +522,7 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git commit -m "chore: release v${V} [skip ci]"
+            git push origin HEAD:dev
             echo "bumped=true" >> "$GITHUB_OUTPUT"
 
   automerge:
@@ -542,6 +543,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN  }}
           MERGE_LABELS: ""
+
+      - name: Checkout main
+        uses: useblacksmith/checkout@v1
+        with:
+          fetch-depth: 0
+          ref: main
+          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
