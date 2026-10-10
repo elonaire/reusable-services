@@ -59,7 +59,7 @@ jobs:
           echo "Next version: $V"
           echo "version=$V" >> "$GITHUB_OUTPUT"
 
-    release_plz:
+  release_plz:
       if: github.event_name == 'push'
       runs-on: blacksmith-4vcpu-ubuntu-2404
       permissions:
