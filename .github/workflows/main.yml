@@ -503,30 +503,11 @@ jobs:
       runs-on: blacksmith-4vcpu-ubuntu-2404
       permissions:
         contents: write
-      needs: [
-      build_and_deploy_acl,
-      build_and_deploy_email_service,
-      build_and_deploy_files,
-      build_and_deploy_payments_service,
-      next_version,
-      check_service_changes,
-      automerge
-      ]
+      needs: [automerge]
       if: |
         always() &&
-        needs.next_version.result == 'success' &&
-        needs.check_service_changes.result == 'success' &&
-        needs.build_and_deploy_acl.result != 'failure' &&
-        needs.build_and_deploy_acl.result != 'cancelled' &&
-        needs.build_and_deploy_files.result != 'failure' &&
-        needs.build_and_deploy_files.result != 'cancelled' &&
-        needs.build_and_deploy_email_service.result != 'failure' &&
-        needs.build_and_deploy_email_service.result != 'cancelled' &&
-        needs.build_and_deploy_payments_service.result != 'failure' &&
-        needs.build_and_deploy_payments_service.result != 'cancelled' &&
         needs.automerge.result != 'failure' &&
-        needs.automerge.result != 'cancelled' &&
-        github.event_name == 'push'
+        needs.automerge.result != 'cancelled'
 
       steps:
         - name: Checkout main
