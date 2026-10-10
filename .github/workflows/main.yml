@@ -24,7 +24,6 @@ env:
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
   next_version:
-    if: github.event_name != 'push'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: read
@@ -59,7 +58,6 @@ jobs:
           echo "Next version: $V"
           echo "version=$V" >> "$GITHUB_OUTPUT"
   check_service_changes:
-    if: github.event_name != 'push'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: [next_version]
     outputs:
@@ -466,56 +464,102 @@ jobs:
         run: |
           docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf '${{ env.PAYMENTS_REGISTRY_IMAGE }}@sha256:%s ' *)
-  automerge:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    permissions:
-      contents: write
-      pull-requests: write
-    needs: [
-      build_and_deploy_acl,
-      build_and_deploy_email_service,
-      build_and_deploy_files,
-      build_and_deploy_payments_service,
-      next_version,
-      check_service_changes
-    ]
-    if: |
-      always() &&
-      needs.next_version.result == 'success' &&
-      needs.check_service_changes.result == 'success' &&
-      needs.build_and_deploy_acl.result != 'failure' &&
-      needs.build_and_deploy_acl.result != 'cancelled' &&
-      needs.build_and_deploy_files.result != 'failure' &&
-      needs.build_and_deploy_files.result != 'cancelled' &&
-      needs.build_and_deploy_email_service.result != 'failure' &&
-      needs.build_and_deploy_email_service.result != 'cancelled' &&
-      needs.build_and_deploy_payments_service.result != 'failure' &&
-      needs.build_and_deploy_payments_service.result != 'cancelled'
-    steps:
-      - id: automerge
-        name: automerge
-        uses: pascalgn/automerge-action@v0.16.4
-        env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN  }}
-          MERGE_LABELS: ""
-
   release_plz:
+              runs-on: blacksmith-4vcpu-ubuntu-2404
+              permissions:
+                contents: write
+              concurrency:
+                group: release-plz
+                cancel-in-progress: false
+              needs: [
+                build_and_deploy_acl,
+                build_and_deploy_email_service,
+                build_and_deploy_files,
+                build_and_deploy_payments_service,
+                next_version,
+                check_service_changes
+              ]
+              if: |
+                always() &&
+                github.event_name == 'pull_request' &&
+                needs.next_version.result == 'success' &&
+                needs.check_service_changes.result == 'success' &&
+                needs.build_and_deploy_acl.result != 'failure' &&
+                needs.build_and_deploy_acl.result != 'cancelled' &&
+                needs.build_and_deploy_files.result != 'failure' &&
+                needs.build_and_deploy_files.result != 'cancelled' &&
+                needs.build_and_deploy_email_service.result != 'failure' &&
+                needs.build_and_deploy_email_service.result != 'cancelled' &&
+                needs.build_and_deploy_payments_service.result != 'failure' &&
+                needs.build_and_deploy_payments_service.result != 'cancelled'
+              outputs:
+                bumped: ${{ steps.bump.outputs.bumped }}
+                sha: ${{ steps.bump.outputs.sha }}
+              steps:
+                - name: Checkout PR head branch
+                  uses: useblacksmith/checkout@v1
+                  with:
+                    fetch-depth: 0
+                    ref: ${{ github.head_ref }}
+                    token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+                - name: Install Rust toolchain
+                  uses: dtolnay/rust-toolchain@stable
+
+                - name: Install release-plz
+                  run: cargo install release-plz --locked
+
+                - name: Update release metadata
+                  run: release-plz update
+
+                - name: Commit version bump to PR branch
+                  id: bump
+                  shell: bash
+                  env:
+                    HEAD_REF: ${{ github.head_ref }}
+                    NEXT_VERSION: ${{ needs.next_version.outputs.version }}
+                  run: |
+                    set -euo pipefail
+
+                    V=$(cargo metadata --no-deps --format-version 1 \
+                      | jq -r '.packages[] | select(.name=="lib") | .version')
+
+                    # The images were tagged with the previewed version; they must agree.
+                    if [[ "$V" != "$NEXT_VERSION" ]]; then
+                      echo "::error::Previewed version ($NEXT_VERSION) differs from computed version ($V). Re-run the workflow."
+                      exit 1
+                    fi
+
+                    git add -A
+                    if git diff --cached --quiet; then
+                      echo "No release changes detected."
+                      echo "bumped=false" >> "$GITHUB_OUTPUT"
+                      exit 0
+                    fi
+
+                    git config user.name "github-actions[bot]"
+                    git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+                    git commit -m "chore: release v${V} [skip ci]"
+                    git push origin "HEAD:${HEAD_REF}"
+
+                    echo "bumped=true" >> "$GITHUB_OUTPUT"
+                    echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  automerge:
       runs-on: blacksmith-4vcpu-ubuntu-2404
       permissions:
         contents: write
-      needs: [automerge]
-      if: |
-        always() &&
-        needs.automerge.result != 'failure' &&
-        needs.automerge.result != 'cancelled'
-
+        pull-requests: write
+      needs: [release_plz]
+      if: needs.release_plz.result == 'success'
       steps:
-        - name: Checkout main
-          uses: useblacksmith/checkout@v1
-          with:
-            fetch-depth: 0
-            ref: main
-            token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        - id: automerge
+          name: automerge
+          uses: pascalgn/automerge-action@v0.16.4
+          env:
+            GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+            MERGE_METHOD: merge
+            MERGE_LABELS: ""
 
         - name: Install Rust toolchain
           uses: dtolnay/rust-toolchain@stable
@@ -523,43 +567,7 @@ jobs:
         - name: Install release-plz
           run: cargo install release-plz --locked
 
-        - name: Update release metadata
-          run: release-plz update
-
-        - name: Commit version bump to main
-          id: bump
-          shell: bash
-          run: |
-            set -euo pipefail
-            git add -A
-            if git diff --cached --quiet; then
-              echo "No release changes detected."
-              echo "bumped=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            V=$(cargo metadata --no-deps --format-version 1 \
-              | jq -r '.packages[] | select(.name=="lib") | .version')
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git commit -m "chore: release v${V} [skip ci]"
-            git push origin HEAD:main
-            echo "bumped=true" >> "$GITHUB_OUTPUT"
-
         - name: Tag and publish release
           env:
             GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
           run: release-plz release --git-token "$GITHUB_TOKEN"
-
-        - name: Sync main back into dev
-          if: steps.bump.outputs.bumped == 'true'
-          shell: bash
-          run: |
-            set -euo pipefail
-            git fetch origin dev
-            git checkout dev
-            if git merge origin/main -m "chore: sync main into dev [skip ci]"; then
-              git push origin dev
-            else
-              git merge --abort
-              echo "::warning::Could not merge main into dev automatically. Merge main into dev by hand."
-            fi
