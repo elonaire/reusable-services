@@ -58,69 +58,6 @@ jobs:
           fi
           echo "Next version: $V"
           echo "version=$V" >> "$GITHUB_OUTPUT"
-
-  release_plz:
-      if: github.event_name == 'push'
-      runs-on: blacksmith-4vcpu-ubuntu-2404
-      permissions:
-        contents: write
-      concurrency:
-        group: release-plz
-        cancel-in-progress: false
-      steps:
-        - name: Checkout main
-          uses: useblacksmith/checkout@v1
-          with:
-            fetch-depth: 0
-            ref: main
-            token: ${{ secrets.RELEASE_PLZ_TOKEN }}
-
-        - name: Install Rust toolchain
-          uses: dtolnay/rust-toolchain@stable
-
-        - name: Install release-plz
-          run: cargo install release-plz --locked
-
-        - name: Update release metadata
-          run: release-plz update
-
-        - name: Commit version bump to main
-          id: bump
-          shell: bash
-          run: |
-            set -euo pipefail
-            git add -A
-            if git diff --cached --quiet; then
-              echo "No release changes detected."
-              echo "bumped=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            V=$(cargo metadata --no-deps --format-version 1 \
-              | jq -r '.packages[] | select(.name=="lib") | .version')
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git commit -m "chore: release v${V} [skip ci]"
-            git push origin HEAD:main
-            echo "bumped=true" >> "$GITHUB_OUTPUT"
-
-        - name: Tag and publish release
-          env:
-            GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
-          run: release-plz release --git-token "$GITHUB_TOKEN"
-
-        - name: Sync main back into dev
-          if: steps.bump.outputs.bumped == 'true'
-          shell: bash
-          run: |
-            set -euo pipefail
-            git fetch origin dev
-            git checkout dev
-            if git merge origin/main -m "chore: sync main into dev [skip ci]"; then
-              git push origin dev
-            else
-              git merge --abort
-              echo "::warning::Could not merge main into dev automatically. Merge main into dev by hand."
-            fi
   check_service_changes:
     if: github.event_name != 'push'
     runs-on: blacksmith-4vcpu-ubuntu-2404
@@ -561,3 +498,87 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN  }}
           MERGE_LABELS: ""
+
+  release_plz:
+      runs-on: blacksmith-4vcpu-ubuntu-2404
+      permissions:
+        contents: write
+      needs: [
+      build_and_deploy_acl,
+      build_and_deploy_email_service,
+      build_and_deploy_files,
+      build_and_deploy_payments_service,
+      next_version,
+      check_service_changes,
+      automerge
+      ]
+      if: |
+        always() &&
+        needs.next_version.result == 'success' &&
+        needs.check_service_changes.result == 'success' &&
+        needs.build_and_deploy_acl.result != 'failure' &&
+        needs.build_and_deploy_acl.result != 'cancelled' &&
+        needs.build_and_deploy_files.result != 'failure' &&
+        needs.build_and_deploy_files.result != 'cancelled' &&
+        needs.build_and_deploy_email_service.result != 'failure' &&
+        needs.build_and_deploy_email_service.result != 'cancelled' &&
+        needs.build_and_deploy_payments_service.result != 'failure' &&
+        needs.build_and_deploy_payments_service.result != 'cancelled' &&
+        needs.automerge.result != 'failure' &&
+        needs.automerge.result != 'cancelled' &&
+        github.event_name == 'push'
+
+      steps:
+        - name: Checkout main
+          uses: useblacksmith/checkout@v1
+          with:
+            fetch-depth: 0
+            ref: main
+            token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+        - name: Install Rust toolchain
+          uses: dtolnay/rust-toolchain@stable
+
+        - name: Install release-plz
+          run: cargo install release-plz --locked
+
+        - name: Update release metadata
+          run: release-plz update
+
+        - name: Commit version bump to main
+          id: bump
+          shell: bash
+          run: |
+            set -euo pipefail
+            git add -A
+            if git diff --cached --quiet; then
+              echo "No release changes detected."
+              echo "bumped=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            V=$(cargo metadata --no-deps --format-version 1 \
+              | jq -r '.packages[] | select(.name=="lib") | .version')
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "chore: release v${V} [skip ci]"
+            git push origin HEAD:main
+            echo "bumped=true" >> "$GITHUB_OUTPUT"
+
+        - name: Tag and publish release
+          env:
+            GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          run: release-plz release --git-token "$GITHUB_TOKEN"
+
+        - name: Sync main back into dev
+          if: steps.bump.outputs.bumped == 'true'
+          shell: bash
+          run: |
+            set -euo pipefail
+            git fetch origin dev
+            git checkout dev
+            if git merge origin/main -m "chore: sync main into dev [skip ci]"; then
+              git push origin dev
+            else
+              git merge --abort
+              echo "::warning::Could not merge main into dev automatically. Merge main into dev by hand."
+            fi
