@@ -500,7 +500,6 @@ jobs:
           MERGE_LABELS: ""
 
   release_plz:
-      if: github.event_name == 'push'
       runs-on: blacksmith-4vcpu-ubuntu-2404
       permissions:
         contents: write
@@ -514,19 +513,20 @@ jobs:
       automerge
       ]
       if: |
-      always() &&
-      needs.next_version.result == 'success' &&
-      needs.check_service_changes.result == 'success' &&
-      needs.build_and_deploy_acl.result != 'failure' &&
-      needs.build_and_deploy_acl.result != 'cancelled' &&
-      needs.build_and_deploy_files.result != 'failure' &&
-      needs.build_and_deploy_files.result != 'cancelled' &&
-      needs.build_and_deploy_email_service.result != 'failure' &&
-      needs.build_and_deploy_email_service.result != 'cancelled' &&
-      needs.build_and_deploy_payments_service.result != 'failure' &&
-      needs.build_and_deploy_payments_service.result != 'cancelled' &&
-      needs.automerge.result != 'failure' &&
-      needs.automerge.result != 'cancelled'
+        always() &&
+        needs.next_version.result == 'success' &&
+        needs.check_service_changes.result == 'success' &&
+        needs.build_and_deploy_acl.result != 'failure' &&
+        needs.build_and_deploy_acl.result != 'cancelled' &&
+        needs.build_and_deploy_files.result != 'failure' &&
+        needs.build_and_deploy_files.result != 'cancelled' &&
+        needs.build_and_deploy_email_service.result != 'failure' &&
+        needs.build_and_deploy_email_service.result != 'cancelled' &&
+        needs.build_and_deploy_payments_service.result != 'failure' &&
+        needs.build_and_deploy_payments_service.result != 'cancelled' &&
+        needs.automerge.result != 'failure' &&
+        needs.automerge.result != 'cancelled' &&
+        github.event_name == 'push'
 
       steps:
         - name: Checkout main
