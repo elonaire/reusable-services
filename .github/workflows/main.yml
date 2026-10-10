@@ -10,7 +10,7 @@ on:
   merge_group:
     branches: [main]
   # Allows you to run this workflow manually from the Actions tab
-  workflow_dispatch: 
+  workflow_dispatch:
 permissions:
   checks: write
   pull-requests: write
@@ -531,5 +531,5 @@ jobs:
         name: automerge
         uses: pascalgn/automerge-action@v0.16.4
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN  }}
           MERGE_LABELS: ""
