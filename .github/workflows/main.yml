@@ -30,8 +30,6 @@ jobs:
   release_plz:
     runs-on: blacksmith-4vcpu-ubuntu-2404
 
-    if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
-
     permissions:
       contents: write
       pull-requests: write
