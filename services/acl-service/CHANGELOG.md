@@ -1,0 +1,167 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [0.2.0](https://github.com/Techie-Tenka/reusable-services/releases/tag/v0.2.0) - 2026-10-10
+
+### Fixed
+
+- fix status_code in errors to be a string to fit GraphQL Hashmap
+- fix status_code in errors to be a string to fit GraphQL Hashmap
+- fix typos in CI
+- fix cart bug
+- fix security patch
+
+### Other
+
+- cargo upgrade + new Actions workflow + remove unwraps + Multipart uploads + File handlers refactors
+- Support non-browser clients, upgrade crates
+- Enhance full-text search and filters
+- simplify duration logic for tokens
+- Email templates
+- Remove migrations
+- Surreal upgrades + Key-Bucket features in files service
+- Tighten Anti CSRF
+- Encrypt refresh tokens at rest
+- Functional API keys
+- Functional API keys
+- Standardize API response. Escpecially for REST
+- streamline payments
+- remove verbose logs
+- verbose logs
+- try new another http client
+- Cookies back to Lax
+- Make cookies strict
+- Put back Lax
+- Put back explicit domain cookie
+- Remove explicit domain cookie
+- Same site none
+- Set cookie domain
+- Tighten permission handling
+- Fix OAuth issues
+- logout fix
+- Configurable burst sizes
+- Manage crates centrally
+- Need updates to be fluid
+- Version bump: 0.2.0
+- Rate Limiting
+- Refine filters for fetching users
+- Harmonize API response structure - working for GraphQL
+- Harmonize API response structure - working for GraphQL
+- Harmonize API response structure - working for GraphQL
+- Refactor file handling to use async I/O - ditch blocking I/O + refactor all other file ops to async + add gRPC endpoint for creating file from content
+- fetch site owner resolver
+- restore back embedded records relation by removing casting ambiguity in DB
+- Implement currencies, including filters + Full-text search
+- optimize connection.rs
+- Rectify error logs in GraphQL handler
+- change logging to start of app + remove all expect from code and handle errors gracefully
+- Fix recursive query for fetching departments
+- Refactor create department
+- Some minor refactors
+- change OAuth User to use internal Ids + update AdminPrivileges
+- Fix NONE value bug in SurrealQL - add .filter(|| )
+- use recursive queries to traverse hierarchies
+- use recursive queries to traverse hierarchies
+- grant permission, revoke permission, revoke role, implement hierarchical retrieval and permissions
+- Debug middlware due to the context object AuthStatus
+- Tighten permission constraints
+- granular permissions for resources
+- fetch orgs, fetch departments
+- Add more stringent security to roles
+- Secure roles
+- Fix SurrealQL Authorization util bugs
+- Switch user role
+- Fix roles, organization and departments relation and resolvers
+- Fix redundant user schemas
+- Tighten permissions for fetching User details - little bug fix
+- Tighten permissions for fetching User details
+- Add assign role and fetch roles resolvers plus neccessary permissions
+- update non-breaking crates
+- add confirm authorization to gRPC
+- Add provision for getting refresh tokens for OAuth
+- Make Email Service configurable
+- Email Verification feature - configure properly
+- Email Verification feature
+- Cross check any probable panics that may cause broken pipes
+- Put back in dotenv().ok() - it is very very crucial
+- Cross check unwrap() handling
+- Add dummy liveness and readiness endpoints
+- Change gRPC connection to IPV4
+- Change hardcoded GRPC endpoints to env vars in preparation for Kubernetes
+- Use Docker Build Cloud. Also put back cross-platform build; Man I wish WASM worked at least with async runtime
+- use the default path for cookies
+- complete oauth flow including role management
+- complete oauth flow including role management
+- streamline social sign in - GitHub and Google
+- rename gRPC methods
+- Complete role-based authentication with organizations and departments
+- polish authentication and authorization
+- allow for dynamic creation of roles
+- allow for dynamic creation of roles
+- switch secret key to .env
+- switch secret key to .env
+- add merge_group trigger
+- improve error handling
+- improve error handling
+- improve error handling
+- remove unused code
+- refactor grpc services and move to lib
+- Migrate created_at to READONLYs
+- Use exact tonic-build versions
+- Switch service-service protocol to gRPC - Use generic trait for creating gRPC clients
+- add gRPC authentication middleware to handle auth for gRPC endpoints
+- just a dummy trigger
+- just a dummy trigger
+- try different Buildx steps for diff architectures
+- handle errors better in acl db connection
+- downgrade jwt-simple
+- downgrade jwt-simple & add protobuf
+- downgrade jwt-simple
+- downgrade jwt-simple
+- switch from cargo watch to bacon
+- improve security by removing introspection in prod + revert to GitHub Actions default builder
+- put GraphQL auth middleware on hold(async-graphql data is not being set) + improved error logging
+- complete REST auth middleware using gRPC + Files Service implementation
+- start switch to gRPC for service integration
+- Add gRPC support for files service
+- Finish up Email Service gRPC
+- Fix oauth2 upgrade errors
+- Some more gRPC impls in the email service
+- refactor ACL to reuse code + implement internal service login
+- working grpc server for ACL + migration to stable Rust from Nightly
+- rectify create crypto key error
+- update Surreal RELATION TABLES and QUERIES, Update logging to a more secure way plus persistence
+- update Docker Wasm + add in files service
+- logs
+- surrealDB upgrade
+- on sign up return single user
+- Fix new user signup
+- Make user names optional
+- reduce ACL restrictions
+- remove print statements
+- get user email endpoint
+- add correct port for ACL server
+- use better CORS settings
+- update shared ACL service
+- update shared ACL service
+- some serious mistake I did
+- back on track
+- sssshhhh!
+- update password feature
+- final architecture
+- remove potential exposure of user passwords
+- code cleanup + remove AWS
+- Account activation fix
+- stable backend
+- Finished frontend major needs including optimization
+- some more features - sorry I did a lot can't remember which
+- Finished basic CRUD
+- add professional details
+- update pipelines and rustc
+- services updates
