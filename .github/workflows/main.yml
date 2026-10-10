@@ -27,7 +27,6 @@ env:
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
   release_plz:
-      name: Bump version and commit to dev
       runs-on: blacksmith-4vcpu-ubuntu-2404
       permissions:
         contents: write
@@ -46,7 +45,7 @@ jobs:
         - run: cargo install release-plz --locked
         - run: release-plz update
 
-        - name: Commit and push to dev
+        - name: Commit, push, and tag
           id: commit
           shell: bash
           run: |
@@ -56,11 +55,14 @@ jobs:
             git add -A
             if git diff --cached --quiet; then
               echo "bumped=false" >> "$GITHUB_OUTPUT"
-              echo "Nothing to bump."
             else
-              git commit -m "chore: release"
+              V=$(awk '/^\[workspace.package\]/{f=1;next} f&&/^version/{gsub(/.*"|".*/,"");print;exit}' Cargo.toml)
+              git commit -m "chore: release v${V}"
               git push
+              git tag "v${V}"
+              git push origin "v${V}"
               echo "bumped=true" >> "$GITHUB_OUTPUT"
+              echo "version=$V" >> "$GITHUB_OUTPUT"
             fi
 
         - id: read_version
