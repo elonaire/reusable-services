@@ -3,11 +3,7 @@ name: CI/CD
 # Controls when the workflow will run
 on:
   # Triggers the workflow on push or pull request events but only for the "main" branch
-  push:
-    branches: [main]
   pull_request:
-    branches: [main]
-  merge_group:
     branches: [main]
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
@@ -522,7 +518,6 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git commit -m "chore: release v${V} [skip ci]"
-            git push origin HEAD:dev
             echo "bumped=true" >> "$GITHUB_OUTPUT"
 
   automerge:
