@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2](https://github.com/Techie-Tenka/reusable-services/compare/v0.2.1...v0.2.2) - 2026-10-11
+
+### Fixed
+
+- test dev commit with new version
+
 ## [0.2.1](https://github.com/Techie-Tenka/reusable-services/compare/v0.2.0...v0.2.1) - 2026-10-10
 
 ### Fixed
